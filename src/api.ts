@@ -4,10 +4,13 @@ export interface Session {
 }
 export interface AcquisitionHealth {
   running: boolean
-  frames: number
+  record_available: boolean
+  records: number
   bytes: number
-  dma_blocks: number
   read_errors: number
+  invalid_records: number
+  sequence_gaps: number
+  configuration_generation: number
 }
 
 export interface AdcHealth {
@@ -19,50 +22,45 @@ export interface AdcHealth {
   capture_active: boolean
   fifo_ok: boolean
   headers_valid: boolean
+  meter_configured: boolean
+  meter_generation_match: boolean
+  dc_offset_removal: boolean
   sample_rate_hz: number
-  capture_flags: number
   frames: number
-  packets: number
   fifo_overflows: number
   header_errors: number
-  alerts: number
-  spi_error: number
 }
 
 export interface SystemHealth {
   healthy: boolean
   acquisition: AcquisitionHealth
   adc: AdcHealth
-  web: { backend_running: boolean; nginx_running: boolean }
+  backend_running: boolean
+  nginx_running: boolean
 }
 
-export interface ChannelMetadata {
+export interface MeterChannel {
   index: number
   name: string
   unit: string
+  valid: boolean
+  mean_micro_units: number
+  rms_count: number
+  rms: number
 }
 
-export interface AdcMetadata {
-  sample_rate_hz: number
-  channel_count: number
-  frame_size_bytes: number
-  ring_capacity_frames: number
-  published_sequence: number
-  capture_flags: number
-  channels: ChannelMetadata[]
-}
-
-export interface SampleFrame {
+export interface MeterReadings {
   sequence: number
-  values: number[]
-}
-
-export interface SamplesResponse {
-  capture_rate_hz: number
-  display_rate_hz: number
-  next_sequence: number
-  dropped_frames: number
-  frames: SampleFrame[]
+  configuration_generation: number
+  sample_rate_hz: number
+  rms_window_samples: number
+  status: number
+  capture_frames: number
+  header_errors: number
+  fifo_overflows: number
+  packetizer_drops: number
+  hub_drops: number
+  channels: MeterChannel[]
 }
 
 export class ApiError extends Error {
@@ -96,10 +94,5 @@ export const api = {
   logout: () => request<{ status: string }>('/api/logout', { method: 'POST' }),
   session: () => request<Session>('/api/v1/session'),
   health: () => request<SystemHealth>('/api/v1/health'),
-  metadata: () => request<AdcMetadata>('/api/v1/adc/metadata'),
-  samples: (after?: number) => {
-    const query = new URLSearchParams({ rate_hz: '20', limit: '20' })
-    if (after !== undefined) query.set('after', String(after))
-    return request<SamplesResponse>(`/api/v1/adc/samples?${query}`)
-  },
+  meterReadings: () => request<MeterReadings>('/api/v1/meter/readings'),
 }

@@ -1,8 +1,8 @@
 # MSAP1 web interface
 
-React, TypeScript, and Vite frontend for the MSAP1 AD7771 diagnostic API. The
-UI shows raw signed ADC counts; it does not label values as volts or amperes
-until board calibration is available.
+React, TypeScript, and Vite frontend for the MSAP1 meter API. The UI displays
+mean-corrected RMS voltage calculated in PL for VLA, VLB, and VLC through
+`GET /api/v1/meter/readings`. Current channels remain explicitly invalid.
 
 Node.js 20.19 or newer is required (the Yocto recipe currently builds with
 Node.js 20.20).
