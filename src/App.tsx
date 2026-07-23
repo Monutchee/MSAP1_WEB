@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { api, ApiError, MeterChannel, MeterReadings, Session, SystemHealth } from './api'
 
 const HISTORY = 80
+const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
 
 function formatCount(value: number | undefined) {
   return value === undefined ? '—' : new Intl.NumberFormat('en-US').format(value)
@@ -139,8 +140,12 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     unit: index >= 4 && index <= 6 ? 'V' : 'A', valid: false,
     mean_micro_units: 0, rms_count: 0, rms: 0,
   }))
-  const displayed = [...channels.filter((channel) => channel.unit === 'V'),
-    ...channels.filter((channel) => channel.unit === 'A')]
+  // Preserve CH7/VCM in the API model and history for future monitoring, but
+  // do not present it as a user-facing meter channel yet.
+  const displayed = [
+    ...channels.filter((channel) => VISIBLE_CHANNELS.has(channel.index) && channel.unit === 'V'),
+    ...channels.filter((channel) => VISIBLE_CHANNELS.has(channel.index) && channel.unit === 'A'),
+  ]
 
   return <main className="app-shell">
     <header className="topbar">
