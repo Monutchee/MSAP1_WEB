@@ -1,8 +1,9 @@
 # MSAP1 web interface
 
 React, TypeScript, and Vite frontend for the MSAP1 meter API. The UI displays
-mean-corrected RMS voltage calculated in PL for VLA, VLB, and VLC through
-`GET /api/v1/meter/readings`. Current channels remain explicitly invalid.
+PL-calculated RMS current for ILA, ILB, ILC, and ILN, plus RMS voltage for VLA,
+VLB, and VLC through `GET /api/v1/meter/readings`. CH7/VCM remains available
+in the API model for future reference monitoring but is not rendered.
 
 Node.js 20.19 or newer is required (the Yocto recipe currently builds with
 Node.js 20.20).
