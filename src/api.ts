@@ -19,6 +19,7 @@ export interface AdcHealth {
   initialized: boolean
   init_complete: boolean
   configuration_match: boolean
+  rate_match: boolean
   capture_active: boolean
   fifo_ok: boolean
   headers_valid: boolean

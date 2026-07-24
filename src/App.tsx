@@ -237,6 +237,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       <div><p className="eyebrow">Pipeline health</p><h2>Meter components</h2></div>
       <div className="health-list">
         <StatusPill ok={health?.adc.spi_responsive ?? false}>AD7771 SPI</StatusPill>
+        <StatusPill ok={health?.adc.rate_match ?? false}>ADC sample rate</StatusPill>
         <StatusPill ok={health?.adc.headers_valid ?? false}>Frame headers</StatusPill>
         <StatusPill ok={health?.adc.fifo_ok ?? false}>PL FIFO</StatusPill>
         <StatusPill ok={health?.adc.meter_generation_match ?? false}>PL configuration</StatusPill>
