@@ -222,6 +222,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     <section className="metric-grid">
       <article className="metric"><span>Sample rate</span><strong>{formatCount(readings?.sample_rate_hz)} <small>frame/s</small></strong></article>
       <article className="metric"><span>ADC DCLK</span><strong>{health?.adc.dclk_frequency_hz ? formatCount(health.adc.dclk_frequency_hz) : '—'} <small>Hz</small></strong></article>
+      <article className="metric"><span>ADC DRDY</span><strong>{health?.adc.drdy_frequency_hz ? formatCount(health.adc.drdy_frequency_hz) : '—'} <small>frame/s</small></strong></article>
       <article className="metric"><span>ADC packets</span><strong>{formatCount(health?.adc.packets)}</strong></article>
       <article className="metric"><span>Meter records</span><strong>{formatCount(health?.acquisition.records)}</strong></article>
       <article className="metric"><span>DMA traffic</span><strong>{formatBytes(health?.acquisition.bytes)}</strong></article>

@@ -29,6 +29,7 @@ export interface AdcHealth {
   frames: number
   packets: number
   dclk_frequency_hz: number
+  drdy_frequency_hz: number
   fifo_overflows: number
   header_errors: number
 }
