@@ -227,12 +227,11 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       <article className="metric"><span>Meter records</span><strong>{formatCount(health?.acquisition.records)}</strong></article>
       <article className="metric"><span>DMA traffic</span><strong>{formatBytes(health?.acquisition.bytes)}</strong></article>
       <article className="metric"><span>Configuration</span><strong>{readings ? `0x${readings.configuration_generation.toString(16).padStart(8, '0')}` : '—'}</strong></article>
-      <article className="metric"><span>Grid frequency</span><strong>{readings?.frequency.valid ? readings.frequency.hz.toFixed(3) : '—'} <small>Hz</small></strong></article>
     </section>
     <section className="section-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div><span>Update period: 200 ms</span></section>
     <section className="channel-grid">
-      {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel} history={history} healthy={health?.healthy ?? false} />)}
       <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
+      {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel} history={history} healthy={health?.healthy ?? false} />)}
     </section>
     <section className="health-panel">
       <div><p className="eyebrow">Pipeline health</p><h2>Meter components</h2></div>
