@@ -269,12 +269,12 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         onChange={(event) => setFrequencyConfiguration({
           ...frequencyConfiguration, averaging_window_ms: Number(event.target.value),
         })} /></label>
-      <label>Minimum (Hz)<input type="number" min="10" max="100" step="0.001"
+      <label>Minimum (Hz)<input type="number" min="10" max="200" step="0.001"
         value={frequencyConfiguration.minimum_hz}
         onChange={(event) => setFrequencyConfiguration({
           ...frequencyConfiguration, minimum_hz: Number(event.target.value),
         })} /></label>
-      <label>Maximum (Hz)<input type="number" min="10" max="100" step="0.001"
+      <label>Maximum (Hz)<input type="number" min="10" max="200" step="0.001"
         value={frequencyConfiguration.maximum_hz}
         onChange={(event) => setFrequencyConfiguration({
           ...frequencyConfiguration, maximum_hz: Number(event.target.value),
