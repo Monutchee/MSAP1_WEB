@@ -1,5 +1,8 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
-import { api, ApiError, MeterChannel, MeterReadings, Session, SystemHealth } from './api'
+import {
+  api, ApiError, FrequencyConfiguration, MeterChannel, MeterReadings, Session,
+  SystemHealth,
+} from './api'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -85,6 +88,40 @@ function ReadingCard({ channel, history, healthy }: {
   </article>
 }
 
+function frequencyUnavailableReason(readings: MeterReadings | undefined) {
+  const frequency = readings?.frequency
+  if (!frequency) return 'waiting for meter record'
+  if (!frequency.enabled) return 'disabled'
+  if (frequency.arithmetic_error) return 'arithmetic fault'
+  if (!frequency.reference_valid) return 'VLA reference unavailable'
+  if (frequency.out_of_range) return 'outside configured range'
+  if (frequency.timed_out) return 'no qualified zero crossing'
+  return 'measuring'
+}
+
+function FrequencyCard({ readings, history, healthy }: {
+  readings: MeterReadings | undefined
+  history: MeterReadings[]
+  healthy: boolean
+}) {
+  const frequency = readings?.frequency
+  const values = history
+    .filter((record) => record.frequency.valid)
+    .map((record) => record.frequency.hz)
+  const minimum = values.length > 0 ? Math.min(...values).toFixed(3) : '—'
+  const maximum = values.length > 0 ? Math.max(...values).toFixed(3) : '—'
+  return <article className="channel-card frequency-card">
+    <div className="channel-title"><span>GRID</span><strong>Frequency</strong><i>CH6 VLA</i></div>
+    <div className="channel-value">{frequency?.valid ? frequency.hz.toFixed(3) : '—'}<small> Hz</small></div>
+    <Sparkline values={values} healthy={healthy && (frequency?.valid ?? false)} />
+    <div className="range">
+      {frequency?.valid
+        ? <><span>min {minimum} Hz</span><span>max {maximum} Hz</span></>
+        : <><span>{frequencyUnavailableReason(readings)}</span><span>unavailable</span></>}
+    </div>
+  </article>
+}
+
 function Dashboard({ session, onLogout, onUnauthorized }: {
   session: Session
   onLogout: () => void
@@ -93,6 +130,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
+  const [frequencyConfiguration, setFrequencyConfiguration] =
+    useState<FrequencyConfiguration>()
+  const [configurationStatus, setConfigurationStatus] = useState('')
   const [error, setError] = useState('')
 
   const handleError = useCallback((reason: unknown) => {
@@ -112,6 +152,28 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     const timer = window.setInterval(load, 2000)
     return () => { active = false; window.clearInterval(timer) }
   }, [handleError])
+
+  useEffect(() => {
+    let active = true
+    api.frequencyConfiguration()
+      .then((configuration) => { if (active) setFrequencyConfiguration(configuration) })
+      .catch((reason) => { if (active) handleError(reason) })
+    return () => { active = false }
+  }, [handleError])
+
+  async function saveFrequencyConfiguration(event: FormEvent) {
+    event.preventDefault()
+    if (!frequencyConfiguration) return
+    setConfigurationStatus('Applying…')
+    try {
+      const applied = await api.updateFrequencyConfiguration(frequencyConfiguration)
+      setFrequencyConfiguration(applied)
+      setConfigurationStatus('Applied and saved')
+    } catch (reason) {
+      setConfigurationStatus('')
+      handleError(reason)
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -159,13 +221,17 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     {error && <div className="error-banner"><strong>Data unavailable</strong><span>{error}</span></div>}
     <section className="metric-grid">
       <article className="metric"><span>Sample rate</span><strong>{formatCount(readings?.sample_rate_hz)} <small>frame/s</small></strong></article>
+      <article className="metric"><span>ADC DCLK</span><strong>{health?.adc.dclk_frequency_hz ? formatCount(health.adc.dclk_frequency_hz) : '—'} <small>Hz</small></strong></article>
+      <article className="metric"><span>ADC packets</span><strong>{formatCount(health?.adc.packets)}</strong></article>
       <article className="metric"><span>Meter records</span><strong>{formatCount(health?.acquisition.records)}</strong></article>
       <article className="metric"><span>DMA traffic</span><strong>{formatBytes(health?.acquisition.bytes)}</strong></article>
       <article className="metric"><span>Configuration</span><strong>{readings ? `0x${readings.configuration_generation.toString(16).padStart(8, '0')}` : '—'}</strong></article>
+      <article className="metric"><span>Grid frequency</span><strong>{readings?.frequency.valid ? readings.frequency.hz.toFixed(3) : '—'} <small>Hz</small></strong></article>
     </section>
     <section className="section-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div><span>Update period: 200 ms</span></section>
     <section className="channel-grid">
       {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel} history={history} healthy={health?.healthy ?? false} />)}
+      <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
     </section>
     <section className="health-panel">
       <div><p className="eyebrow">Pipeline health</p><h2>Meter components</h2></div>
@@ -175,9 +241,50 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         <StatusPill ok={health?.adc.fifo_ok ?? false}>PL FIFO</StatusPill>
         <StatusPill ok={health?.adc.meter_generation_match ?? false}>PL configuration</StatusPill>
         <StatusPill ok={(health?.acquisition.read_errors ?? 1) === 0}>Meter DMA</StatusPill>
+        <StatusPill ok={health?.frequency_arithmetic_ok ?? false}>Frequency arithmetic</StatusPill>
         <StatusPill ok={health?.nginx_running ?? false}>nginx</StatusPill>
       </div>
     </section>
+    <section className="section-heading"><div><p className="eyebrow">Frequency</p><h2>Zero-crossing configuration</h2></div><span>Reference: CH6 VLA</span></section>
+    {frequencyConfiguration && <form className="frequency-form" onSubmit={saveFrequencyConfiguration}>
+      <label className="toggle"><input type="checkbox" checked={frequencyConfiguration.enabled}
+        onChange={(event) => setFrequencyConfiguration({ ...frequencyConfiguration, enabled: event.target.checked })} />Enable measurement</label>
+      <label>Mode<select value={frequencyConfiguration.mode}
+        onChange={(event) => setFrequencyConfiguration({
+          ...frequencyConfiguration,
+          mode: event.target.value as FrequencyConfiguration['mode'],
+        })}>
+        <option value="single_cycle">Single cycle</option>
+        <option value="rolling_cycles">Rolling cycles</option>
+        <option value="rolling_time">Rolling time</option>
+      </select></label>
+      <label>Averaging cycles<input type="number" min="1" max="64"
+        value={frequencyConfiguration.averaging_cycles}
+        onChange={(event) => setFrequencyConfiguration({
+          ...frequencyConfiguration, averaging_cycles: Number(event.target.value),
+        })} /></label>
+      <label>Time window (ms)<input type="number" min="100" max="1000"
+        value={frequencyConfiguration.averaging_window_ms}
+        onChange={(event) => setFrequencyConfiguration({
+          ...frequencyConfiguration, averaging_window_ms: Number(event.target.value),
+        })} /></label>
+      <label>Minimum (Hz)<input type="number" min="10" max="100" step="0.001"
+        value={frequencyConfiguration.minimum_hz}
+        onChange={(event) => setFrequencyConfiguration({
+          ...frequencyConfiguration, minimum_hz: Number(event.target.value),
+        })} /></label>
+      <label>Maximum (Hz)<input type="number" min="10" max="100" step="0.001"
+        value={frequencyConfiguration.maximum_hz}
+        onChange={(event) => setFrequencyConfiguration({
+          ...frequencyConfiguration, maximum_hz: Number(event.target.value),
+        })} /></label>
+      <label>Hysteresis (V)<input type="number" min="0.001" max="100" step="0.001"
+        value={frequencyConfiguration.hysteresis_volts}
+        onChange={(event) => setFrequencyConfiguration({
+          ...frequencyConfiguration, hysteresis_volts: Number(event.target.value),
+        })} /></label>
+      <div className="frequency-actions"><button type="submit" disabled={session.role !== 'admin'}>Apply</button><span>{session.role === 'admin' ? configurationStatus : 'Administrator access required'}</span></div>
+    </form>}
   </main>
 }
 

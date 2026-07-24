@@ -27,6 +27,8 @@ export interface AdcHealth {
   dc_offset_removal: boolean
   sample_rate_hz: number
   frames: number
+  packets: number
+  dclk_frequency_hz: number
   fifo_overflows: number
   header_errors: number
 }
@@ -35,6 +37,7 @@ export interface SystemHealth {
   healthy: boolean
   acquisition: AcquisitionHealth
   adc: AdcHealth
+  frequency_arithmetic_ok: boolean
   backend_running: boolean
   nginx_running: boolean
 }
@@ -60,7 +63,35 @@ export interface MeterReadings {
   fifo_overflows: number
   packetizer_drops: number
   hub_drops: number
+  frequency: FrequencyReading
   channels: MeterChannel[]
+}
+
+export interface FrequencyReading {
+  enabled: boolean
+  valid: boolean
+  reference_valid: boolean
+  out_of_range: boolean
+  timed_out: boolean
+  arithmetic_error: boolean
+  hz: number
+  millihz: number
+  period_q16_samples: number
+  measurement_sequence: number
+  mode: number
+  reference_channel: number
+  cycles_used: number
+}
+
+export interface FrequencyConfiguration {
+  enabled: boolean
+  reference_channel: number
+  mode: 'single_cycle' | 'rolling_cycles' | 'rolling_time'
+  averaging_cycles: number
+  averaging_window_ms: number
+  minimum_hz: number
+  maximum_hz: number
+  hysteresis_volts: number
 }
 
 export class ApiError extends Error {
@@ -95,4 +126,11 @@ export const api = {
   session: () => request<Session>('/api/v1/session'),
   health: () => request<SystemHealth>('/api/v1/health'),
   meterReadings: () => request<MeterReadings>('/api/v1/meter/readings'),
+  frequencyConfiguration: () =>
+    request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency'),
+  updateFrequencyConfiguration: (configuration: FrequencyConfiguration) =>
+    request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency', {
+      method: 'PUT',
+      body: JSON.stringify(configuration),
+    }),
 }
