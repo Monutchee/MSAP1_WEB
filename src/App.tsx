@@ -1,7 +1,7 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
-  api, ApiError, FrequencyConfiguration, MeterChannel, MeterReadings, Session,
-  SystemHealth,
+  api, ApiError, DeveloperLogEntry, FrequencyConfiguration, LogPriority,
+  MeterChannel, MeterReadings, Session, SystemHealth,
 } from './api'
 
 const HISTORY = 80
@@ -122,11 +122,216 @@ function FrequencyCard({ readings, history, healthy }: {
   </article>
 }
 
+const LOG_COMPONENTS = [
+  { value: '', label: 'All components' },
+  { value: 'fpga-acquisition', label: 'FPGA acquisition' },
+  { value: 'web-backend', label: 'Web backend' },
+  { value: 'firmware', label: 'Firmware lifecycle' },
+]
+
+const LOG_MODULES = [
+  { value: '', label: 'All modules' },
+  { value: 'lifecycle', label: 'Lifecycle' },
+  { value: 'dma', label: 'DMA' },
+  { value: 'rpmsg', label: 'RPMsg' },
+  { value: 'adc-config', label: 'ADC configuration' },
+  { value: 'health', label: 'Health' },
+  { value: 'nginx', label: 'nginx' },
+  { value: 'http', label: 'HTTP' },
+  { value: 'auth', label: 'Authentication' },
+  { value: 'pl', label: 'PL firmware' },
+  { value: 'rpu', label: 'RPU firmware' },
+]
+
+const LOG_PRIORITIES: { value: LogPriority; label: string }[] = [
+  { value: 'debug', label: 'Debug and above' },
+  { value: 'info', label: 'Info and above' },
+  { value: 'notice', label: 'Notice and above' },
+  { value: 'warning', label: 'Warning and above' },
+  { value: 'error', label: 'Error and above' },
+  { value: 'critical', label: 'Critical and above' },
+  { value: 'alert', label: 'Alert and above' },
+  { value: 'emergency', label: 'Emergency only' },
+]
+
+function logTimestamp(timestampUsec: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    fractionalSecondDigits: 3,
+  }).format(new Date(timestampUsec / 1000))
+}
+
+function prettyRawLog(raw: string) {
+  try { return JSON.stringify(JSON.parse(raw), null, 2) }
+  catch { return raw }
+}
+
+function DeveloperLogs({ onUnauthorized }: { onUnauthorized: () => void }) {
+  const [component, setComponent] = useState('')
+  const [module, setModule] = useState('')
+  const [priority, setPriority] = useState<LogPriority>('debug')
+  const [raw, setRaw] = useState(false)
+  const [live, setLive] = useState(true)
+  const [entries, setEntries] = useState<DeveloperLogEntry[]>([])
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const cursor = useRef('')
+  const requestPending = useRef(false)
+  const filterGeneration = useRef(0)
+  const viewport = useRef<HTMLDivElement>(null)
+
+  const load = useCallback(async (reset = false) => {
+    if (requestPending.current) return
+    const generation = filterGeneration.current
+    requestPending.current = true
+    setLoading(true)
+    try {
+      const page = await api.developerLogs({
+        component: component || undefined,
+        module: module || undefined,
+        priority,
+        after: reset ? undefined : cursor.current || undefined,
+        limit: reset ? 100 : 200,
+      })
+      if (generation !== filterGeneration.current) return
+      cursor.current = page.next_cursor
+      setEntries((current) => {
+        if (reset) return page.entries
+        if (page.entries.length === 0) return current
+        const known = new Set(current.map((entry) => entry.cursor))
+        const next = [...current, ...page.entries.filter((entry) => !known.has(entry.cursor))]
+        return next.slice(-500)
+      })
+      setError('')
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      if (reason instanceof ApiError && reason.status === 409) {
+        cursor.current = ''
+        setEntries([])
+        setError('The journal rotated; loading the newest entries.')
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to read the system journal')
+    } finally {
+      requestPending.current = false
+      setLoading(false)
+    }
+  }, [component, module, onUnauthorized, priority])
+
+  useEffect(() => {
+    filterGeneration.current += 1
+    cursor.current = ''
+    setEntries([])
+    void load(true)
+  }, [component, module, priority, load])
+
+  useEffect(() => {
+    if (!live) return
+    const timer = window.setInterval(() => void load(false), 1000)
+    return () => window.clearInterval(timer)
+  }, [live, load])
+
+  useEffect(() => {
+    if (live && viewport.current)
+      viewport.current.scrollTop = viewport.current.scrollHeight
+  }, [entries, live])
+
+  function clearView() {
+    setEntries([])
+    setError('')
+  }
+
+  return <section className="developer-page">
+    <div className="developer-heading">
+      <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
+        <p>Inspect structured service events from the system journal.</p></div>
+      <span className={`live-state ${live ? 'active' : ''}`}><i />{live ? 'Live' : 'Paused'}</span>
+    </div>
+    <nav className="developer-subtabs" aria-label="Developer tools">
+      <button className="active" type="button">Logs</button>
+    </nav>
+    <section className="log-panel">
+      <header className="log-panel-header">
+        <div><p className="eyebrow">Journal</p><h2>MSAP1 service logs</h2></div>
+        <div className="log-actions">
+          <button type="button" onClick={() => void load(true)} disabled={loading}>
+            {loading ? 'Loading…' : 'Refresh'}
+          </button>
+          <button type="button" className={raw ? 'active' : ''} aria-pressed={raw}
+            onClick={() => setRaw((value) => !value)}>
+            {raw ? 'Condensed view' : 'Raw view'}
+          </button>
+          <button type="button" className={live ? 'active' : ''} aria-pressed={live}
+            onClick={() => setLive((value) => !value)}>
+            {live ? 'Pause live' : 'Resume live'}
+          </button>
+        </div>
+      </header>
+      <div className="log-toolbar">
+        <label>Component<select value={component} onChange={(event) => setComponent(event.target.value)}>
+          {LOG_COMPONENTS.map((option) =>
+            <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select></label>
+        <label>Module<select value={module} onChange={(event) => setModule(event.target.value)}>
+          {LOG_MODULES.map((option) =>
+            <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select></label>
+        <label>Log level<select value={priority}
+          onChange={(event) => setPriority(event.target.value as LogPriority)}>
+          {LOG_PRIORITIES.map((option) =>
+            <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select></label>
+      </div>
+      {error && <div className="log-error">{error}</div>}
+      <div className={`log-viewport ${raw ? 'raw' : ''}`} ref={viewport}
+        aria-live={live ? 'polite' : 'off'}>
+        {entries.length === 0 && !loading &&
+          <div className="log-empty"><strong>No matching log entries</strong>
+            <span>Change the filters or wait for a new service event.</span></div>}
+        {entries.map((entry) => raw
+          ? <pre className={`raw-log priority-${entry.priority}`} key={entry.cursor}>
+              {prettyRawLog(entry.raw)}
+            </pre>
+          : <article className={`log-entry priority-${entry.priority}`} key={entry.cursor}>
+              <div className="log-entry-head">
+                <time>{logTimestamp(entry.timestamp_usec)}</time>
+                <span className="priority-badge">{entry.priority}</span>
+                <strong>{entry.component || entry.unit || 'system'}</strong>
+                {entry.module && <em>{entry.module}</em>}
+              </div>
+              <p>{entry.message || '(empty journal message)'}</p>
+              <div className="log-meta">
+                {entry.event && <span>event: {entry.event}</span>}
+                {entry.request_id && <span>request: {entry.request_id}</span>}
+                {entry.configuration_generation &&
+                  <span>generation: {entry.configuration_generation}</span>}
+                {entry.source_file &&
+                  <span>source: {entry.source_file}{entry.source_line ? `:${entry.source_line}` : ''}</span>}
+              </div>
+            </article>)}
+      </div>
+      <footer className="log-footer">
+        <span>Showing {entries.length} newest entries (maximum 500)</span>
+        <button type="button" onClick={clearView}>Clear view</button>
+      </footer>
+    </section>
+  </section>
+}
+
 function Dashboard({ session, onLogout, onUnauthorized }: {
   session: Session
   onLogout: () => void
   onUnauthorized: () => void
 }) {
+  const [activeView, setActiveView] = useState<'meter' | 'developer'>('meter')
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
@@ -214,6 +419,18 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       <div className="brand"><span className="brand-mark small">M</span><div><strong>MSAP1</strong><small>Electricity meter</small></div></div>
       <div className="session"><span>{session.username}</span><em>{session.role}</em><button className="text-button" onClick={onLogout}>Sign out</button></div>
     </header>
+    <nav className="primary-tabs" aria-label="Primary navigation">
+      <button type="button" className={activeView === 'meter' ? 'active' : ''}
+        aria-current={activeView === 'meter' ? 'page' : undefined}
+        onClick={() => setActiveView('meter')}>Meter</button>
+      {session.role === 'admin' && <button type="button"
+        className={activeView === 'developer' ? 'active' : ''}
+        aria-current={activeView === 'developer' ? 'page' : undefined}
+        onClick={() => setActiveView('developer')}>Developer</button>}
+    </nav>
+    {activeView === 'developer'
+      ? <DeveloperLogs onUnauthorized={onUnauthorized} />
+      : <>
     <section className="hero">
       <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1><p>Mean-corrected 200 ms RMS calculated in programmable logic</p></div>
       <StatusPill ok={health?.healthy ?? false}>{health?.healthy ? 'System healthy' : 'Needs attention'}</StatusPill>
@@ -286,6 +503,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         })} /></label>
       <div className="frequency-actions"><button type="submit" disabled={session.role !== 'admin'}>Apply</button><span>{session.role === 'admin' ? configurationStatus : 'Administrator access required'}</span></div>
     </form>}
+    </>}
   </main>
 }
 

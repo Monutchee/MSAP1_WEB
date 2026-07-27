@@ -96,6 +96,47 @@ export interface FrequencyConfiguration {
   hysteresis_volts: number
 }
 
+export type LogPriority =
+  | 'emergency'
+  | 'alert'
+  | 'critical'
+  | 'error'
+  | 'warning'
+  | 'notice'
+  | 'info'
+  | 'debug'
+
+export interface DeveloperLogEntry {
+  timestamp_usec: number
+  cursor: string
+  priority: LogPriority
+  message: string
+  component: string
+  module: string
+  event: string
+  request_id: string
+  configuration_generation: string
+  unit: string
+  executable: string
+  source_file: string
+  source_line: string
+  source_function: string
+  raw: string
+}
+
+export interface DeveloperLogPage {
+  entries: DeveloperLogEntry[]
+  next_cursor: string
+}
+
+export interface DeveloperLogQuery {
+  component?: string
+  module?: string
+  priority?: LogPriority
+  after?: string
+  limit?: number
+}
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message)
@@ -135,4 +176,14 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(configuration),
     }),
+  developerLogs: (query: DeveloperLogQuery = {}) => {
+    const parameters = new URLSearchParams()
+    if (query.component) parameters.set('component', query.component)
+    if (query.module) parameters.set('module', query.module)
+    if (query.priority) parameters.set('priority', query.priority)
+    if (query.after) parameters.set('after', query.after)
+    if (query.limit) parameters.set('limit', query.limit.toString())
+    const suffix = parameters.size > 0 ? `?${parameters.toString()}` : ''
+    return request<DeveloperLogPage>(`/api/v1/developer/logs${suffix}`)
+  },
 }
