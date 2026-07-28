@@ -103,7 +103,10 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 .line.warning { stroke: var(--amber); }
 .range { display: flex; justify-content: space-between; padding-top: .55rem; color: var(--muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .58rem; }
 .health-panel { margin-top: 3rem; padding: 1.4rem 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 2rem; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.health-details { display: grid; justify-items: end; gap: 1rem; }
 .health-list { display: flex; flex-wrap: wrap; gap: 1.5rem; justify-content: flex-end; }
+.health-reasons { display: grid; gap: .45rem; margin: 0; padding: .8rem 1rem .8rem 2rem; border: 1px solid rgba(255,189,92,.25); border-radius: 10px; color: #dfc89f; background: rgba(255,189,92,.06); font-size: .74rem; line-height: 1.45; }
+.health-reasons code { display: inline-block; min-width: 12rem; margin-right: .7rem; color: var(--amber); }
 .frequency-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; padding: 1.4rem 1.5rem; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
 .frequency-form label { display: flex; flex-direction: column; gap: .45rem; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; }
 .frequency-form input, .frequency-form select { border: 1px solid var(--line); border-radius: 8px; padding: .65rem .7rem; color: #ecf5f5; background: #0a151a; font: inherit; }
@@ -313,6 +316,7 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
   .metric { border-right: 0; border-bottom: 1px solid var(--line); }
   .metric:last-child { border-bottom: 0; }
   .section-heading, .health-panel { align-items: flex-start; flex-direction: column; }
+  .health-details { justify-items: start; }
   .health-list { justify-content: flex-start; }
   .developer-heading { align-items: flex-start; flex-direction: column; }
   .log-toolbar { grid-template-columns: 1fr; }

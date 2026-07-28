@@ -13,6 +13,11 @@ export interface AcquisitionHealth {
   configuration_generation: number
 }
 
+export interface HealthReason {
+  code: string
+  message: string
+}
+
 export interface AdcHealth {
   healthy: boolean
   spi_responsive: boolean
@@ -33,6 +38,7 @@ export interface AdcHealth {
   drdy_frequency_hz: number
   fifo_overflows: number
   header_errors: number
+  degraded_reasons: HealthReason[]
 }
 
 export interface SystemHealth {
