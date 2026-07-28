@@ -5,6 +5,11 @@ export interface Session {
 export interface AcquisitionHealth {
   running: boolean
   record_available: boolean
+  record_stale: boolean
+  record_age_ms: number
+  rpu_health_age_ms: number
+  health_probe_failures: number
+  health_probe_pending: boolean
   records: number
   bytes: number
   read_errors: number
@@ -38,6 +43,10 @@ export interface AdcHealth {
   drdy_frequency_hz: number
   fifo_overflows: number
   header_errors: number
+  spi_protocol_errors: number
+  spi_retry_recoveries: number
+  spi_last_failed_register: number
+  spi_last_received_header: number
   degraded_reasons: HealthReason[]
 }
 

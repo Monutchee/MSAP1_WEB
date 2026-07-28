@@ -459,7 +459,11 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           <StatusPill ok={health?.adc.headers_valid ?? false}>Frame headers</StatusPill>
           <StatusPill ok={health?.adc.fifo_ok ?? false}>PL FIFO</StatusPill>
           <StatusPill ok={health?.adc.meter_generation_match ?? false}>PL configuration</StatusPill>
-          <StatusPill ok={(health?.acquisition.read_errors ?? 1) === 0}>Meter DMA</StatusPill>
+          <StatusPill ok={(health?.acquisition.read_errors ?? 1) === 0 &&
+            !(health?.acquisition.record_stale ?? true)}>Meter DMA</StatusPill>
+          <StatusPill ok={!(health?.acquisition.health_probe_pending ?? true)}>
+            ADC health audit
+          </StatusPill>
           <StatusPill ok={health?.frequency_arithmetic_ok ?? false}>Frequency arithmetic</StatusPill>
           <StatusPill ok={health?.nginx_running ?? false}>nginx</StatusPill>
         </div>
