@@ -1,7 +1,8 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
   api, ApiError, DeveloperLogEntry, FrequencyConfiguration, LogPriority,
-  MeterChannel, MeterReadings, Session, SystemHealth,
+  MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
+  SystemHealth,
 } from './api'
 
 const HISTORY = 80
@@ -171,6 +172,83 @@ function prettyRawLog(raw: string) {
   catch { return raw }
 }
 
+function TemperatureCard({ sensor, history }: {
+  sensor: SocTemperature
+  history: number[]
+}) {
+  const minimum = history.length > 0 ? Math.min(...history).toFixed(3) : '—'
+  const maximum = history.length > 0 ? Math.max(...history).toFixed(3) : '—'
+  return <article className="temperature-card">
+    <div className="temperature-title">
+      <span>{sensor.zone}</span><strong>{sensor.label}</strong>
+      <StatusPill ok={sensor.available}>{sensor.available ? 'Available' : 'Unavailable'}</StatusPill>
+    </div>
+    <div className="temperature-value">
+      {sensor.available ? sensor.temperature_c.toFixed(3) : '—'}<small> °C</small>
+    </div>
+    <Sparkline values={history} healthy={sensor.available} />
+    <div className="range"><span>min {minimum} °C</span><span>max {maximum} °C</span></div>
+  </article>
+}
+
+function DeveloperOverview({ onUnauthorized }: { onUnauthorized: () => void }) {
+  const [temperatures, setTemperatures] = useState<SocTemperatures>()
+  const [history, setHistory] = useState<Record<string, number[]>>({})
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    let pending = false
+    const load = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const next = await api.developerTemperatures()
+        if (active) {
+          setTemperatures(next)
+          setHistory((current) => {
+            const updated = { ...current }
+            for (const sensor of next.sensors) {
+              if (!sensor.available) continue
+              updated[sensor.zone] =
+                [...(current[sensor.zone] ?? []), sensor.temperature_c].slice(-HISTORY)
+            }
+            return updated
+          })
+          setError('')
+        }
+      } catch (reason) {
+        if (!active) return
+        if (reason instanceof ApiError && reason.status === 401) {
+          onUnauthorized()
+          return
+        }
+        setError(reason instanceof Error ? reason.message : 'Unable to read SoC temperatures')
+      } finally { pending = false }
+    }
+    void load()
+    const timer = window.setInterval(load, 2000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [onUnauthorized])
+
+  return <section className="temperature-panel">
+    <header className="temperature-panel-header">
+      <div><p className="eyebrow">Thermal monitoring</p><h2>SoC temperatures</h2></div>
+      <span>Updated every 2 seconds</span>
+    </header>
+    {error && <div className="log-error">{error}</div>}
+    <div className="temperature-grid">
+      {(temperatures?.sensors ?? [
+        { zone: 'LPD', label: 'Temp_LPD', available: false, millidegrees_c: 0, temperature_c: 0 },
+        { zone: 'FPD', label: 'Temp_FPD', available: false, millidegrees_c: 0, temperature_c: 0 },
+        { zone: 'PL', label: 'Temp_PL', available: false, millidegrees_c: 0, temperature_c: 0 },
+      ]).map((sensor) =>
+        <TemperatureCard key={sensor.zone} sensor={sensor}
+          history={history[sensor.zone] ?? []} />)}
+    </div>
+  </section>
+}
+
 function DeveloperLogs({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [component, setComponent] = useState('')
   const [module, setModule] = useState('')
@@ -249,16 +327,7 @@ function DeveloperLogs({ onUnauthorized }: { onUnauthorized: () => void }) {
     setError('')
   }
 
-  return <section className="developer-page">
-    <div className="developer-heading">
-      <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
-        <p>Inspect structured service events from the system journal.</p></div>
-      <span className={`live-state ${live ? 'active' : ''}`}><i />{live ? 'Live' : 'Paused'}</span>
-    </div>
-    <nav className="developer-subtabs" aria-label="Developer tools">
-      <button className="active" type="button">Logs</button>
-    </nav>
-    <section className="log-panel">
+  return <section className="log-panel">
       <header className="log-panel-header">
         <div><p className="eyebrow">Journal</p><h2>MSAP1 service logs</h2></div>
         <div className="log-actions">
@@ -322,7 +391,27 @@ function DeveloperLogs({ onUnauthorized }: { onUnauthorized: () => void }) {
         <span>Showing {entries.length} newest entries (maximum 500)</span>
         <button type="button" onClick={clearView}>Clear view</button>
       </footer>
-    </section>
+  </section>
+}
+
+function DeveloperPage({ onUnauthorized }: { onUnauthorized: () => void }) {
+  const [activeTab, setActiveTab] = useState<'overview' | 'logs'>('overview')
+  return <section className="developer-page">
+    <div className="developer-heading">
+      <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
+        <p>Inspect platform temperatures and structured service events.</p></div>
+    </div>
+    <nav className="developer-subtabs" aria-label="Developer tools">
+      <button className={activeTab === 'overview' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'overview' ? 'page' : undefined}
+        onClick={() => setActiveTab('overview')}>Overview</button>
+      <button className={activeTab === 'logs' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'logs' ? 'page' : undefined}
+        onClick={() => setActiveTab('logs')}>Logs</button>
+    </nav>
+    {activeTab === 'overview'
+      ? <DeveloperOverview onUnauthorized={onUnauthorized} />
+      : <DeveloperLogs onUnauthorized={onUnauthorized} />}
   </section>
 }
 
@@ -429,7 +518,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         onClick={() => setActiveView('developer')}>Developer</button>}
     </nav>
     {activeView === 'developer'
-      ? <DeveloperLogs onUnauthorized={onUnauthorized} />
+      ? <DeveloperPage onUnauthorized={onUnauthorized} />
       : <>
     <section className="hero">
       <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1><p>Mean-corrected 200 ms RMS calculated in programmable logic</p></div>

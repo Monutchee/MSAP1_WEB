@@ -18,6 +18,9 @@
   `/api/v1/developer/logs` endpoint. Keep journal access in the backend, cap
   retained browser entries, and use cursor continuation rather than timestamps
   for live updates.
+- The Developer Overview reads `/api/v1/developer/temperatures` and displays
+  the label-discovered LPD, FPD, and PL temperatures. Keep this diagnostic view
+  administrator-only.
 - Keep the frontend target-only: the Yocto package installs `dist/` and must
   not install Node.js or `node_modules` on the device.
 - Before handing off a change, run `npm ci` and `npm run build`.
