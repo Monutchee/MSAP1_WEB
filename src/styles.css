@@ -161,6 +161,48 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
   font-weight: 700;
 }
 .developer-subtabs button.active { color: var(--green); background: var(--panel); }
+.temperature-panel { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.temperature-panel-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 1.35rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.temperature-panel-header .eyebrow { margin-top: 0; }
+.temperature-panel-header > span {
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: .7rem;
+}
+.temperature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  padding: 1.5rem;
+}
+.temperature-card {
+  min-width: 0;
+  padding: 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(145deg, var(--panel-soft), #0d191f);
+}
+.temperature-title { display: flex; align-items: center; gap: .55rem; }
+.temperature-title > span {
+  color: var(--green);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: .72rem;
+}
+.temperature-title strong { font-size: .9rem; }
+.temperature-title .status-pill { margin-left: auto; font-size: .62rem; }
+.temperature-value {
+  margin-top: 1.5rem;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 2rem;
+}
+.temperature-value small { color: var(--muted); font-size: .8rem; }
 .log-panel { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
 .log-panel-header {
   display: flex;
@@ -301,6 +343,7 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 
 @media (max-width: 1000px) {
   .metric-grid, .channel-grid { grid-template-columns: repeat(2, 1fr); }
+  .temperature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric:nth-child(2) { border-right: 0; }
   .metric:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
   .log-panel-header { align-items: flex-start; flex-direction: column; }
@@ -319,6 +362,8 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
   .health-details { justify-items: start; }
   .health-list { justify-content: flex-start; }
   .developer-heading { align-items: flex-start; flex-direction: column; }
+  .temperature-panel-header { align-items: flex-start; flex-direction: column; }
+  .temperature-grid { grid-template-columns: 1fr; }
   .log-toolbar { grid-template-columns: 1fr; }
   .log-entry, .raw-log { padding-right: 1rem; padding-left: 1rem; }
   .log-footer { align-items: flex-start; flex-direction: column; }

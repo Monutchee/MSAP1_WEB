@@ -152,6 +152,19 @@ export interface DeveloperLogQuery {
   limit?: number
 }
 
+export interface SocTemperature {
+  zone: string
+  label: string
+  available: boolean
+  millidegrees_c: number
+  temperature_c: number
+}
+
+export interface SocTemperatures {
+  sampled_at_unix_ms: number
+  sensors: SocTemperature[]
+}
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message)
@@ -201,4 +214,6 @@ export const api = {
     const suffix = parameters.size > 0 ? `?${parameters.toString()}` : ''
     return request<DeveloperLogPage>(`/api/v1/developer/logs${suffix}`)
   },
+  developerTemperatures: () =>
+    request<SocTemperatures>('/api/v1/developer/temperatures'),
 }
