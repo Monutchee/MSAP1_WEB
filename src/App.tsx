@@ -452,15 +452,22 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     </section>
     <section className="health-panel">
       <div><p className="eyebrow">Pipeline health</p><h2>Meter components</h2></div>
-      <div className="health-list">
-        <StatusPill ok={health?.adc.spi_responsive ?? false}>AD7771 SPI</StatusPill>
-        <StatusPill ok={health?.adc.rate_match ?? false}>ADC sample rate</StatusPill>
-        <StatusPill ok={health?.adc.headers_valid ?? false}>Frame headers</StatusPill>
-        <StatusPill ok={health?.adc.fifo_ok ?? false}>PL FIFO</StatusPill>
-        <StatusPill ok={health?.adc.meter_generation_match ?? false}>PL configuration</StatusPill>
-        <StatusPill ok={(health?.acquisition.read_errors ?? 1) === 0}>Meter DMA</StatusPill>
-        <StatusPill ok={health?.frequency_arithmetic_ok ?? false}>Frequency arithmetic</StatusPill>
-        <StatusPill ok={health?.nginx_running ?? false}>nginx</StatusPill>
+      <div className="health-details">
+        <div className="health-list">
+          <StatusPill ok={health?.adc.spi_responsive ?? false}>AD7771 SPI</StatusPill>
+          <StatusPill ok={health?.adc.rate_match ?? false}>ADC sample rate</StatusPill>
+          <StatusPill ok={health?.adc.headers_valid ?? false}>Frame headers</StatusPill>
+          <StatusPill ok={health?.adc.fifo_ok ?? false}>PL FIFO</StatusPill>
+          <StatusPill ok={health?.adc.meter_generation_match ?? false}>PL configuration</StatusPill>
+          <StatusPill ok={(health?.acquisition.read_errors ?? 1) === 0}>Meter DMA</StatusPill>
+          <StatusPill ok={health?.frequency_arithmetic_ok ?? false}>Frequency arithmetic</StatusPill>
+          <StatusPill ok={health?.nginx_running ?? false}>nginx</StatusPill>
+        </div>
+        {(health?.adc.degraded_reasons?.length ?? 0) > 0 &&
+          <ul className="health-reasons" aria-label="ADC degradation reasons">
+            {health?.adc.degraded_reasons?.map((reason) =>
+              <li key={reason.code}><code>{reason.code}</code>{reason.message}</li>)}
+          </ul>}
       </div>
     </section>
     <section className="section-heading"><div><p className="eyebrow">Frequency</p><h2>Zero-crossing configuration</h2></div><span>Reference: CH6 VLA</span></section>
