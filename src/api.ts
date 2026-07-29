@@ -165,6 +165,33 @@ export interface SocTemperatures {
   sensors: SocTemperature[]
 }
 
+export interface SystemAbout {
+  available: boolean
+  product: string
+  operating_system: string
+  yocto_system_version: string
+  build_hex: string
+  software_build_date: string
+  image_recipe: string
+  machine: string
+}
+
+export interface ComponentFingerprint {
+  id: string
+  label: string
+  component_type: string
+  path: string
+  available: boolean
+  size_bytes: number
+  md5: string
+}
+
+export interface DeveloperAbout {
+  digest_algorithm: string
+  digest_purpose: string
+  components: ComponentFingerprint[]
+}
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message)
@@ -196,6 +223,7 @@ export const api = {
   logout: () => request<{ status: string }>('/api/logout', { method: 'POST' }),
   session: () => request<Session>('/api/v1/session'),
   health: () => request<SystemHealth>('/api/v1/health'),
+  about: () => request<SystemAbout>('/api/v1/about'),
   meterReadings: () => request<MeterReadings>('/api/v1/meter/readings'),
   frequencyConfiguration: () =>
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency'),
@@ -216,4 +244,6 @@ export const api = {
   },
   developerTemperatures: () =>
     request<SocTemperatures>('/api/v1/developer/temperatures'),
+  developerAbout: () =>
+    request<DeveloperAbout>('/api/v1/developer/about'),
 }
