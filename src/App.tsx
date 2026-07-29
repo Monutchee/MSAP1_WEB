@@ -1,8 +1,8 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
-  api, ApiError, DeveloperLogEntry, FrequencyConfiguration, LogPriority,
+  api, ApiError, DeveloperAbout, DeveloperLogEntry, FrequencyConfiguration, LogPriority,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
-  SystemHealth,
+  SystemAbout, SystemHealth,
 } from './api'
 
 const HISTORY = 80
@@ -191,7 +191,75 @@ function TemperatureCard({ sensor, history }: {
   </article>
 }
 
-function DeveloperOverview({ onUnauthorized }: { onUnauthorized: () => void }) {
+function TelemetryPanel({ health, readings }: {
+  health: SystemHealth | undefined
+  readings: MeterReadings | undefined
+}) {
+  return <section className="telemetry-panel">
+    <header className="temperature-panel-header">
+      <div><p className="eyebrow">Acquisition telemetry</p><h2>PL and DMA counters</h2></div>
+      <span>Live diagnostic data</span>
+    </header>
+    <div className="metric-grid developer-metrics">
+      <article className="metric"><span>Sample rate</span><strong>{formatCount(readings?.sample_rate_hz)} <small>frame/s</small></strong></article>
+      <article className="metric"><span>ADC DCLK</span><strong>{health?.adc.dclk_frequency_hz ? formatCount(health.adc.dclk_frequency_hz) : '—'} <small>Hz</small></strong></article>
+      <article className="metric"><span>ADC DRDY</span><strong>{health?.adc.drdy_frequency_hz ? formatCount(health.adc.drdy_frequency_hz) : '—'} <small>frame/s</small></strong></article>
+      <article className="metric"><span>ADC packets</span><strong>{formatCount(health?.adc.packets)}</strong></article>
+      <article className="metric"><span>Meter records</span><strong>{formatCount(health?.acquisition.records)}</strong></article>
+      <article className="metric"><span>DMA traffic</span><strong>{formatBytes(health?.acquisition.bytes)}</strong></article>
+      <article className="metric"><span>Configuration</span><strong>{readings ? `0x${readings.configuration_generation.toString(16).padStart(8, '0')}` : '—'}</strong></article>
+    </div>
+  </section>
+}
+
+function AboutPage({ onUnauthorized }: { onUnauthorized: () => void }) {
+  const [about, setAbout] = useState<SystemAbout>()
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    api.about().then((value) => {
+      if (active) { setAbout(value); setError('') }
+    }).catch((reason) => {
+      if (!active) return
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to read system information')
+    })
+    return () => { active = false }
+  }, [onUnauthorized])
+
+  return <section className="about-page">
+    <div className="developer-heading">
+      <div><p className="eyebrow">About</p><h1>System information</h1>
+        <p>Software identity for this MSAP1 meter.</p></div>
+    </div>
+    {error && <div className="error-banner"><strong>System information unavailable</strong><span>{error}</span></div>}
+    <section className="about-panel">
+      <div className="about-product">
+        <span className="brand-mark">M</span>
+        <div><p className="eyebrow">Monutchee instrumentation</p>
+          <h2>{about?.product ?? 'MSAP1'}</h2>
+          <p>{about?.operating_system ?? 'MNCOS'}</p></div>
+      </div>
+      <dl className="about-details">
+        <div><dt>Yocto system version</dt><dd>{about?.yocto_system_version || '—'}</dd></div>
+        <div><dt>Build hex</dt><dd><code>{about?.build_hex || '—'}</code></dd></div>
+        <div><dt>Software build date</dt><dd>{about?.software_build_date || '—'}</dd></div>
+        <div><dt>Image recipe</dt><dd>{about?.image_recipe || '—'}</dd></div>
+        <div><dt>Machine</dt><dd>{about?.machine || '—'}</dd></div>
+      </dl>
+    </section>
+  </section>
+}
+
+function DeveloperOverview({ onUnauthorized, health, readings }: {
+  onUnauthorized: () => void
+  health: SystemHealth | undefined
+  readings: MeterReadings | undefined
+}) {
   const [temperatures, setTemperatures] = useState<SocTemperatures>()
   const [history, setHistory] = useState<Record<string, number[]>>({})
   const [error, setError] = useState('')
@@ -231,7 +299,9 @@ function DeveloperOverview({ onUnauthorized }: { onUnauthorized: () => void }) {
     return () => { active = false; window.clearInterval(timer) }
   }, [onUnauthorized])
 
-  return <section className="temperature-panel">
+  return <div className="developer-overview">
+    <TelemetryPanel health={health} readings={readings} />
+    <section className="temperature-panel">
     <header className="temperature-panel-header">
       <div><p className="eyebrow">Thermal monitoring</p><h2>SoC temperatures</h2></div>
       <span>Updated every 2 seconds</span>
@@ -246,13 +316,56 @@ function DeveloperOverview({ onUnauthorized }: { onUnauthorized: () => void }) {
         <TemperatureCard key={sensor.zone} sensor={sensor}
           history={history[sensor.zone] ?? []} />)}
     </div>
+    </section>
+  </div>
+}
+
+function DeveloperAboutPage({ onUnauthorized }: { onUnauthorized: () => void }) {
+  const [about, setAbout] = useState<DeveloperAbout>()
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    api.developerAbout().then((value) => {
+      if (active) { setAbout(value); setError('') }
+    }).catch((reason) => {
+      if (!active) return
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to fingerprint deployed components')
+    })
+    return () => { active = false }
+  }, [onUnauthorized])
+
+  return <section className="component-panel">
+    <header className="temperature-panel-header">
+      <div><p className="eyebrow">Deployed software</p><h2>Component fingerprints</h2></div>
+      <span>{about?.digest_algorithm ?? 'MD5'} diagnostic identity</span>
+    </header>
+    {error && <div className="log-error">{error}</div>}
+    <p className="digest-purpose">{about?.digest_purpose ??
+      'Fingerprint data is loading. MD5 values are diagnostic identifiers, not security checks.'}</p>
+    <div className="component-list">
+      {(about?.components ?? []).map((component) =>
+        <article className="component-row" key={component.id}>
+          <div><span>{component.component_type}</span><strong>{component.label}</strong>
+            <code>{component.path}</code></div>
+          <div className="component-digest">
+            <span>{component.available ? formatBytes(component.size_bytes) : 'Unavailable'}</span>
+            <code>{component.available ? component.md5 : 'file not found'}</code>
+          </div>
+        </article>)}
+      {!about && !error && <div className="log-empty"><strong>Reading deployed components…</strong></div>}
+    </div>
   </section>
 }
 
 function DeveloperLogs({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [component, setComponent] = useState('')
   const [module, setModule] = useState('')
-  const [priority, setPriority] = useState<LogPriority>('debug')
+  const [priority, setPriority] = useState<LogPriority>('notice')
   const [raw, setRaw] = useState(false)
   const [live, setLive] = useState(true)
   const [entries, setEntries] = useState<DeveloperLogEntry[]>([])
@@ -394,8 +507,12 @@ function DeveloperLogs({ onUnauthorized }: { onUnauthorized: () => void }) {
   </section>
 }
 
-function DeveloperPage({ onUnauthorized }: { onUnauthorized: () => void }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'logs'>('overview')
+function DeveloperPage({ onUnauthorized, health, readings }: {
+  onUnauthorized: () => void
+  health: SystemHealth | undefined
+  readings: MeterReadings | undefined
+}) {
+  const [activeTab, setActiveTab] = useState<'overview' | 'about' | 'logs'>('overview')
   return <section className="developer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
@@ -405,13 +522,79 @@ function DeveloperPage({ onUnauthorized }: { onUnauthorized: () => void }) {
       <button className={activeTab === 'overview' ? 'active' : ''} type="button"
         aria-current={activeTab === 'overview' ? 'page' : undefined}
         onClick={() => setActiveTab('overview')}>Overview</button>
+      <button className={activeTab === 'about' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'about' ? 'page' : undefined}
+        onClick={() => setActiveTab('about')}>About</button>
       <button className={activeTab === 'logs' ? 'active' : ''} type="button"
         aria-current={activeTab === 'logs' ? 'page' : undefined}
         onClick={() => setActiveTab('logs')}>Logs</button>
     </nav>
     {activeTab === 'overview'
-      ? <DeveloperOverview onUnauthorized={onUnauthorized} />
-      : <DeveloperLogs onUnauthorized={onUnauthorized} />}
+      ? <DeveloperOverview onUnauthorized={onUnauthorized} health={health} readings={readings} />
+      : activeTab === 'about'
+        ? <DeveloperAboutPage onUnauthorized={onUnauthorized} />
+        : <DeveloperLogs onUnauthorized={onUnauthorized} />}
+  </section>
+}
+
+function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit }: {
+  configuration: FrequencyConfiguration | undefined
+  configurationStatus: string
+  onChange: (configuration: FrequencyConfiguration) => void
+  onSubmit: (event: FormEvent) => void
+}) {
+  return <section className="configuration-page">
+    <div className="developer-heading">
+      <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
+        <p>Configure programmable-logic measurement behavior.</p></div>
+    </div>
+    <nav className="developer-subtabs" aria-label="Configuration sections">
+      <button className="active" type="button" aria-current="page">Meter</button>
+    </nav>
+    <section className="section-heading configuration-heading">
+      <div><p className="eyebrow">Frequency</p><h2>Zero-crossing configuration</h2></div>
+      <span>Reference: CH6 VLA</span>
+    </section>
+    {configuration && <form className="frequency-form" onSubmit={onSubmit}>
+      <label className="toggle"><input type="checkbox" checked={configuration.enabled}
+        onChange={(event) => onChange({ ...configuration, enabled: event.target.checked })} />Enable measurement</label>
+      <label>Mode<select value={configuration.mode}
+        onChange={(event) => onChange({
+          ...configuration,
+          mode: event.target.value as FrequencyConfiguration['mode'],
+        })}>
+        <option value="single_cycle">Single cycle</option>
+        <option value="rolling_cycles">Rolling cycles</option>
+        <option value="rolling_time">Rolling time</option>
+      </select></label>
+      <label>Averaging cycles<input type="number" min="1" max="64"
+        value={configuration.averaging_cycles}
+        onChange={(event) => onChange({
+          ...configuration, averaging_cycles: Number(event.target.value),
+        })} /></label>
+      <label>Time window (ms)<input type="number" min="100" max="1000"
+        value={configuration.averaging_window_ms}
+        onChange={(event) => onChange({
+          ...configuration, averaging_window_ms: Number(event.target.value),
+        })} /></label>
+      <label>Minimum (Hz)<input type="number" min="10" max="200" step="0.001"
+        value={configuration.minimum_hz}
+        onChange={(event) => onChange({
+          ...configuration, minimum_hz: Number(event.target.value),
+        })} /></label>
+      <label>Maximum (Hz)<input type="number" min="10" max="200" step="0.001"
+        value={configuration.maximum_hz}
+        onChange={(event) => onChange({
+          ...configuration, maximum_hz: Number(event.target.value),
+        })} /></label>
+      <label>Hysteresis (V)<input type="number" min="0.001" max="100" step="0.001"
+        value={configuration.hysteresis_volts}
+        onChange={(event) => onChange({
+          ...configuration, hysteresis_volts: Number(event.target.value),
+        })} /></label>
+      <div className="frequency-actions"><button type="submit">Apply</button>
+        <span>{configurationStatus}</span></div>
+    </form>}
   </section>
 }
 
@@ -420,7 +603,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   onLogout: () => void
   onUnauthorized: () => void
 }) {
-  const [activeView, setActiveView] = useState<'meter' | 'developer'>('meter')
+  const [activeView, setActiveView] =
+    useState<'dashboard' | 'configuration' | 'about' | 'developer'>('dashboard')
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
@@ -509,32 +693,37 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       <div className="session"><span>{session.username}</span><em>{session.role}</em><button className="text-button" onClick={onLogout}>Sign out</button></div>
     </header>
     <nav className="primary-tabs" aria-label="Primary navigation">
-      <button type="button" className={activeView === 'meter' ? 'active' : ''}
-        aria-current={activeView === 'meter' ? 'page' : undefined}
-        onClick={() => setActiveView('meter')}>Meter</button>
+      <button type="button" className={activeView === 'dashboard' ? 'active' : ''}
+        aria-current={activeView === 'dashboard' ? 'page' : undefined}
+        onClick={() => setActiveView('dashboard')}>Dashboard</button>
+      {session.role === 'admin' && <button type="button"
+        className={activeView === 'configuration' ? 'active' : ''}
+        aria-current={activeView === 'configuration' ? 'page' : undefined}
+        onClick={() => setActiveView('configuration')}>Configuration</button>}
+      <button type="button" className={activeView === 'about' ? 'active' : ''}
+        aria-current={activeView === 'about' ? 'page' : undefined}
+        onClick={() => setActiveView('about')}>About</button>
       {session.role === 'admin' && <button type="button"
         className={activeView === 'developer' ? 'active' : ''}
         aria-current={activeView === 'developer' ? 'page' : undefined}
         onClick={() => setActiveView('developer')}>Developer</button>}
     </nav>
     {activeView === 'developer'
-      ? <DeveloperPage onUnauthorized={onUnauthorized} />
+      ? <DeveloperPage onUnauthorized={onUnauthorized} health={health} readings={readings} />
+      : activeView === 'about'
+        ? <AboutPage onUnauthorized={onUnauthorized} />
+      : activeView === 'configuration'
+        ? <ConfigurationPage configuration={frequencyConfiguration}
+            configurationStatus={configurationStatus}
+            onChange={setFrequencyConfiguration}
+            onSubmit={saveFrequencyConfiguration} />
       : <>
     <section className="hero">
       <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1><p>Mean-corrected 200 ms RMS calculated in programmable logic</p></div>
       <StatusPill ok={health?.healthy ?? false}>{health?.healthy ? 'System healthy' : 'Needs attention'}</StatusPill>
     </section>
     {error && <div className="error-banner"><strong>Data unavailable</strong><span>{error}</span></div>}
-    <section className="metric-grid">
-      <article className="metric"><span>Sample rate</span><strong>{formatCount(readings?.sample_rate_hz)} <small>frame/s</small></strong></article>
-      <article className="metric"><span>ADC DCLK</span><strong>{health?.adc.dclk_frequency_hz ? formatCount(health.adc.dclk_frequency_hz) : '—'} <small>Hz</small></strong></article>
-      <article className="metric"><span>ADC DRDY</span><strong>{health?.adc.drdy_frequency_hz ? formatCount(health.adc.drdy_frequency_hz) : '—'} <small>frame/s</small></strong></article>
-      <article className="metric"><span>ADC packets</span><strong>{formatCount(health?.adc.packets)}</strong></article>
-      <article className="metric"><span>Meter records</span><strong>{formatCount(health?.acquisition.records)}</strong></article>
-      <article className="metric"><span>DMA traffic</span><strong>{formatBytes(health?.acquisition.bytes)}</strong></article>
-      <article className="metric"><span>Configuration</span><strong>{readings ? `0x${readings.configuration_generation.toString(16).padStart(8, '0')}` : '—'}</strong></article>
-    </section>
-    <section className="section-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div><span>Update period: 200 ms</span></section>
+    <section className="section-heading dashboard-results-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div><span>Update period: 200 ms</span></section>
     <section className="channel-grid">
       <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
       {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel} history={history} healthy={health?.healthy ?? false} />)}
@@ -563,46 +752,6 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           </ul>}
       </div>
     </section>
-    <section className="section-heading"><div><p className="eyebrow">Frequency</p><h2>Zero-crossing configuration</h2></div><span>Reference: CH6 VLA</span></section>
-    {frequencyConfiguration && <form className="frequency-form" onSubmit={saveFrequencyConfiguration}>
-      <label className="toggle"><input type="checkbox" checked={frequencyConfiguration.enabled}
-        onChange={(event) => setFrequencyConfiguration({ ...frequencyConfiguration, enabled: event.target.checked })} />Enable measurement</label>
-      <label>Mode<select value={frequencyConfiguration.mode}
-        onChange={(event) => setFrequencyConfiguration({
-          ...frequencyConfiguration,
-          mode: event.target.value as FrequencyConfiguration['mode'],
-        })}>
-        <option value="single_cycle">Single cycle</option>
-        <option value="rolling_cycles">Rolling cycles</option>
-        <option value="rolling_time">Rolling time</option>
-      </select></label>
-      <label>Averaging cycles<input type="number" min="1" max="64"
-        value={frequencyConfiguration.averaging_cycles}
-        onChange={(event) => setFrequencyConfiguration({
-          ...frequencyConfiguration, averaging_cycles: Number(event.target.value),
-        })} /></label>
-      <label>Time window (ms)<input type="number" min="100" max="1000"
-        value={frequencyConfiguration.averaging_window_ms}
-        onChange={(event) => setFrequencyConfiguration({
-          ...frequencyConfiguration, averaging_window_ms: Number(event.target.value),
-        })} /></label>
-      <label>Minimum (Hz)<input type="number" min="10" max="200" step="0.001"
-        value={frequencyConfiguration.minimum_hz}
-        onChange={(event) => setFrequencyConfiguration({
-          ...frequencyConfiguration, minimum_hz: Number(event.target.value),
-        })} /></label>
-      <label>Maximum (Hz)<input type="number" min="10" max="200" step="0.001"
-        value={frequencyConfiguration.maximum_hz}
-        onChange={(event) => setFrequencyConfiguration({
-          ...frequencyConfiguration, maximum_hz: Number(event.target.value),
-        })} /></label>
-      <label>Hysteresis (V)<input type="number" min="0.001" max="100" step="0.001"
-        value={frequencyConfiguration.hysteresis_volts}
-        onChange={(event) => setFrequencyConfiguration({
-          ...frequencyConfiguration, hysteresis_volts: Number(event.target.value),
-        })} /></label>
-      <div className="frequency-actions"><button type="submit" disabled={session.role !== 'admin'}>Apply</button><span>{session.role === 'admin' ? configurationStatus : 'Administrator access required'}</span></div>
-    </form>}
     </>}
   </main>
 }
