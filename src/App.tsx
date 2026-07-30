@@ -4,6 +4,7 @@ import {
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
   SystemAbout, SystemHealth, WaveformStatus,
 } from './api'
+import { WaveformExplorer } from './waveform/WaveformExplorer'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -625,21 +626,6 @@ function WaveformConfiguration({ onUnauthorized }: {
         <span>{message}</span>
       </div>
     </form>
-    <section className="waveform-session-panel">
-      <header><div><p className="eyebrow">Capture files</p><h2>Recent sessions</h2></div>
-        <span>Overlapping events share one longest capture</span></header>
-      <div className="waveform-session-list">
-        {(status?.sessions ?? []).map((session) =>
-          <article key={session.id}>
-            <div><strong>Session {session.id}</strong><span className={`session-state ${session.state}`}>{session.state}</span></div>
-            <code>frames {formatCount(session.first_sequence)}–{formatCount(session.last_sequence)}</code>
-            <span>{session.event_count} trigger{session.event_count === 1 ? '' : 's'} · {formatCount(session.sample_rate_hz)} frame/s</span>
-            <code>{session.filename || 'capture still in progress'}</code>
-          </article>)}
-        {(status?.sessions.length ?? 0) === 0 &&
-          <div className="waveform-empty">No waveform sessions have been triggered.</div>}
-      </div>
-    </section>
   </div>
 }
 
@@ -719,7 +705,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   onUnauthorized: () => void
 }) {
   const [activeView, setActiveView] =
-    useState<'dashboard' | 'configuration' | 'about' | 'developer'>('dashboard')
+    useState<'dashboard' | 'waveforms' | 'configuration' | 'about' | 'developer'>('dashboard')
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
@@ -811,6 +797,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       <button type="button" className={activeView === 'dashboard' ? 'active' : ''}
         aria-current={activeView === 'dashboard' ? 'page' : undefined}
         onClick={() => setActiveView('dashboard')}>Dashboard</button>
+      <button type="button" className={activeView === 'waveforms' ? 'active' : ''}
+        aria-current={activeView === 'waveforms' ? 'page' : undefined}
+        onClick={() => setActiveView('waveforms')}>Waveforms</button>
       {session.role === 'admin' && <button type="button"
         className={activeView === 'configuration' ? 'active' : ''}
         aria-current={activeView === 'configuration' ? 'page' : undefined}
@@ -827,6 +816,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       ? <DeveloperPage onUnauthorized={onUnauthorized} health={health} readings={readings} />
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
+      : activeView === 'waveforms'
+        ? <WaveformExplorer onUnauthorized={onUnauthorized} />
       : activeView === 'configuration'
         ? <ConfigurationPage configuration={frequencyConfiguration}
             configurationStatus={configurationStatus}

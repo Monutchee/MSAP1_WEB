@@ -25,6 +25,11 @@
   `GET /api/v1/waveforms` and `POST /api/v1/waveforms/trigger`. It displays
   daemon-owned history/session state and must not access DMA devices or raw
   waveform storage directly.
+- The authenticated Waveforms explorer lists persisted sessions returned by
+  `GET /api/v1/waveforms`. View/download requests use the WebEngine-protected
+  `/protected/waveforms/` nginx routes. Keep binary parsing and plotting in the
+  modular `src/waveform/` surface; support legacy eight-channel files while
+  presenting new seven-channel files in raw or profile-converted units.
 - Keep the frontend target-only: the Yocto package installs `dist/` and must
   not install Node.js or `node_modules` on the device.
 - Before handing off a change, run `npm ci` and `npm run build`.

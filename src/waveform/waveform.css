@@ -1,0 +1,320 @@
+.waveform-explorer-page {
+  padding-top: 3rem;
+}
+
+.waveform-refresh,
+.waveform-viewer button,
+.waveform-session-actions button,
+.waveform-session-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: .65rem .9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #dbe7e8;
+  background: #0a151a;
+  font-size: .74rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.waveform-refresh:hover,
+.waveform-viewer button:hover,
+.waveform-session-actions button:hover,
+.waveform-session-actions a:hover {
+  border-color: rgba(84, 226, 164, .55);
+  color: var(--green);
+}
+
+.waveform-session-actions button:disabled {
+  cursor: wait;
+  opacity: .5;
+}
+
+.waveform-library,
+.waveform-viewer {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+}
+
+.waveform-library > header,
+.waveform-viewer-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.35rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.waveform-library > header .eyebrow,
+.waveform-viewer-header .eyebrow {
+  margin-top: 0;
+}
+
+.waveform-library > header > span,
+.waveform-viewer-header span {
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: .68rem;
+}
+
+.waveform-library-list {
+  display: grid;
+}
+
+.waveform-library-list > article {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(360px, 1.4fr);
+  gap: .9rem 1.5rem;
+  padding: 1.15rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.waveform-library-list > article:last-child {
+  border-bottom: 0;
+}
+
+.waveform-session-identity {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+}
+
+.waveform-session-identity time {
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.waveform-library-list dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(80px, 1fr));
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  gap: .75rem;
+  margin: 0;
+}
+
+.waveform-library-list dl div {
+  min-width: 0;
+}
+
+.waveform-library-list dt {
+  margin-bottom: .35rem;
+  color: var(--muted);
+  font-size: .61rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.waveform-library-list dd {
+  margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: .72rem;
+}
+
+.waveform-library-list > article > code {
+  color: #91a9af;
+  font-size: .68rem;
+  overflow-wrap: anywhere;
+}
+
+.waveform-session-actions {
+  display: flex;
+  gap: .65rem;
+}
+
+.waveform-session-actions span {
+  align-self: center;
+  color: var(--muted);
+  font-size: .7rem;
+}
+
+.waveform-library-empty {
+  min-height: 14rem;
+  display: grid;
+  place-content: center;
+  gap: .5rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.waveform-library-empty strong {
+  color: #bdcbce;
+}
+
+.waveform-viewer {
+  margin-top: 1rem;
+}
+
+.waveform-viewer-header h2 {
+  max-width: 54rem;
+  overflow-wrap: anywhere;
+}
+
+.waveform-viewer-controls {
+  display: grid;
+  grid-template-columns: minmax(260px, .6fr) minmax(420px, 1.4fr);
+  gap: 1.5rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  background: #0b171c;
+}
+
+.waveform-viewer-controls fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .8rem 1rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.waveform-viewer-controls legend {
+  width: 100%;
+  margin-bottom: .2rem;
+  color: var(--muted);
+  font-size: .62rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.waveform-viewer-controls label {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .7rem;
+}
+
+.waveform-viewer-controls input {
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+
+.waveform-plots {
+  display: grid;
+  padding: 1rem 1.5rem;
+}
+
+.waveform-plot {
+  display: grid;
+  grid-template-columns: 165px minmax(0, 1fr);
+  gap: 1rem;
+  min-height: 104px;
+  padding: .5rem 0;
+  border-bottom: 1px solid rgba(36, 54, 61, .65);
+  color: #54e2a4;
+}
+
+.waveform-plot:last-child {
+  border-bottom: 0;
+}
+
+.waveform-plot.channel-0 { color: #5fa8ff; }
+.waveform-plot.channel-1 { color: #ff8d4d; }
+.waveform-plot.channel-2 { color: #54d4af; }
+.waveform-plot.channel-3 { color: #ffbd5c; }
+.waveform-plot.channel-4 { color: #e06da9; }
+.waveform-plot.channel-5 { color: #64d467; }
+.waveform-plot.channel-6 { color: #9c8cff; }
+
+.waveform-plot-label {
+  display: grid;
+  align-content: center;
+  gap: .35rem;
+}
+
+.waveform-plot-label strong {
+  color: #e3eded;
+  font-size: .78rem;
+}
+
+.waveform-plot-label span,
+.waveform-plot-label code {
+  color: var(--muted);
+  font-size: .64rem;
+}
+
+.waveform-plot-canvas {
+  position: relative;
+  min-width: 0;
+  height: 88px;
+}
+
+.waveform-plot-canvas svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.waveform-zero-line {
+  stroke: var(--line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.waveform-envelope {
+  fill: currentColor;
+  opacity: .65;
+}
+
+.waveform-trigger-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #e8f1f1;
+  box-shadow: 0 0 6px rgba(255, 255, 255, .4);
+}
+
+.waveform-viewer-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: .8rem 1.5rem;
+  padding: .8rem 1.5rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: .66rem;
+}
+
+@media (max-width: 900px) {
+  .waveform-library-list > article {
+    grid-template-columns: 1fr;
+  }
+
+  .waveform-library-list dl {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .waveform-viewer-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 650px) {
+  .waveform-library > header,
+  .waveform-viewer-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .waveform-library-list dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .waveform-plot {
+    grid-template-columns: 1fr;
+  }
+
+  .waveform-plot-label {
+    grid-template-columns: repeat(3, auto);
+    justify-content: space-between;
+  }
+}
