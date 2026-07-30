@@ -607,6 +607,9 @@ function WaveformConfiguration({ onUnauthorized }: {
         <small>{retainedSeconds ? `${retainedSeconds.toFixed(1)} seconds` : 'waiting for sample rate'}</small></article>
       <article><span>DMA blocks</span><strong>{formatCount(status?.blocks)}</strong></article>
       <article><span>Sequence gaps</span><strong>{formatCount(status?.sequence_gaps)}</strong></article>
+      <article><span>Transport overruns</span><strong>{formatCount(status?.transport_overrun_blocks)}</strong>
+        <small>{status ? `${status.transport_ring_blocks} DMA-block ring` : 'transport status unavailable'}</small></article>
+      <article><span>File write failures</span><strong>{formatCount(status?.materialization_failures)}</strong></article>
       <article><span>Active capture</span><strong>{status?.active_session ? 'Yes' : 'No'}</strong></article>
       <article><span>Completed files</span><strong>{formatCount(status?.completed_sessions)}</strong></article>
     </section>

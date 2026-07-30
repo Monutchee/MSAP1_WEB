@@ -208,11 +208,14 @@ export interface WaveformStatus {
   running: boolean
   active_session: boolean
   sample_rate_hz: number
+  transport_ring_blocks: number
   blocks: number
   frames: number
   bytes: number
   invalid_blocks: number
   sequence_gaps: number
+  transport_overrun_blocks: number
+  materialization_failures: number
   history_oldest_sequence: number
   history_latest_sequence: number
   history_capacity_frames: number
