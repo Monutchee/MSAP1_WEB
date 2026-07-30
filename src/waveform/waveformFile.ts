@@ -204,18 +204,34 @@ export function waveformEnvelope(
   converted: boolean,
   width = 1200,
   height = 88,
+  firstFrame = 0,
+  lastFrame = waveform.frameCount,
 ): WaveformEnvelope {
   const channel = waveform.channels[channelIndex]
-  const bucketCount = Math.max(1, Math.min(width, waveform.frameCount))
-  const samplesPerBucket = Math.max(1, Math.ceil(waveform.frameCount / bucketCount))
+  const windowFirst = Math.max(0, Math.min(
+    waveform.frameCount - 1, Math.floor(firstFrame),
+  ))
+  const windowLast = Math.max(windowFirst + 1, Math.min(
+    waveform.frameCount, Math.ceil(lastFrame),
+  ))
+  const windowFrames = windowLast - windowFirst
+  const bucketCount = Math.max(1, Math.min(width, windowFrames))
   const minima = new Array<number>(bucketCount)
   const maxima = new Array<number>(bucketCount)
   let captureMinimum = Number.POSITIVE_INFINITY
   let captureMaximum = Number.NEGATIVE_INFINITY
 
   for (let bucket = 0; bucket < bucketCount; ++bucket) {
-    const first = bucket * samplesPerBucket
-    const last = Math.min(waveform.frameCount, first + samplesPerBucket)
+    /*
+     * Proportional boundaries guarantee that every bucket contains at least
+     * one frame when bucketCount <= frameCount. Using ceil(samples/buckets)
+     * can leave empty tail buckets, producing Infinity SVG coordinates and
+     * making the browser discard the complete waveform polygon.
+     */
+    const first = windowFirst +
+      Math.floor(bucket * windowFrames / bucketCount)
+    const last = windowFirst +
+      Math.floor((bucket + 1) * windowFrames / bucketCount)
     let minimum = Number.POSITIVE_INFINITY
     let maximum = Number.NEGATIVE_INFINITY
     for (let frame = first; frame < last; ++frame) {
@@ -223,10 +239,6 @@ export function waveformEnvelope(
       const value = converted ? convertedSample(raw, channel) ?? raw : raw
       minimum = Math.min(minimum, value)
       maximum = Math.max(maximum, value)
-    }
-    if (last === first) {
-      minimum = 0
-      maximum = 0
     }
     minima[bucket] = minimum
     maxima[bucket] = maximum

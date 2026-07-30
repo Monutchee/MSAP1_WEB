@@ -32,6 +32,16 @@
   opacity: .5;
 }
 
+.waveform-session-actions .waveform-delete {
+  border-color: rgba(255, 107, 107, .4);
+  color: #ff8c8c;
+}
+
+.waveform-session-actions .waveform-delete:hover {
+  border-color: #ff6b6b;
+  color: #ffb0b0;
+}
+
 .waveform-library,
 .waveform-viewer {
   overflow: hidden;
@@ -157,7 +167,7 @@
 
 .waveform-viewer-controls {
   display: grid;
-  grid-template-columns: minmax(260px, .6fr) minmax(420px, 1.4fr);
+  grid-template-columns: minmax(230px, .55fr) minmax(390px, 1.25fr) minmax(300px, .9fr);
   gap: 1.5rem;
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--line);
@@ -195,32 +205,53 @@
   padding: 0;
 }
 
+.waveform-viewport-controls {
+  align-content: start;
+}
+
+.waveform-viewport-controls button {
+  padding: .45rem .65rem;
+}
+
+.waveform-viewport-controls button:disabled {
+  cursor: default;
+  opacity: .4;
+}
+
+.waveform-viewport-controls > span {
+  align-self: center;
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: .62rem;
+}
+
 .waveform-plots {
   display: grid;
   padding: 1rem 1.5rem;
 }
 
 .waveform-plot {
+  --waveform-color: #54e2a4;
   display: grid;
   grid-template-columns: 165px minmax(0, 1fr);
   gap: 1rem;
   min-height: 104px;
   padding: .5rem 0;
   border-bottom: 1px solid rgba(36, 54, 61, .65);
-  color: #54e2a4;
+  color: var(--waveform-color);
 }
 
 .waveform-plot:last-child {
   border-bottom: 0;
 }
 
-.waveform-plot.channel-0 { color: #5fa8ff; }
-.waveform-plot.channel-1 { color: #ff8d4d; }
-.waveform-plot.channel-2 { color: #54d4af; }
-.waveform-plot.channel-3 { color: #ffbd5c; }
-.waveform-plot.channel-4 { color: #e06da9; }
-.waveform-plot.channel-5 { color: #64d467; }
-.waveform-plot.channel-6 { color: #9c8cff; }
+.waveform-plot.channel-0 { --waveform-color: #5fa8ff; }
+.waveform-plot.channel-1 { --waveform-color: #ff8d4d; }
+.waveform-plot.channel-2 { --waveform-color: #54d4af; }
+.waveform-plot.channel-3 { --waveform-color: #ffbd5c; }
+.waveform-plot.channel-4 { --waveform-color: #e06da9; }
+.waveform-plot.channel-5 { --waveform-color: #64d467; }
+.waveform-plot.channel-6 { --waveform-color: #9c8cff; }
 
 .waveform-plot-label {
   display: grid;
@@ -243,6 +274,13 @@
   position: relative;
   min-width: 0;
   height: 88px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.waveform-plot-canvas[data-dragging="true"] {
+  cursor: grabbing;
 }
 
 .waveform-plot-canvas svg {
@@ -258,8 +296,11 @@
 }
 
 .waveform-envelope {
-  fill: currentColor;
-  opacity: .65;
+  fill: var(--waveform-color);
+  stroke: var(--waveform-color);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  opacity: .72;
 }
 
 .waveform-trigger-marker {

@@ -21,11 +21,13 @@ function duration(session: WaveformSession) {
     session.sample_rate_hz).toFixed(3)} s`
 }
 
-export function WaveformExplorer({ onUnauthorized }: {
+export function WaveformExplorer({ onUnauthorized, canDelete }: {
   onUnauthorized: () => void
+  canDelete: boolean
 }) {
   const [status, setStatus] = useState<WaveformStatus>()
   const [loadingFile, setLoadingFile] = useState('')
+  const [deletingSession, setDeletingSession] = useState(0)
   const [viewer, setViewer] = useState<{ filename: string; buffer: ArrayBuffer }>()
   const [error, setError] = useState('')
 
@@ -70,6 +72,27 @@ export function WaveformExplorer({ onUnauthorized }: {
     }
   }
 
+  async function remove(session: WaveformSession) {
+    if (session.state === 'capturing' ||
+      !window.confirm(`Delete waveform session ${session.id}? This cannot be undone.`))
+      return
+    setDeletingSession(session.id)
+    setError('')
+    try {
+      const next = await api.deleteWaveform(session.id)
+      setStatus(next)
+      if (viewer?.filename === session.filename) setViewer(undefined)
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to delete waveform')
+    } finally {
+      setDeletingSession(0)
+    }
+  }
+
   return <section className="waveform-explorer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Waveforms</p><h1>Capture history</h1>
@@ -108,6 +131,12 @@ export function WaveformExplorer({ onUnauthorized }: {
               {session.state === 'complete' && session.filename
                 ? <a href={waveformDownloadPath(session.filename)} download>Download</a>
                 : <span>File unavailable</span>}
+              {canDelete && <button className="waveform-delete" type="button"
+                disabled={session.state === 'capturing' ||
+                  deletingSession === session.id}
+                onClick={() => void remove(session)}>
+                {deletingSession === session.id ? 'Deleting…' : 'Delete'}
+              </button>}
             </div>
           </article>)}
         {(status?.sessions.length ?? 0) === 0 &&
@@ -117,7 +146,8 @@ export function WaveformExplorer({ onUnauthorized }: {
           </div>}
       </div>
     </section>
-    {viewer && <WaveformViewer filename={viewer.filename} buffer={viewer.buffer}
+    {viewer && <WaveformViewer key={viewer.filename}
+      filename={viewer.filename} buffer={viewer.buffer}
       onClose={() => setViewer(undefined)} />}
   </section>
 }
