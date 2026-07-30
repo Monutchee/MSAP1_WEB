@@ -192,6 +192,35 @@ export interface DeveloperAbout {
   components: ComponentFingerprint[]
 }
 
+export interface WaveformSession {
+  id: number
+  state: 'capturing' | 'complete' | 'incomplete'
+  trigger_sequence: number
+  first_sequence: number
+  last_sequence: number
+  trigger_tai_nanoseconds: number
+  sample_rate_hz: number
+  event_count: number
+  filename: string
+}
+
+export interface WaveformStatus {
+  running: boolean
+  active_session: boolean
+  sample_rate_hz: number
+  blocks: number
+  frames: number
+  bytes: number
+  invalid_blocks: number
+  sequence_gaps: number
+  history_oldest_sequence: number
+  history_latest_sequence: number
+  history_capacity_frames: number
+  completed_sessions: number
+  incomplete_sessions: number
+  sessions: WaveformSession[]
+}
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message)
@@ -231,6 +260,12 @@ export const api = {
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency', {
       method: 'PUT',
       body: JSON.stringify(configuration),
+    }),
+  waveforms: () => request<WaveformStatus>('/api/v1/waveforms'),
+  triggerWaveform: (pretrigger_ms: number, posttrigger_ms: number) =>
+    request<WaveformStatus>('/api/v1/waveforms/trigger', {
+      method: 'POST',
+      body: JSON.stringify({ pretrigger_ms, posttrigger_ms }),
     }),
   developerLogs: (query: DeveloperLogQuery = {}) => {
     const parameters = new URLSearchParams()

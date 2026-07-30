@@ -21,6 +21,10 @@
 - The Developer Overview reads `/api/v1/developer/temperatures` and displays
   the label-discovered LPD, FPD, and PL temperatures. Keep this diagnostic view
   administrator-only.
+- The administrator-only Configuration Waveform view uses
+  `GET /api/v1/waveforms` and `POST /api/v1/waveforms/trigger`. It displays
+  daemon-owned history/session state and must not access DMA devices or raw
+  waveform storage directly.
 - Keep the frontend target-only: the Yocto package installs `dist/` and must
   not install Node.js or `node_modules` on the device.
 - Before handing off a change, run `npm ci` and `npm run build`.
