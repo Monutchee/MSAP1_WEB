@@ -817,7 +817,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
       : activeView === 'waveforms'
-        ? <WaveformExplorer onUnauthorized={onUnauthorized} />
+        ? <WaveformExplorer onUnauthorized={onUnauthorized}
+            canDelete={session.role === 'admin'} />
       : activeView === 'configuration'
         ? <ConfigurationPage configuration={frequencyConfiguration}
             configurationStatus={configurationStatus}

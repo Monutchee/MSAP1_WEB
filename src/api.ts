@@ -289,6 +289,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ pretrigger_ms, posttrigger_ms }),
     }),
+  deleteWaveform: (session_id: number) =>
+    request<WaveformStatus>('/api/v1/waveforms', {
+      method: 'DELETE',
+      body: JSON.stringify({ session_id }),
+    }),
   developerLogs: (query: DeveloperLogQuery = {}) => {
     const parameters = new URLSearchParams()
     if (query.component) parameters.set('component', query.component)
