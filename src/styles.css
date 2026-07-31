@@ -115,6 +115,103 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 .frequency-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem; }
 .frequency-actions button { width: auto; padding: .7rem 1.4rem; }
 .frequency-actions span { color: var(--muted); font-size: .85rem; }
+.waveform-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.waveform-status-grid article {
+  min-width: 0;
+  display: grid;
+  gap: .45rem;
+  padding: 1.2rem 1.4rem;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.waveform-status-grid article:nth-child(3n) { border-right: 0; }
+.waveform-status-grid article:nth-last-child(-n+3) { border-bottom: 0; }
+.waveform-status-grid span {
+  color: var(--muted);
+  font-size: .66rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.waveform-status-grid strong {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 1.15rem;
+  font-weight: 500;
+}
+.waveform-status-grid small { color: var(--muted); font-size: .68rem; }
+.waveform-trigger-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 1.4rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.waveform-trigger-form label {
+  color: var(--muted);
+  font-size: .72rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.waveform-trigger-action {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.waveform-trigger-action button { width: auto; padding: .75rem 1.4rem; }
+.waveform-trigger-action span { color: var(--muted); font-size: .78rem; }
+.waveform-session-panel {
+  margin-top: 1rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.waveform-session-panel > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.2rem 1.4rem;
+  border-bottom: 1px solid var(--line);
+}
+.waveform-session-panel > header .eyebrow { margin-top: 0; }
+.waveform-session-panel > header > span { color: var(--muted); font-size: .68rem; }
+.waveform-session-list { display: grid; }
+.waveform-session-list article {
+  display: grid;
+  grid-template-columns: minmax(160px, .7fr) minmax(210px, 1fr) minmax(150px, .7fr) minmax(220px, 1fr);
+  align-items: center;
+  gap: 1rem;
+  padding: .9rem 1.4rem;
+  border-bottom: 1px solid var(--line);
+  font-size: .72rem;
+}
+.waveform-session-list article:last-child { border-bottom: 0; }
+.waveform-session-list article > div { display: flex; align-items: center; gap: .65rem; }
+.waveform-session-list code { color: #91a9af; overflow-wrap: anywhere; }
+.waveform-session-list article > span { color: var(--muted); }
+.session-state {
+  padding: .18rem .4rem;
+  border-radius: 1rem;
+  color: var(--muted);
+  background: rgba(120,144,153,.1);
+  font-size: .58rem;
+  text-transform: uppercase;
+}
+.session-state.capturing { color: var(--amber); background: rgba(255,189,92,.1); }
+.session-state.complete { color: var(--green); background: rgba(84,226,164,.1); }
+.session-state.incomplete { color: var(--red); background: rgba(255,111,106,.1); }
+.waveform-empty { padding: 2rem; color: var(--muted); text-align: center; }
 
 .developer-page, .about-page, .configuration-page { padding-top: 3rem; }
 .configuration-heading { margin-top: 0; }
@@ -418,6 +515,7 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
   .metric:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
   .log-panel-header { align-items: flex-start; flex-direction: column; }
   .log-actions { justify-content: flex-start; }
+  .waveform-session-list article { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 650px) {
   .app-shell { width: min(100% - 1.4rem, 1440px); }
@@ -439,4 +537,10 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
   .log-toolbar { grid-template-columns: 1fr; }
   .log-entry, .raw-log { padding-right: 1rem; padding-left: 1rem; }
   .log-footer { align-items: flex-start; flex-direction: column; }
+  .waveform-status-grid, .waveform-trigger-form { grid-template-columns: 1fr; }
+  .waveform-status-grid article { border-right: 0; border-bottom: 1px solid var(--line); }
+  .waveform-status-grid article:last-child { border-bottom: 0; }
+  .waveform-trigger-action { grid-column: 1; align-items: flex-start; flex-direction: column; }
+  .waveform-session-panel > header { align-items: flex-start; flex-direction: column; }
+  .waveform-session-list article { grid-template-columns: 1fr; }
 }

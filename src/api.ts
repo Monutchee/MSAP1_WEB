@@ -192,6 +192,39 @@ export interface DeveloperAbout {
   components: ComponentFingerprint[]
 }
 
+export interface WaveformSession {
+  id: number
+  state: 'capturing' | 'complete' | 'incomplete'
+  trigger_sequence: number
+  first_sequence: number
+  last_sequence: number
+  trigger_tai_nanoseconds: number
+  trigger_realtime_nanoseconds: number
+  sample_rate_hz: number
+  event_count: number
+  filename: string
+}
+
+export interface WaveformStatus {
+  running: boolean
+  active_session: boolean
+  sample_rate_hz: number
+  transport_ring_blocks: number
+  blocks: number
+  frames: number
+  bytes: number
+  invalid_blocks: number
+  sequence_gaps: number
+  transport_overrun_blocks: number
+  materialization_failures: number
+  history_oldest_sequence: number
+  history_latest_sequence: number
+  history_capacity_frames: number
+  completed_sessions: number
+  incomplete_sessions: number
+  sessions: WaveformSession[]
+}
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message)
@@ -214,6 +247,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T
 }
 
+async function requestBinary(path: string): Promise<ArrayBuffer> {
+  const response = await fetch(path, { credentials: 'same-origin' })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new ApiError(response.status, payload.error ?? `Request failed (${response.status})`)
+  }
+  return response.arrayBuffer()
+}
+
+export function waveformViewPath(filename: string) {
+  return `/protected/waveforms/view/${encodeURIComponent(filename)}`
+}
+
+export function waveformDownloadPath(filename: string) {
+  return `/protected/waveforms/download/${encodeURIComponent(filename)}`
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ status: string }>('/api/login', {
@@ -231,6 +281,18 @@ export const api = {
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency', {
       method: 'PUT',
       body: JSON.stringify(configuration),
+    }),
+  waveforms: () => request<WaveformStatus>('/api/v1/waveforms'),
+  waveformFile: (filename: string) => requestBinary(waveformViewPath(filename)),
+  triggerWaveform: (pretrigger_ms: number, posttrigger_ms: number) =>
+    request<WaveformStatus>('/api/v1/waveforms/trigger', {
+      method: 'POST',
+      body: JSON.stringify({ pretrigger_ms, posttrigger_ms }),
+    }),
+  deleteWaveform: (session_id: number) =>
+    request<WaveformStatus>('/api/v1/waveforms', {
+      method: 'DELETE',
+      body: JSON.stringify({ session_id }),
     }),
   developerLogs: (query: DeveloperLogQuery = {}) => {
     const parameters = new URLSearchParams()

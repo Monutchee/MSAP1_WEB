@@ -29,6 +29,12 @@ updates using journald cursors. Journal access is provided only through the
 authenticated backend API; the browser never reads the system journal
 directly.
 
+Administrators can open **Configuration → Waveform** to inspect raw history
+capacity, sequence continuity, and completed sessions, then trigger a manual
+pre/post capture. The browser sends only the trigger request; the acquisition
+daemon owns the dedicated waveform DMA, history, time correlation, and file
+materialization.
+
 Node.js 20.19 or newer is required (the Yocto recipe currently builds with
 Node.js 20.20).
 

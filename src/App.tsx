@@ -2,8 +2,9 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
   api, ApiError, DeveloperAbout, DeveloperLogEntry, FrequencyConfiguration, LogPriority,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
-  SystemAbout, SystemHealth,
+  SystemAbout, SystemHealth, WaveformStatus,
 } from './api'
+import { WaveformExplorer } from './waveform/WaveformExplorer'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -537,21 +538,121 @@ function DeveloperPage({ onUnauthorized, health, readings }: {
   </section>
 }
 
-function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit }: {
+function WaveformConfiguration({ onUnauthorized }: {
+  onUnauthorized: () => void
+}) {
+  const [status, setStatus] = useState<WaveformStatus>()
+  const [pretriggerMs, setPretriggerMs] = useState(10000)
+  const [posttriggerMs, setPosttriggerMs] = useState(10000)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await api.waveforms())
+      setError('')
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to read waveform status')
+    }
+  }, [onUnauthorized])
+
+  useEffect(() => {
+    let active = true
+    const refresh = async () => {
+      if (active) await load()
+    }
+    void refresh()
+    const timer = window.setInterval(refresh, 1000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [load])
+
+  async function trigger(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('Arming capture…')
+    setError('')
+    try {
+      const updated = await api.triggerWaveform(pretriggerMs, posttriggerMs)
+      setStatus(updated)
+      setMessage(updated.active_session
+        ? 'Capture active; overlapping triggers will extend this session.'
+        : 'Capture request accepted.')
+    } catch (reason) {
+      setMessage('')
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to trigger waveform capture')
+    } finally { setBusy(false) }
+  }
+
+  const retainedSeconds = status?.sample_rate_hz
+    ? status.history_capacity_frames / status.sample_rate_hz
+    : 0
+
+  return <div className="waveform-configuration">
+    <section className="section-heading configuration-heading">
+      <div><p className="eyebrow">Waveform</p><h2>Pre/post-trigger capture</h2></div>
+      <span>Continuous 8-channel DDR history</span>
+    </section>
+    {error && <div className="error-banner"><strong>Waveform unavailable</strong><span>{error}</span></div>}
+    <section className="waveform-status-grid">
+      <article><span>Waveform DMA</span><strong>{status?.running ? 'Running' : 'Stopped'}</strong></article>
+      <article><span>History</span><strong>{status ? formatBytes(status.history_capacity_frames * 32) : '—'}</strong>
+        <small>{retainedSeconds ? `${retainedSeconds.toFixed(1)} seconds` : 'waiting for sample rate'}</small></article>
+      <article><span>DMA blocks</span><strong>{formatCount(status?.blocks)}</strong></article>
+      <article><span>Sequence gaps</span><strong>{formatCount(status?.sequence_gaps)}</strong></article>
+      <article><span>Transport overruns</span><strong>{formatCount(status?.transport_overrun_blocks)}</strong>
+        <small>{status ? `${status.transport_ring_blocks} DMA-block ring` : 'transport status unavailable'}</small></article>
+      <article><span>File write failures</span><strong>{formatCount(status?.materialization_failures)}</strong></article>
+      <article><span>Active capture</span><strong>{status?.active_session ? 'Yes' : 'No'}</strong></article>
+      <article><span>Completed files</span><strong>{formatCount(status?.completed_sessions)}</strong></article>
+    </section>
+    <form className="waveform-trigger-form" onSubmit={trigger}>
+      <label>History before trigger (ms)<input type="number" min="0" max="120000"
+        value={pretriggerMs} onChange={(event) => setPretriggerMs(Number(event.target.value))} /></label>
+      <label>Capture after trigger (ms)<input type="number" min="0" max="120000"
+        value={posttriggerMs} onChange={(event) => setPosttriggerMs(Number(event.target.value))} /></label>
+      <div className="waveform-trigger-action">
+        <button type="submit" disabled={busy || !status?.running}>
+          {busy ? 'Triggering…' : 'Trigger waveform'}
+        </button>
+        <span>{message}</span>
+      </div>
+    </form>
+  </div>
+}
+
+function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
+  onUnauthorized }: {
   configuration: FrequencyConfiguration | undefined
   configurationStatus: string
   onChange: (configuration: FrequencyConfiguration) => void
   onSubmit: (event: FormEvent) => void
+  onUnauthorized: () => void
 }) {
+  const [activeTab, setActiveTab] = useState<'meter' | 'waveform'>('meter')
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
         <p>Configure programmable-logic measurement behavior.</p></div>
     </div>
     <nav className="developer-subtabs" aria-label="Configuration sections">
-      <button className="active" type="button" aria-current="page">Meter</button>
+      <button className={activeTab === 'meter' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'meter' ? 'page' : undefined}
+        onClick={() => setActiveTab('meter')}>Meter</button>
+      <button className={activeTab === 'waveform' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'waveform' ? 'page' : undefined}
+        onClick={() => setActiveTab('waveform')}>Waveform</button>
     </nav>
-    <section className="section-heading configuration-heading">
+    {activeTab === 'meter' ? <>
+      <section className="section-heading configuration-heading">
       <div><p className="eyebrow">Frequency</p><h2>Zero-crossing configuration</h2></div>
       <span>Reference: CH6 VLA</span>
     </section>
@@ -594,7 +695,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         })} /></label>
       <div className="frequency-actions"><button type="submit">Apply</button>
         <span>{configurationStatus}</span></div>
-    </form>}
+    </form>}</> : <WaveformConfiguration onUnauthorized={onUnauthorized} />}
   </section>
 }
 
@@ -604,7 +705,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   onUnauthorized: () => void
 }) {
   const [activeView, setActiveView] =
-    useState<'dashboard' | 'configuration' | 'about' | 'developer'>('dashboard')
+    useState<'dashboard' | 'waveforms' | 'configuration' | 'about' | 'developer'>('dashboard')
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
@@ -696,6 +797,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       <button type="button" className={activeView === 'dashboard' ? 'active' : ''}
         aria-current={activeView === 'dashboard' ? 'page' : undefined}
         onClick={() => setActiveView('dashboard')}>Dashboard</button>
+      <button type="button" className={activeView === 'waveforms' ? 'active' : ''}
+        aria-current={activeView === 'waveforms' ? 'page' : undefined}
+        onClick={() => setActiveView('waveforms')}>Waveforms</button>
       {session.role === 'admin' && <button type="button"
         className={activeView === 'configuration' ? 'active' : ''}
         aria-current={activeView === 'configuration' ? 'page' : undefined}
@@ -712,11 +816,15 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       ? <DeveloperPage onUnauthorized={onUnauthorized} health={health} readings={readings} />
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
+      : activeView === 'waveforms'
+        ? <WaveformExplorer onUnauthorized={onUnauthorized}
+            canDelete={session.role === 'admin'} />
       : activeView === 'configuration'
         ? <ConfigurationPage configuration={frequencyConfiguration}
             configurationStatus={configurationStatus}
             onChange={setFrequencyConfiguration}
-            onSubmit={saveFrequencyConfiguration} />
+            onSubmit={saveFrequencyConfiguration}
+            onUnauthorized={onUnauthorized} />
       : <>
     <section className="hero">
       <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1><p>Mean-corrected 200 ms RMS calculated in programmable logic</p></div>
