@@ -4,7 +4,8 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
-  ParsedWaveform, parseWaveform, waveformEnvelope,
+  convertedSample, ParsedWaveform, parseWaveform, rawSample,
+  waveformEnvelope, waveformRange,
 } from './waveformFile'
 
 const PLOT_WIDTH = 1200
@@ -22,6 +23,8 @@ interface PanGesture {
   width: number
   viewport: FrameWindow
 }
+
+type VerticalScale = 'auto' | 'fixed'
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, value))
@@ -56,24 +59,46 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   const [viewport, setViewport] = useState<FrameWindow>(
     () => ({ first: 0, last: waveform.frameCount }),
   )
+  const [verticalScale, setVerticalScale] = useState<VerticalScale>('auto')
+  const [cursorFrame, setCursorFrame] = useState<number>()
   const [dragging, setDragging] = useState(false)
+  const plotsRef = useRef<HTMLDivElement>(null)
   const panGesture = useRef<PanGesture>()
 
   useEffect(() => {
     setViewport({ first: 0, last: waveform.frameCount })
     setEnabled(new Set(waveform.channels.map((_, index) => index)))
+    setVerticalScale('auto')
+    setCursorFrame(undefined)
     panGesture.current = undefined
     setDragging(false)
   }, [waveform])
 
+  useEffect(() => {
+    const plots = plotsRef.current
+    if (!plots) return
+    /*
+     * React delegates wheel events through a passive listener in some browser
+     * configurations. A native non-passive listener is required to guarantee
+     * that a zoom gesture over the plots cannot scroll the containing page.
+     */
+    const captureWheel = (event: WheelEvent) => event.preventDefault()
+    plots.addEventListener('wheel', captureWheel, { passive: false })
+    return () => plots.removeEventListener('wheel', captureWheel)
+  }, [])
+
   const converted = displayMode === 'converted'
+  const wholeCaptureRanges = useMemo(() => waveform.channels.map((_, index) =>
+    waveformRange(waveform, index, converted),
+  ), [waveform, converted])
   const envelopes = useMemo(() => waveform.channels.map((channel, index) => ({
     channel,
     envelope: waveformEnvelope(
       waveform, index, converted, PLOT_WIDTH, PLOT_HEIGHT,
       viewport.first, viewport.last,
+      verticalScale === 'fixed' ? wholeCaptureRanges[index] : undefined,
     ),
-  })), [waveform, converted, viewport])
+  })), [waveform, converted, viewport, verticalScale, wholeCaptureRanges])
   const durationSeconds = waveform.sampleRateHz
     ? waveform.frameCount / waveform.sampleRateHz
     : 0
@@ -89,6 +114,9 @@ export function WaveformViewer({ filename, buffer, onClose }: {
     ? clamp((triggerIndex - viewport.first) / (visibleFrames - 1) * 100, 0, 100)
     : 0
   const zoomLevel = waveform.frameCount / visibleFrames
+  const cursorPercent = cursorFrame === undefined || visibleFrames <= 1
+    ? undefined
+    : clamp((cursorFrame - viewport.first) / (visibleFrames - 1) * 100, 0, 100)
 
   function normalizedWindow(first: number, frames: number): FrameWindow {
     const boundedFrames = clamp(
@@ -130,7 +158,7 @@ export function WaveformViewer({ filename, buffer, onClose }: {
 
   function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
     if (event.deltaY === 0) return
-    event.preventDefault()
+    event.stopPropagation()
     const bounds = event.currentTarget.getBoundingClientRect()
     const anchor = bounds.width
       ? clamp((event.clientX - bounds.left) / bounds.width, 0, 1)
@@ -141,8 +169,21 @@ export function WaveformViewer({ filename, buffer, onClose }: {
     zoomAt(Math.exp(delta * .003), anchor)
   }
 
+  function updateCursor(event: ReactPointerEvent<HTMLDivElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const ratio = bounds.width
+      ? clamp((event.clientX - bounds.left) / bounds.width, 0, 1)
+      : 0
+    setCursorFrame(clamp(
+      viewport.first + Math.round(ratio * Math.max(0, visibleFrames - 1)),
+      viewport.first,
+      viewport.last - 1,
+    ))
+  }
+
   function beginPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return
+    updateCursor(event)
     const bounds = event.currentTarget.getBoundingClientRect()
     panGesture.current = {
       pointerId: event.pointerId,
@@ -155,6 +196,7 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   }
 
   function continuePan(event: ReactPointerEvent<HTMLDivElement>) {
+    updateCursor(event)
     const gesture = panGesture.current
     if (!gesture || gesture.pointerId !== event.pointerId) return
     const frames = gesture.viewport.last - gesture.viewport.first
@@ -170,6 +212,10 @@ export function WaveformViewer({ filename, buffer, onClose }: {
       event.currentTarget.releasePointerCapture(event.pointerId)
     panGesture.current = undefined
     setDragging(false)
+  }
+
+  function leavePlot() {
+    if (!panGesture.current) setCursorFrame(undefined)
   }
 
   function relativeTime(frame: number) {
@@ -217,6 +263,17 @@ export function WaveformViewer({ filename, buffer, onClose }: {
             CH{channel.sourceChannel} {channel.name}
           </label>)}
       </fieldset>
+      <fieldset>
+        <legend>Vertical scale</legend>
+        <label><input type="radio" name="waveform-scale" value="auto"
+          checked={verticalScale === 'auto'}
+          onChange={() => setVerticalScale('auto')} />
+          Auto (visible view)</label>
+        <label><input type="radio" name="waveform-scale" value="fixed"
+          checked={verticalScale === 'fixed'}
+          onChange={() => setVerticalScale('fixed')} />
+          Fixed (whole capture)</label>
+      </fieldset>
       <fieldset className="waveform-viewport-controls">
         <legend>View</legend>
         <button type="button" onClick={() => zoomAt(.5)}
@@ -234,13 +291,20 @@ export function WaveformViewer({ filename, buffer, onClose }: {
         <span>Wheel to zoom · drag to pan</span>
       </fieldset>
     </div>
-    <div className="waveform-plots">
+    <div className="waveform-plots" ref={plotsRef}>
       {envelopes.map(({ channel, envelope }, index) => enabled.has(index) &&
-        <article className={`waveform-plot channel-${index % 7}`} key={channel.sourceChannel}>
+        <article className={`waveform-plot channel-${index % 7}`}
+          key={channel.sourceChannel}>
           <div className="waveform-plot-label">
             <strong>CH{channel.sourceChannel} {channel.name}</strong>
             <span>{converted && channel.conversionValid ? channel.unit : 'ADC count'}</span>
             <code>{formatEngineering(envelope.minimum)} … {formatEngineering(envelope.maximum)}</code>
+            {cursorFrame !== undefined && <output>
+              {formatEngineering(converted && channel.conversionValid
+                ? convertedSample(rawSample(waveform, cursorFrame, index), channel) ?? 0
+                : rawSample(waveform, cursorFrame, index))}
+              {' '}{converted && channel.conversionValid ? channel.unit : 'count'}
+            </output>}
           </div>
           <div className="waveform-plot-canvas"
             data-dragging={dragging ? 'true' : 'false'}
@@ -249,15 +313,27 @@ export function WaveformViewer({ filename, buffer, onClose }: {
             onPointerDown={beginPan}
             onPointerMove={continuePan}
             onPointerUp={endPan}
-            onPointerCancel={endPan}>
+            onPointerCancel={endPan}
+            onPointerLeave={leavePlot}>
             <svg viewBox={`0 0 ${PLOT_WIDTH} ${PLOT_HEIGHT}`}
               preserveAspectRatio="none" aria-hidden="true">
-              <line x1="0" y1={PLOT_HEIGHT / 2} x2={PLOT_WIDTH}
-                y2={PLOT_HEIGHT / 2} className="waveform-zero-line" />
+              {envelope.scaleMinimum <= 0 && envelope.scaleMaximum >= 0 &&
+                <line x1="0"
+                  y1={PLOT_HEIGHT -
+                    (0 - envelope.scaleMinimum) /
+                    (envelope.scaleMaximum - envelope.scaleMinimum) * PLOT_HEIGHT}
+                  x2={PLOT_WIDTH}
+                  y2={PLOT_HEIGHT -
+                    (0 - envelope.scaleMinimum) /
+                    (envelope.scaleMaximum - envelope.scaleMinimum) * PLOT_HEIGHT}
+                  className="waveform-zero-line" />}
               <polygon points={envelope.points} className="waveform-envelope" />
             </svg>
             {triggerInViewport &&
               <i className="waveform-trigger-marker" style={{ left: `${triggerPercent}%` }} />}
+            {cursorFrame !== undefined && cursorPercent !== undefined &&
+              <i className="waveform-cursor-marker"
+                style={{ left: `${cursorPercent}%` }} />}
           </div>
         </article>)}
     </div>
@@ -269,6 +345,8 @@ export function WaveformViewer({ filename, buffer, onClose }: {
       <span>View {relativeTime(viewport.first)} … {relativeTime(viewport.last - 1)}
         {' '}· {visibleFrames.toLocaleString()} frames · {zoomLevel.toFixed(2)}×</span>
       <span>{waveform.events.length} event marker{waveform.events.length === 1 ? '' : 's'}</span>
+      {cursorFrame !== undefined &&
+        <span>Cursor frame {cursorFrame.toLocaleString()} · {relativeTime(cursorFrame)}</span>}
       <span>{waveform.frameCount.toLocaleString()} total frames</span>
     </footer>
   </section>

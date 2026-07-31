@@ -167,7 +167,11 @@
 
 .waveform-viewer-controls {
   display: grid;
-  grid-template-columns: minmax(230px, .55fr) minmax(390px, 1.25fr) minmax(300px, .9fr);
+  grid-template-columns:
+    minmax(210px, .7fr)
+    minmax(360px, 1.25fr)
+    minmax(220px, .75fr)
+    minmax(300px, .9fr);
   gap: 1.5rem;
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--line);
@@ -228,6 +232,7 @@
 .waveform-plots {
   display: grid;
   padding: 1rem 1.5rem;
+  overscroll-behavior: contain;
 }
 
 .waveform-plot {
@@ -270,6 +275,13 @@
   font-size: .64rem;
 }
 
+.waveform-plot-label output {
+  color: var(--waveform-color);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: .68rem;
+  font-weight: 700;
+}
+
 .waveform-plot-canvas {
   position: relative;
   min-width: 0;
@@ -310,6 +322,16 @@
   width: 1px;
   background: #e8f1f1;
   box-shadow: 0 0 6px rgba(255, 255, 255, .4);
+}
+
+.waveform-cursor-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+  background: var(--waveform-color);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--waveform-color) 70%, transparent);
 }
 
 .waveform-viewer-footer {

@@ -195,7 +195,59 @@ export function convertedSample(raw: number, channel: WaveformChannel) {
 export interface WaveformEnvelope {
   minimum: number
   maximum: number
+  scaleMinimum: number
+  scaleMaximum: number
   points: string
+}
+
+export interface WaveformRange {
+  minimum: number
+  maximum: number
+}
+
+function sampleValue(
+  waveform: ParsedWaveform,
+  frame: number,
+  channelIndex: number,
+  converted: boolean,
+) {
+  const raw = rawSample(waveform, frame, channelIndex)
+  return converted
+    ? convertedSample(raw, waveform.channels[channelIndex]) ?? raw
+    : raw
+}
+
+export function waveformRange(
+  waveform: ParsedWaveform,
+  channelIndex: number,
+  converted: boolean,
+  firstFrame = 0,
+  lastFrame = waveform.frameCount,
+): WaveformRange {
+  const windowFirst = Math.max(0, Math.min(
+    waveform.frameCount - 1, Math.floor(firstFrame),
+  ))
+  const windowLast = Math.max(windowFirst + 1, Math.min(
+    waveform.frameCount, Math.ceil(lastFrame),
+  ))
+  let minimum = Number.POSITIVE_INFINITY
+  let maximum = Number.NEGATIVE_INFINITY
+  for (let frame = windowFirst; frame < windowLast; ++frame) {
+    const value = sampleValue(waveform, frame, channelIndex, converted)
+    minimum = Math.min(minimum, value)
+    maximum = Math.max(maximum, value)
+  }
+  return { minimum, maximum }
+}
+
+function expandedRange(range: WaveformRange): WaveformRange {
+  const magnitude = Math.max(Math.abs(range.minimum), Math.abs(range.maximum), 1)
+  const span = Math.max(range.maximum - range.minimum, magnitude * 1e-6)
+  const padding = span * .06
+  return {
+    minimum: range.minimum - padding,
+    maximum: range.maximum + padding,
+  }
 }
 
 export function waveformEnvelope(
@@ -206,8 +258,8 @@ export function waveformEnvelope(
   height = 88,
   firstFrame = 0,
   lastFrame = waveform.frameCount,
+  verticalRange?: WaveformRange,
 ): WaveformEnvelope {
-  const channel = waveform.channels[channelIndex]
   const windowFirst = Math.max(0, Math.min(
     waveform.frameCount - 1, Math.floor(firstFrame),
   ))
@@ -235,8 +287,7 @@ export function waveformEnvelope(
     let minimum = Number.POSITIVE_INFINITY
     let maximum = Number.NEGATIVE_INFINITY
     for (let frame = first; frame < last; ++frame) {
-      const raw = rawSample(waveform, frame, channelIndex)
-      const value = converted ? convertedSample(raw, channel) ?? raw : raw
+      const value = sampleValue(waveform, frame, channelIndex, converted)
       minimum = Math.min(minimum, value)
       maximum = Math.max(maximum, value)
     }
@@ -246,10 +297,14 @@ export function waveformEnvelope(
     captureMaximum = Math.max(captureMaximum, maximum)
   }
 
-  const span = Math.max(Number.EPSILON, captureMaximum - captureMinimum)
+  const scale = expandedRange(verticalRange ?? {
+    minimum: captureMinimum,
+    maximum: captureMaximum,
+  })
+  const span = scale.maximum - scale.minimum
   const point = (bucket: number, value: number) => {
     const x = bucketCount === 1 ? 0 : bucket / (bucketCount - 1) * width
-    const y = height - (value - captureMinimum) / span * height
+    const y = height - (value - scale.minimum) / span * height
     return `${x.toFixed(2)},${y.toFixed(2)}`
   }
   const upper = maxima.map((value, bucket) => point(bucket, value))
@@ -257,6 +312,8 @@ export function waveformEnvelope(
   return {
     minimum: captureMinimum,
     maximum: captureMaximum,
+    scaleMinimum: scale.minimum,
+    scaleMaximum: scale.maximum,
     points: [...upper, ...lower].join(' '),
   }
 }
