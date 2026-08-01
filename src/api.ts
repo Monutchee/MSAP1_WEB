@@ -47,6 +47,13 @@ export interface AdcHealth {
   spi_retry_recoveries: number
   spi_last_failed_register: number
   spi_last_received_header: number
+  source: 'physical' | 'simulator' | 'unknown'
+  physical_diagnostics_available: boolean
+  simulator_healthy: boolean
+  simulator_active_generation: number
+  simulator_frame_count: number
+  simulator_saturation_count: number
+  simulator_missed_sample_count: number
   degraded_reasons: HealthReason[]
 }
 
@@ -109,6 +116,31 @@ export interface FrequencyConfiguration {
   minimum_hz: number
   maximum_hz: number
   hysteresis_volts: number
+}
+
+export interface AdcSource {
+  source: 'physical' | 'simulator'
+  configuration_generation: number
+  active: boolean
+  healthy: boolean
+}
+
+export interface AdcSimulatorChannel {
+  channel: number
+  rms: number
+  phase_degrees: number
+}
+
+export interface AdcSimulatorConfiguration {
+  frequency_hz: number
+  channels: AdcSimulatorChannel[]
+  active_source: 'physical' | 'simulator'
+  configuration_generation: number
+  active_generation: number
+  generated_frames: number
+  saturation_count: number
+  missed_sample_count: number
+  healthy: boolean
 }
 
 export type LogPriority =
@@ -279,6 +311,19 @@ export const api = {
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency'),
   updateFrequencyConfiguration: (configuration: FrequencyConfiguration) =>
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency', {
+      method: 'PUT',
+      body: JSON.stringify(configuration),
+    }),
+  adcSource: () => request<AdcSource>('/api/v1/adc/source'),
+  updateAdcSource: (source: AdcSource['source']) =>
+    request<AdcSource>('/api/v1/adc/source', {
+      method: 'PUT',
+      body: JSON.stringify({ source }),
+    }),
+  adcSimulator: () =>
+    request<AdcSimulatorConfiguration>('/api/v1/adc/simulator'),
+  updateAdcSimulator: (configuration: AdcSimulatorConfiguration) =>
+    request<AdcSimulatorConfiguration>('/api/v1/adc/simulator', {
       method: 'PUT',
       body: JSON.stringify(configuration),
     }),

@@ -35,6 +35,12 @@ pre/post capture. The browser sends only the trigger request; the acquisition
 daemon owns the dedicated waveform DMA, history, time correlation, and file
 materialization.
 
+**Configuration → ADC Simulator** selects physical or simulated raw input and
+edits generator frequency plus per-channel RMS amplitude and phase for CH0
+through CH6. The backend applies changes through the acquisition daemon's
+transactional RPU/PL configuration path; the browser never accesses simulator
+registers directly.
+
 Node.js 20.19 or newer is required (the Yocto recipe currently builds with
 Node.js 20.20).
 

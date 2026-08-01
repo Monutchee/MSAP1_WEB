@@ -112,6 +112,16 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 .frequency-form label { display: flex; flex-direction: column; gap: .45rem; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; }
 .frequency-form input, .frequency-form select { border: 1px solid var(--line); border-radius: 8px; padding: .65rem .7rem; color: #ecf5f5; background: #0a151a; font: inherit; }
 .frequency-form .toggle { flex-direction: row; align-items: center; align-self: end; min-height: 2.7rem; }
+.simulator-source-panel { display: flex; align-items: end; gap: 1.25rem; margin-bottom: 1rem; padding: 1.2rem 1.5rem; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.simulator-source-panel label, .simulator-form label { display: flex; flex-direction: column; gap: .45rem; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; }
+.simulator-source-panel select, .simulator-form input { border: 1px solid var(--line); border-radius: 8px; padding: .65rem .7rem; color: #ecf5f5; background: #0a151a; font: inherit; }
+.simulator-form { padding: 1.4rem 1.5rem; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.simulator-summary { display: flex; align-items: end; flex-wrap: wrap; gap: 1.25rem; margin-bottom: 1.25rem; color: var(--muted); font: .78rem var(--mono); }
+.simulator-summary label { min-width: 210px; }
+.simulator-channel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .8rem; }
+.simulator-channel-grid fieldset { display: grid; gap: .7rem; margin: 0; padding: 1rem; border: 1px solid var(--line); border-radius: 10px; }
+.simulator-channel-grid legend { padding: 0 .35rem; color: var(--green); font: .78rem var(--mono); }
+.simulator-note { color: var(--muted); font-size: .82rem; }
 .frequency-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem; }
 .frequency-actions button { width: auto; padding: .7rem 1.4rem; }
 .frequency-actions span { color: var(--muted); font-size: .85rem; }
