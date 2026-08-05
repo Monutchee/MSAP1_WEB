@@ -770,7 +770,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         onChange={(event) => onChange({
           ...configuration, hysteresis_volts: Number(event.target.value),
         })} /></label>
-      <div className="frequency-actions"><button type="submit">Apply</button>
+      <div className="frequency-actions"><button type="submit">Stage change</button>
         <span>{configurationStatus}</span></div>
     </form>}</> : activeTab === 'simulator' ? <>
       <section className="section-heading configuration-heading">
