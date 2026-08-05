@@ -3,7 +3,7 @@ import {
   api, AdcSimulatorConfiguration, AdcSource, ApiError, DeveloperAbout,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
-  SystemAbout, SystemHealth, WaveformStatus,
+  SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
 } from './api'
 import { WaveformExplorer } from './waveform/WaveformExplorer'
 
@@ -24,6 +24,18 @@ function formatBytes(bytes: number | undefined) {
     unit += 1
   }
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
+}
+
+/**
+ * Applies one typed form edit and atomically persists it to active.json.
+ */
+async function saveSettings(
+  edit: (settings: ProductSettings) => void,
+): Promise<SettingsDocument> {
+  const active = await api.activeSettings()
+  const settings = structuredClone(active.settings)
+  edit(settings)
+  return api.saveSettings(settings)
 }
 
 function Sparkline({ values, healthy }: { values: number[]; healthy: boolean }) {
@@ -572,6 +584,23 @@ function WaveformConfiguration({ onUnauthorized }: {
     return () => { active = false; window.clearInterval(timer) }
   }, [load])
 
+  useEffect(() => {
+    let active = true
+    api.activeSettings().then((activeSettings) => {
+      if (!active) return
+      setPretriggerMs(activeSettings.settings.waveform.default_pretrigger_ms)
+      setPosttriggerMs(activeSettings.settings.waveform.default_posttrigger_ms)
+    }).catch((reason) => {
+      if (!active) return
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to read waveform defaults')
+    })
+    return () => { active = false }
+  }, [onUnauthorized])
+
   async function trigger(event: FormEvent) {
     event.preventDefault()
     setBusy(true)
@@ -590,6 +619,26 @@ function WaveformConfiguration({ onUnauthorized }: {
         return
       }
       setError(reason instanceof Error ? reason.message : 'Unable to trigger waveform capture')
+    } finally { setBusy(false) }
+  }
+
+  async function saveDefaults() {
+    setBusy(true)
+    setMessage('Saving defaults…')
+    setError('')
+    try {
+      await saveSettings((settings) => {
+        settings.waveform.default_pretrigger_ms = pretriggerMs
+        settings.waveform.default_posttrigger_ms = posttriggerMs
+      })
+      setMessage('Defaults applied and saved.')
+    } catch (reason) {
+      setMessage('')
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to save waveform defaults')
     } finally { setBusy(false) }
   }
 
@@ -624,6 +673,8 @@ function WaveformConfiguration({ onUnauthorized }: {
         <button type="submit" disabled={busy || !status?.running}>
           {busy ? 'Triggering…' : 'Trigger waveform'}
         </button>
+        <button className="secondary" type="button" onClick={() => void saveDefaults()}
+          disabled={busy}>Apply and save</button>
         <span>{message}</span>
       </div>
     </form>
@@ -646,7 +697,8 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onSimulatorSubmit: (event: FormEvent) => void
   onUnauthorized: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'meter' | 'simulator' | 'waveform'>('meter')
+  const [activeTab, setActiveTab] =
+    useState<'meter' | 'simulator' | 'waveform'>('meter')
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
@@ -705,7 +757,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         onChange={(event) => onChange({
           ...configuration, hysteresis_volts: Number(event.target.value),
         })} /></label>
-      <div className="frequency-actions"><button type="submit">Apply</button>
+      <div className="frequency-actions"><button type="submit">Apply and save</button>
         <span>{configurationStatus}</span></div>
     </form>}</> : activeTab === 'simulator' ? <>
       <section className="section-heading configuration-heading">
@@ -753,7 +805,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
           })}
         </div>
         <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC peaks before they are sent to PL.</p>
-        <div className="frequency-actions"><button type="submit">Apply simulator</button>
+        <div className="frequency-actions"><button type="submit">Apply and save</button>
           <span>{simulatorStatus}</span></div>
       </form>}
     </> : <WaveformConfiguration onUnauthorized={onUnauthorized} />}
@@ -799,9 +851,19 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
 
   useEffect(() => {
     let active = true
-    Promise.all([api.adcSource(), api.adcSimulator()])
-      .then(([source, configuration]) => {
-        if (active) { setAdcSource(source); setSimulator(configuration) }
+    Promise.all([
+      api.adcSource(), api.adcSimulator(), api.activeSettings(),
+    ])
+      .then(([source, configuration, activeSettings]) => {
+        if (active) {
+          setAdcSource({ ...source, source: activeSettings.settings.adc.source })
+          setSimulator({
+            ...configuration,
+            frequency_hz: activeSettings.settings.adc.simulator.frequency_hz,
+            channels: activeSettings.settings.adc.simulator.channels,
+          })
+          setFrequencyConfiguration(activeSettings.settings.metering.frequency)
+        }
       })
       .catch((reason) => { if (active) handleError(reason) })
     return () => { active = false }
@@ -813,18 +875,18 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   useEffect(() => {
     if (!health || health.adc.source === 'unknown') return
 
-    const source = health.adc.source
-    setAdcSource({
-      source,
+    const activeSource = health.adc.source
+    setAdcSource((current) => ({
+      source: current?.source ?? activeSource,
       configuration_generation: health.acquisition.configuration_generation,
       active: health.adc.capture_active,
-      healthy: source === 'simulator'
+      healthy: activeSource === 'simulator'
         ? health.adc.simulator_healthy
         : health.adc.healthy,
-    })
+    }))
     setSimulator((current) => current ? {
       ...current,
-      active_source: source,
+      active_source: activeSource,
       configuration_generation: health.acquisition.configuration_generation,
       active_generation: health.adc.simulator_active_generation,
       generated_frames: health.adc.simulator_frame_count,
@@ -834,22 +896,15 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     } : current)
   }, [health])
 
-  useEffect(() => {
-    let active = true
-    api.frequencyConfiguration()
-      .then((configuration) => { if (active) setFrequencyConfiguration(configuration) })
-      .catch((reason) => { if (active) handleError(reason) })
-    return () => { active = false }
-  }, [handleError])
-
   async function saveFrequencyConfiguration(event: FormEvent) {
     event.preventDefault()
     if (!frequencyConfiguration) return
-    setConfigurationStatus('Applying…')
+    setConfigurationStatus('Saving…')
     try {
-      const applied = await api.updateFrequencyConfiguration(frequencyConfiguration)
-      setFrequencyConfiguration(applied)
-      setConfigurationStatus('Applied and saved')
+      await saveSettings((settings) => {
+        settings.metering.frequency = frequencyConfiguration
+      })
+      setConfigurationStatus('Applied and saved.')
     } catch (reason) {
       setConfigurationStatus('')
       handleError(reason)
@@ -857,13 +912,11 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   }
 
   async function changeAdcSource(source: AdcSource['source']) {
-    setSourceStatus('Switching…')
+    setSourceStatus('Saving…')
     try {
-      const applied = await api.updateAdcSource(source)
-      setAdcSource(applied)
-      setSourceStatus('Applied and saved')
-      setSimulator((current) => current ? { ...current, active_source: source,
-        configuration_generation: applied.configuration_generation } : current)
+      await saveSettings((settings) => { settings.adc.source = source })
+      setAdcSource((current) => current ? { ...current, source } : current)
+      setSourceStatus('Applied and saved.')
     } catch (reason) {
       setSourceStatus('')
       handleError(reason)
@@ -873,11 +926,15 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   async function saveSimulator(event: FormEvent) {
     event.preventDefault()
     if (!simulator) return
-    setSimulatorStatus('Applying…')
+    setSimulatorStatus('Saving…')
     try {
-      const applied = await api.updateAdcSimulator(simulator)
-      setSimulator(applied)
-      setSimulatorStatus('Applied and saved')
+      await saveSettings((settings) => {
+        settings.adc.simulator = {
+          frequency_hz: simulator.frequency_hz,
+          channels: simulator.channels,
+        }
+      })
+      setSimulatorStatus('Applied and saved.')
     } catch (reason) {
       setSimulatorStatus('')
       handleError(reason)

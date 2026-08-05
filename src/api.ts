@@ -143,6 +143,66 @@ export interface AdcSimulatorConfiguration {
   healthy: boolean
 }
 
+export interface RmsSettings {
+  window_ms: number
+  remove_dc: boolean
+}
+
+export interface CurrentChannelConfiguration {
+  channel: number
+  name: string
+  enabled: boolean
+  adc_pga_gain: number
+  sensor_model: string
+  primary_rated_amps: number
+  secondary_rated_amps: number
+  burden_ohms: number
+  rated_output_millivolts: number
+  frontend_gain: number
+}
+
+export interface VoltageChannelConfiguration {
+  channel: number
+  name: string
+  enabled: boolean
+  adc_pga_gain: number
+  rin_ohms: number
+  rf_ohms: number
+}
+
+export interface ProductSettings {
+  schema_version: number
+  metering: {
+    sample_rate_hz: number
+    rms: RmsSettings
+    frequency: FrequencyConfiguration
+    conversion: {
+      profile_id: string
+      adc_reference_volts: number
+      current_channels: CurrentChannelConfiguration[]
+      voltage_channels: VoltageChannelConfiguration[]
+    }
+  }
+  adc: {
+    source: AdcSource['source']
+    simulator: {
+      frequency_hz: number
+      channels: AdcSimulatorChannel[]
+    }
+  }
+  waveform: {
+    default_pretrigger_ms: number
+    default_posttrigger_ms: number
+  }
+}
+
+export interface SettingsDocument {
+  content_hash: string
+  recovery_mode: boolean
+  recovery_reason: string
+  settings: ProductSettings
+}
+
 export type LogPriority =
   | 'emergency'
   | 'alert'
@@ -326,6 +386,17 @@ export const api = {
     request<AdcSimulatorConfiguration>('/api/v1/adc/simulator', {
       method: 'PUT',
       body: JSON.stringify(configuration),
+    }),
+  activeSettings: () => request<SettingsDocument>('/api/v1/settings/active'),
+  saveSettings: (settings: ProductSettings) =>
+    request<SettingsDocument>('/api/v1/settings/active', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    }),
+  factoryResetSettings: () =>
+    request<SettingsDocument>('/api/v1/settings/factory-reset', {
+      method: 'POST',
+      body: JSON.stringify({ confirmed: true }),
     }),
   waveforms: () => request<WaveformStatus>('/api/v1/waveforms'),
   waveformFile: (filename: string) => requestBinary(waveformViewPath(filename)),

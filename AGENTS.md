@@ -25,6 +25,11 @@
   `GET /api/v1/waveforms` and `POST /api/v1/waveforms/trigger`. It displays
   daemon-owned history/session state and must not access DMA devices or raw
   waveform storage directly.
+- Persistent product configuration is owned by `msap1-settings`. Typed
+  Configuration forms update the complete document through
+  `PUT /api/v1/settings/active`; a successful request hot-applies and
+  atomically saves the settings. Do not persist settings in browser storage.
+  Factory reset remains an administrator-only, explicitly confirmed operation.
 - The authenticated Waveforms explorer lists persisted sessions returned by
   `GET /api/v1/waveforms`. View/download requests use the WebEngine-protected
   `/protected/waveforms/` nginx routes. Keep binary parsing and plotting in the
