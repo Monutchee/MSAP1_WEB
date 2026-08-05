@@ -143,6 +143,86 @@ export interface AdcSimulatorConfiguration {
   healthy: boolean
 }
 
+export interface RmsSettings {
+  window_ms: number
+  remove_dc: boolean
+}
+
+export interface CurrentChannelConfiguration {
+  channel: number
+  name: string
+  enabled: boolean
+  adc_pga_gain: number
+  sensor_model: string
+  primary_rated_amps: number
+  secondary_rated_amps: number
+  burden_ohms: number
+  rated_output_millivolts: number
+  frontend_gain: number
+}
+
+export interface VoltageChannelConfiguration {
+  channel: number
+  name: string
+  enabled: boolean
+  adc_pga_gain: number
+  rin_ohms: number
+  rf_ohms: number
+}
+
+export interface ProductSettings {
+  schema_version: number
+  system: { retained_revisions: number }
+  metering: {
+    sample_rate_hz: number
+    rms: RmsSettings
+    frequency: FrequencyConfiguration
+    conversion: {
+      profile_id: string
+      adc_reference_volts: number
+      current_channels: CurrentChannelConfiguration[]
+      voltage_channels: VoltageChannelConfiguration[]
+    }
+  }
+  adc: {
+    source: AdcSource['source']
+    simulator: {
+      frequency_hz: number
+      channels: AdcSimulatorChannel[]
+    }
+  }
+  waveform: {
+    default_pretrigger_ms: number
+    default_posttrigger_ms: number
+  }
+}
+
+export interface SettingsDocument {
+  revision: number
+  draft_generation: number
+  settings: ProductSettings
+}
+
+export interface SettingsDiff {
+  dirty: boolean
+  unified: string
+}
+
+export interface SettingsRevision {
+  revision: number
+  hash: string
+}
+
+export interface SettingsHistory {
+  revisions: SettingsRevision[]
+}
+
+export interface SettingsTransaction {
+  transaction_id: string
+  revision: number
+  status: string
+}
+
 export type LogPriority =
   | 'emergency'
   | 'alert'
@@ -326,6 +406,41 @@ export const api = {
     request<AdcSimulatorConfiguration>('/api/v1/adc/simulator', {
       method: 'PUT',
       body: JSON.stringify(configuration),
+    }),
+  activeSettings: () => request<SettingsDocument>('/api/v1/settings/active'),
+  draftSettings: () => request<SettingsDocument>('/api/v1/settings/draft'),
+  settingsDiff: () => request<SettingsDiff>('/api/v1/settings/diff'),
+  settingsHistory: () => request<SettingsHistory>('/api/v1/settings/history'),
+  settingsRevision: (revision: number) =>
+    request<SettingsDocument>(`/api/v1/settings/revision?revision=${revision}`),
+  patchSettings: (document: SettingsDocument) =>
+    request<SettingsDocument>('/api/v1/settings/draft', {
+      method: 'PUT',
+      body: JSON.stringify({
+        expected_draft_generation: document.draft_generation,
+        settings: document.settings,
+      }),
+    }),
+  commitSettings: (document: SettingsDocument, message: string) =>
+    request<SettingsTransaction>('/api/v1/settings/commit', {
+      method: 'POST',
+      body: JSON.stringify({
+        expected_base_revision: document.revision,
+        expected_draft_generation: document.draft_generation,
+        message,
+      }),
+    }),
+  discardSettings: () =>
+    request<{ discarded: boolean }>('/api/v1/settings/discard', { method: 'POST' }),
+  restoreSettings: (revision: number) =>
+    request<SettingsDocument>('/api/v1/settings/restore', {
+      method: 'POST',
+      body: JSON.stringify({ revision }),
+    }),
+  factoryResetSettings: () =>
+    request<SettingsTransaction>('/api/v1/settings/factory-reset', {
+      method: 'POST',
+      body: JSON.stringify({ confirmed: true }),
     }),
   waveforms: () => request<WaveformStatus>('/api/v1/waveforms'),
   waveformFile: (filename: string) => requestBinary(waveformViewPath(filename)),
