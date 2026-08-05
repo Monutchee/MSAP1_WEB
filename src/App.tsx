@@ -770,7 +770,9 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         onChange={(event) => onChange({
           ...configuration, hysteresis_volts: Number(event.target.value),
         })} /></label>
-      <div className="frequency-actions"><button type="submit">Stage change</button>
+      <div className="frequency-actions"><button type="submit">Stage for review</button>
+        <button className="secondary" type="button"
+          onClick={() => setActiveTab('changes')}>Review and commit</button>
         <span>{configurationStatus}</span></div>
     </form>}</> : activeTab === 'simulator' ? <>
       <section className="section-heading configuration-heading">
@@ -869,8 +871,10 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
 
   useEffect(() => {
     let active = true
-    Promise.all([api.adcSource(), api.adcSimulator(), api.draftSettings()])
-      .then(([source, configuration, draft]) => {
+    Promise.all([
+      api.adcSource(), api.adcSimulator(), api.draftSettings(), api.settingsDiff(),
+    ])
+      .then(([source, configuration, draft, difference]) => {
         if (active) {
           setAdcSource({ ...source, source: draft.settings.adc.source })
           setSimulator({
@@ -879,6 +883,12 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             channels: draft.settings.adc.simulator.channels,
           })
           setFrequencyConfiguration(draft.settings.metering.frequency)
+          setSettingsDirty(difference.dirty)
+          if (difference.dirty) {
+            setConfigurationStatus(
+              'An unsaved draft was recovered. Review and commit it in Changes.',
+            )
+          }
         }
       })
       .catch((reason) => { if (active) handleError(reason) })
@@ -921,7 +931,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         settings.metering.frequency = frequencyConfiguration
       })
       setSettingsDirty(true)
-      setConfigurationStatus('Staged. Review and commit in Changes.')
+      setConfigurationStatus('Staged, but not saved. Commit it in Changes.')
     } catch (reason) {
       setConfigurationStatus('')
       handleError(reason)
@@ -934,7 +944,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       await stageSettings((settings) => { settings.adc.source = source })
       setAdcSource((current) => current ? { ...current, source } : current)
       setSettingsDirty(true)
-      setSourceStatus('Staged. Review and commit in Changes.')
+      setSourceStatus('Staged, but not saved. Commit it in Changes.')
     } catch (reason) {
       setSourceStatus('')
       handleError(reason)
@@ -953,7 +963,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         }
       })
       setSettingsDirty(true)
-      setSimulatorStatus('Staged. Review and commit in Changes.')
+      setSimulatorStatus('Staged, but not saved. Commit it in Changes.')
     } catch (reason) {
       setSimulatorStatus('')
       handleError(reason)
