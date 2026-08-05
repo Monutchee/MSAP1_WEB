@@ -6,7 +6,6 @@ import {
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
 } from './api'
 import { WaveformExplorer } from './waveform/WaveformExplorer'
-import { SettingsManager } from './settings/SettingsManager'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -28,17 +27,15 @@ function formatBytes(bytes: number | undefined) {
 }
 
 /**
- * Applies one typed form edit to the shared persistent draft.  Every settings
- * page uses the generation returned by the authority so concurrent Web/CLI
- * edits are rejected instead of silently overwriting one another.
+ * Applies one typed form edit and atomically persists it to active.json.
  */
-async function stageSettings(
+async function saveSettings(
   edit: (settings: ProductSettings) => void,
 ): Promise<SettingsDocument> {
-  const draft = await api.draftSettings()
-  const settings = structuredClone(draft.settings)
+  const active = await api.activeSettings()
+  const settings = structuredClone(active.settings)
   edit(settings)
-  return api.patchSettings({ ...draft, settings })
+  return api.saveSettings(settings)
 }
 
 function Sparkline({ values, healthy }: { values: number[]; healthy: boolean }) {
@@ -554,9 +551,8 @@ function DeveloperPage({ onUnauthorized, health, readings }: {
   </section>
 }
 
-function WaveformConfiguration({ onUnauthorized, onSettingsDirtyChange }: {
+function WaveformConfiguration({ onUnauthorized }: {
   onUnauthorized: () => void
-  onSettingsDirtyChange: (dirty: boolean) => void
 }) {
   const [status, setStatus] = useState<WaveformStatus>()
   const [pretriggerMs, setPretriggerMs] = useState(10000)
@@ -590,10 +586,10 @@ function WaveformConfiguration({ onUnauthorized, onSettingsDirtyChange }: {
 
   useEffect(() => {
     let active = true
-    api.draftSettings().then((draft) => {
+    api.activeSettings().then((activeSettings) => {
       if (!active) return
-      setPretriggerMs(draft.settings.waveform.default_pretrigger_ms)
-      setPosttriggerMs(draft.settings.waveform.default_posttrigger_ms)
+      setPretriggerMs(activeSettings.settings.waveform.default_pretrigger_ms)
+      setPosttriggerMs(activeSettings.settings.waveform.default_posttrigger_ms)
     }).catch((reason) => {
       if (!active) return
       if (reason instanceof ApiError && reason.status === 401) {
@@ -626,24 +622,23 @@ function WaveformConfiguration({ onUnauthorized, onSettingsDirtyChange }: {
     } finally { setBusy(false) }
   }
 
-  async function stageDefaults() {
+  async function saveDefaults() {
     setBusy(true)
-    setMessage('Staging defaults…')
+    setMessage('Saving defaults…')
     setError('')
     try {
-      await stageSettings((settings) => {
+      await saveSettings((settings) => {
         settings.waveform.default_pretrigger_ms = pretriggerMs
         settings.waveform.default_posttrigger_ms = posttriggerMs
       })
-      onSettingsDirtyChange(true)
-      setMessage('Defaults staged. Review and commit them in Changes.')
+      setMessage('Defaults applied and saved.')
     } catch (reason) {
       setMessage('')
       if (reason instanceof ApiError && reason.status === 401) {
         onUnauthorized()
         return
       }
-      setError(reason instanceof Error ? reason.message : 'Unable to stage waveform defaults')
+      setError(reason instanceof Error ? reason.message : 'Unable to save waveform defaults')
     } finally { setBusy(false) }
   }
 
@@ -678,8 +673,8 @@ function WaveformConfiguration({ onUnauthorized, onSettingsDirtyChange }: {
         <button type="submit" disabled={busy || !status?.running}>
           {busy ? 'Triggering…' : 'Trigger waveform'}
         </button>
-        <button className="secondary" type="button" onClick={() => void stageDefaults()}
-          disabled={busy}>Stage as defaults</button>
+        <button className="secondary" type="button" onClick={() => void saveDefaults()}
+          disabled={busy}>Apply and save</button>
         <span>{message}</span>
       </div>
     </form>
@@ -688,8 +683,7 @@ function WaveformConfiguration({ onUnauthorized, onSettingsDirtyChange }: {
 
 function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
   adcSource, simulator, sourceStatus, simulatorStatus, onSourceChange,
-  onSimulatorChange, onSimulatorSubmit, onUnauthorized,
-  onSettingsDirtyChange }: {
+  onSimulatorChange, onSimulatorSubmit, onUnauthorized }: {
   configuration: FrequencyConfiguration | undefined
   configurationStatus: string
   onChange: (configuration: FrequencyConfiguration) => void
@@ -702,10 +696,9 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onSimulatorSubmit: (event: FormEvent) => void
   onUnauthorized: () => void
-  onSettingsDirtyChange: (dirty: boolean) => void
 }) {
   const [activeTab, setActiveTab] =
-    useState<'meter' | 'simulator' | 'waveform' | 'changes' | 'history'>('meter')
+    useState<'meter' | 'simulator' | 'waveform'>('meter')
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
@@ -721,12 +714,6 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
       <button className={activeTab === 'simulator' ? 'active' : ''} type="button"
         aria-current={activeTab === 'simulator' ? 'page' : undefined}
         onClick={() => setActiveTab('simulator')}>ADC Simulator</button>
-      <button className={activeTab === 'changes' ? 'active' : ''} type="button"
-        aria-current={activeTab === 'changes' ? 'page' : undefined}
-        onClick={() => setActiveTab('changes')}>Changes</button>
-      <button className={activeTab === 'history' ? 'active' : ''} type="button"
-        aria-current={activeTab === 'history' ? 'page' : undefined}
-        onClick={() => setActiveTab('history')}>History</button>
     </nav>
     {activeTab === 'meter' ? <>
       <section className="section-heading configuration-heading">
@@ -770,9 +757,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         onChange={(event) => onChange({
           ...configuration, hysteresis_volts: Number(event.target.value),
         })} /></label>
-      <div className="frequency-actions"><button type="submit">Stage for review</button>
-        <button className="secondary" type="button"
-          onClick={() => setActiveTab('changes')}>Review and commit</button>
+      <div className="frequency-actions"><button type="submit">Apply and save</button>
         <span>{configurationStatus}</span></div>
     </form>}</> : activeTab === 'simulator' ? <>
       <section className="section-heading configuration-heading">
@@ -820,14 +805,10 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
           })}
         </div>
         <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC peaks before they are sent to PL.</p>
-        <div className="frequency-actions"><button type="submit">Apply simulator</button>
+        <div className="frequency-actions"><button type="submit">Apply and save</button>
           <span>{simulatorStatus}</span></div>
       </form>}
-    </> : activeTab === 'waveform'
-      ? <WaveformConfiguration onUnauthorized={onUnauthorized}
-          onSettingsDirtyChange={onSettingsDirtyChange} />
-      : <SettingsManager view={activeTab} onUnauthorized={onUnauthorized}
-          onDirtyChange={onSettingsDirtyChange} />}
+    </> : <WaveformConfiguration onUnauthorized={onUnauthorized} />}
   </section>
 }
 
@@ -849,7 +830,6 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [sourceStatus, setSourceStatus] = useState('')
   const [simulatorStatus, setSimulatorStatus] = useState('')
   const [error, setError] = useState('')
-  const [settingsDirty, setSettingsDirty] = useState(false)
 
   const handleError = useCallback((reason: unknown) => {
     if (reason instanceof ApiError && reason.status === 401) { onUnauthorized(); return }
@@ -872,23 +852,17 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   useEffect(() => {
     let active = true
     Promise.all([
-      api.adcSource(), api.adcSimulator(), api.draftSettings(), api.settingsDiff(),
+      api.adcSource(), api.adcSimulator(), api.activeSettings(),
     ])
-      .then(([source, configuration, draft, difference]) => {
+      .then(([source, configuration, activeSettings]) => {
         if (active) {
-          setAdcSource({ ...source, source: draft.settings.adc.source })
+          setAdcSource({ ...source, source: activeSettings.settings.adc.source })
           setSimulator({
             ...configuration,
-            frequency_hz: draft.settings.adc.simulator.frequency_hz,
-            channels: draft.settings.adc.simulator.channels,
+            frequency_hz: activeSettings.settings.adc.simulator.frequency_hz,
+            channels: activeSettings.settings.adc.simulator.channels,
           })
-          setFrequencyConfiguration(draft.settings.metering.frequency)
-          setSettingsDirty(difference.dirty)
-          if (difference.dirty) {
-            setConfigurationStatus(
-              'An unsaved draft was recovered. Review and commit it in Changes.',
-            )
-          }
+          setFrequencyConfiguration(activeSettings.settings.metering.frequency)
         }
       })
       .catch((reason) => { if (active) handleError(reason) })
@@ -925,13 +899,12 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   async function saveFrequencyConfiguration(event: FormEvent) {
     event.preventDefault()
     if (!frequencyConfiguration) return
-    setConfigurationStatus('Staging…')
+    setConfigurationStatus('Saving…')
     try {
-      await stageSettings((settings) => {
+      await saveSettings((settings) => {
         settings.metering.frequency = frequencyConfiguration
       })
-      setSettingsDirty(true)
-      setConfigurationStatus('Staged, but not saved. Commit it in Changes.')
+      setConfigurationStatus('Applied and saved.')
     } catch (reason) {
       setConfigurationStatus('')
       handleError(reason)
@@ -939,12 +912,11 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   }
 
   async function changeAdcSource(source: AdcSource['source']) {
-    setSourceStatus('Staging…')
+    setSourceStatus('Saving…')
     try {
-      await stageSettings((settings) => { settings.adc.source = source })
+      await saveSettings((settings) => { settings.adc.source = source })
       setAdcSource((current) => current ? { ...current, source } : current)
-      setSettingsDirty(true)
-      setSourceStatus('Staged, but not saved. Commit it in Changes.')
+      setSourceStatus('Applied and saved.')
     } catch (reason) {
       setSourceStatus('')
       handleError(reason)
@@ -954,16 +926,15 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   async function saveSimulator(event: FormEvent) {
     event.preventDefault()
     if (!simulator) return
-    setSimulatorStatus('Staging…')
+    setSimulatorStatus('Saving…')
     try {
-      await stageSettings((settings) => {
+      await saveSettings((settings) => {
         settings.adc.simulator = {
           frequency_hz: simulator.frequency_hz,
           channels: simulator.channels,
         }
       })
-      setSettingsDirty(true)
-      setSimulatorStatus('Staged, but not saved. Commit it in Changes.')
+      setSimulatorStatus('Applied and saved.')
     } catch (reason) {
       setSimulatorStatus('')
       handleError(reason)
@@ -1007,8 +978,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   return <main className="app-shell">
     <header className="topbar">
       <div className="brand"><span className="brand-mark small">M</span><div><strong>MSAP1</strong><small>Electricity meter</small></div></div>
-      <div className="session">{settingsDirty && <span className="unsaved-settings">Unsaved settings</span>}
-        <span>{session.username}</span><em>{session.role}</em><button className="text-button" onClick={onLogout}>Sign out</button></div>
+      <div className="session"><span>{session.username}</span><em>{session.role}</em><button className="text-button" onClick={onLogout}>Sign out</button></div>
     </header>
     <nav className="primary-tabs" aria-label="Primary navigation">
       <button type="button" className={activeView === 'dashboard' ? 'active' : ''}
@@ -1048,8 +1018,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             onSourceChange={changeAdcSource}
             onSimulatorChange={setSimulator}
             onSimulatorSubmit={saveSimulator}
-            onUnauthorized={onUnauthorized}
-            onSettingsDirtyChange={setSettingsDirty} />
+            onUnauthorized={onUnauthorized} />
       : <>
     <section className="hero">
       <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1><p>Mean-corrected 200 ms RMS calculated in programmable logic</p></div>

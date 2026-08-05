@@ -172,7 +172,6 @@ export interface VoltageChannelConfiguration {
 
 export interface ProductSettings {
   schema_version: number
-  system: { retained_revisions: number }
   metering: {
     sample_rate_hz: number
     rms: RmsSettings
@@ -198,29 +197,10 @@ export interface ProductSettings {
 }
 
 export interface SettingsDocument {
-  revision: number
-  draft_generation: number
+  content_hash: string
+  recovery_mode: boolean
+  recovery_reason: string
   settings: ProductSettings
-}
-
-export interface SettingsDiff {
-  dirty: boolean
-  unified: string
-}
-
-export interface SettingsRevision {
-  revision: number
-  hash: string
-}
-
-export interface SettingsHistory {
-  revisions: SettingsRevision[]
-}
-
-export interface SettingsTransaction {
-  transaction_id: string
-  revision: number
-  status: string
 }
 
 export type LogPriority =
@@ -408,37 +388,13 @@ export const api = {
       body: JSON.stringify(configuration),
     }),
   activeSettings: () => request<SettingsDocument>('/api/v1/settings/active'),
-  draftSettings: () => request<SettingsDocument>('/api/v1/settings/draft'),
-  settingsDiff: () => request<SettingsDiff>('/api/v1/settings/diff'),
-  settingsHistory: () => request<SettingsHistory>('/api/v1/settings/history'),
-  settingsRevision: (revision: number) =>
-    request<SettingsDocument>(`/api/v1/settings/revision?revision=${revision}`),
-  patchSettings: (document: SettingsDocument) =>
-    request<SettingsDocument>('/api/v1/settings/draft', {
+  saveSettings: (settings: ProductSettings) =>
+    request<SettingsDocument>('/api/v1/settings/active', {
       method: 'PUT',
-      body: JSON.stringify({
-        expected_draft_generation: document.draft_generation,
-        settings: document.settings,
-      }),
-    }),
-  commitSettings: (document: SettingsDocument, message: string) =>
-    request<SettingsTransaction>('/api/v1/settings/commit', {
-      method: 'POST',
-      body: JSON.stringify({
-        expected_base_revision: document.revision,
-        expected_draft_generation: document.draft_generation,
-        message,
-      }),
-    }),
-  discardSettings: () =>
-    request<{ discarded: boolean }>('/api/v1/settings/discard', { method: 'POST' }),
-  restoreSettings: (revision: number) =>
-    request<SettingsDocument>('/api/v1/settings/restore', {
-      method: 'POST',
-      body: JSON.stringify({ revision }),
+      body: JSON.stringify(settings),
     }),
   factoryResetSettings: () =>
-    request<SettingsTransaction>('/api/v1/settings/factory-reset', {
+    request<SettingsDocument>('/api/v1/settings/factory-reset', {
       method: 'POST',
       body: JSON.stringify({ confirmed: true }),
     }),
