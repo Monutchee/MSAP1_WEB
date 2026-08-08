@@ -13,8 +13,9 @@ the meter reports basic measurement block timing, the dashboard shows the
 active cycle count, nominal frequency, and time quality instead of the legacy
 200 ms wording. Meter controls are separated under the administrator-only
 **Configuration → Meter** view, including the grid-frequency zero-crossing
-settings and the declared nominal grid frequency selector (50 Hz or 60 Hz),
-which chooses the IEC 61000-4-30 basic measurement block of 10 or 12 cycles.
+settings, the declared nominal grid frequency selector (50 Hz or 60 Hz),
+which chooses the IEC 61000-4-30 basic measurement block of 10 or 12 cycles,
+and the generator signal frequency that drives the ADC simulator source.
 
 Administrators can open **Developer → Overview** to monitor the ZynqMP LPD,
 FPD, and PL temperatures discovered from their Linux hwmon labels, together
@@ -39,11 +40,18 @@ pre/post capture. The browser sends only the trigger request; the acquisition
 daemon owns the dedicated waveform DMA, history, time correlation, and file
 materialization.
 
-**Configuration → ADC Simulator** selects physical or simulated raw input and
-edits generator frequency plus per-channel RMS amplitude and phase for CH0
-through CH6. The backend applies changes through the acquisition daemon's
-transactional RPU/PL configuration path; the browser never accesses simulator
-registers directly.
+**Developer → Tweak** exposes the acquisition sample-rate selector (1 to
+128 kSPS from the APU's supported set, factory default 128 kSPS). Changing
+the rate restarts capture, so it lives in the administrator-only Developer
+view rather than Configuration.
+
+**Developer → ADC Simulator** selects physical or simulated raw input and
+edits per-channel RMS amplitude and phase for CH0 through CH6; the generator
+signal frequency is edited under Configuration → Meter. The backend applies
+changes through the acquisition daemon's transactional RPU/PL configuration
+path; the browser never accesses simulator registers directly. Source
+selection is a developer diagnostic, so it is no longer offered under
+Configuration.
 
 Node.js 20.19 or newer is required (the Yocto recipe currently builds with
 Node.js 20.20).
