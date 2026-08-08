@@ -88,6 +88,7 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 .metric small { color: var(--muted); font-size: .72rem; }
 .section-heading { margin: 3.6rem 0 1.2rem; display: flex; justify-content: space-between; align-items: end; }
 .section-heading span { color: var(--muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .72rem; }
+.section-heading .heading-status { display: flex; align-items: center; gap: .9rem; }
 .dashboard-results-heading { margin-top: 0; }
 .channel-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
 .channel-card { min-width: 0; padding: 1.15rem; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(145deg, var(--panel-soft), var(--panel)); }

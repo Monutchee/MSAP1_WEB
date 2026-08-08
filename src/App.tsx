@@ -521,12 +521,76 @@ function DeveloperLogs({ onUnauthorized }: { onUnauthorized: () => void }) {
   </section>
 }
 
-function DeveloperPage({ onUnauthorized, health, readings }: {
+// Sample rates supported by the APU acquisition pipeline.
+const SAMPLE_RATES_HZ = [1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000]
+
+function DeveloperTweak({ onUnauthorized }: { onUnauthorized: () => void }) {
+  const [sampleRate, setSampleRate] = useState<number>()
+  const [status, setStatus] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    api.activeSettings().then((activeSettings) => {
+      if (active) setSampleRate(activeSettings.settings.metering.sample_rate_hz)
+    }).catch((reason) => {
+      if (!active) return
+      if (reason instanceof ApiError && reason.status === 401) { onUnauthorized(); return }
+      setError(reason instanceof Error ? reason.message : 'Unable to read settings')
+    })
+    return () => { active = false }
+  }, [onUnauthorized])
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    if (sampleRate === undefined) return
+    setStatus('Saving…')
+    setError('')
+    try {
+      await saveSettings((settings) => { settings.metering.sample_rate_hz = sampleRate })
+      setStatus('Applied and saved.')
+    } catch (reason) {
+      setStatus('')
+      if (reason instanceof ApiError && reason.status === 401) { onUnauthorized(); return }
+      setError(reason instanceof Error ? reason.message : 'Unable to save settings')
+    }
+  }
+
+  return <div>
+    <section className="section-heading configuration-heading">
+      <div><p className="eyebrow">Tweak</p><h2>Acquisition parameters</h2></div>
+      <span>Factory default: 128 kSPS</span>
+    </section>
+    {error && <div className="error-banner"><strong>Settings unavailable</strong><span>{error}</span></div>}
+    <form className="frequency-form" onSubmit={save}>
+      <label>Sample rate<select value={sampleRate ?? 128000}
+        onChange={(event) => setSampleRate(Number(event.target.value))}>
+        {SAMPLE_RATES_HZ.map((rate) =>
+          <option key={rate} value={rate}>{rate / 1000} kSPS</option>)}
+      </select>
+        <small>Changing the rate restarts capture</small></label>
+      <div className="frequency-actions"><button type="submit">Apply and save</button>
+        <span>{status}</span></div>
+    </form>
+  </div>
+}
+
+function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
+  sourceStatus, simulatorStatus, onSourceChange, onSimulatorChange,
+  onSimulatorSubmit }: {
   onUnauthorized: () => void
   health: SystemHealth | undefined
   readings: MeterReadings | undefined
+  adcSource: AdcSource | undefined
+  simulator: AdcSimulatorConfiguration | undefined
+  sourceStatus: string
+  simulatorStatus: string
+  onSourceChange: (source: AdcSource['source']) => void
+  onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
+  onSimulatorSubmit: (event: FormEvent) => void
 }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'about' | 'logs'>('overview')
+  const [activeTab, setActiveTab] =
+    useState<'overview' | 'tweak' | 'simulator' | 'about' | 'logs'>('overview')
   return <section className="developer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
@@ -536,6 +600,12 @@ function DeveloperPage({ onUnauthorized, health, readings }: {
       <button className={activeTab === 'overview' ? 'active' : ''} type="button"
         aria-current={activeTab === 'overview' ? 'page' : undefined}
         onClick={() => setActiveTab('overview')}>Overview</button>
+      <button className={activeTab === 'tweak' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'tweak' ? 'page' : undefined}
+        onClick={() => setActiveTab('tweak')}>Tweak</button>
+      <button className={activeTab === 'simulator' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'simulator' ? 'page' : undefined}
+        onClick={() => setActiveTab('simulator')}>ADC Simulator</button>
       <button className={activeTab === 'about' ? 'active' : ''} type="button"
         aria-current={activeTab === 'about' ? 'page' : undefined}
         onClick={() => setActiveTab('about')}>About</button>
@@ -545,6 +615,53 @@ function DeveloperPage({ onUnauthorized, health, readings }: {
     </nav>
     {activeTab === 'overview'
       ? <DeveloperOverview onUnauthorized={onUnauthorized} health={health} readings={readings} />
+      : activeTab === 'tweak'
+        ? <DeveloperTweak onUnauthorized={onUnauthorized} />
+      : activeTab === 'simulator' ? <>
+      <section className="section-heading configuration-heading">
+        <div><p className="eyebrow">ADC input</p><h2>Raw sample simulator</h2></div>
+        <span>{adcSource ? `Generation 0x${adcSource.configuration_generation.toString(16).padStart(8, '0')}` : 'Loading…'}</span>
+      </section>
+      <div className="simulator-source-panel">
+        <label>Active source<select value={adcSource?.source ?? 'physical'}
+          onChange={(event) => onSourceChange(event.target.value as AdcSource['source'])}>
+          <option value="physical">Physical AD7771</option>
+          <option value="simulator">PL simulator</option>
+        </select></label>
+        <StatusPill ok={adcSource?.healthy ?? false}>
+          {adcSource?.source === 'simulator' ? 'Simulator health' : 'Physical ADC health'}
+        </StatusPill>
+        <span>{sourceStatus}</span>
+      </div>
+      {simulator && <form className="simulator-form" onSubmit={onSimulatorSubmit}>
+        <div className="simulator-summary">
+          <span>Frames: {formatCount(simulator.generated_frames)}</span>
+          <span>Saturation: {formatCount(simulator.saturation_count)}</span>
+          <span>Missed ticks: {formatCount(simulator.missed_sample_count)}</span>
+        </div>
+        <div className="simulator-channel-grid">
+          {simulator.channels.filter((channel) => channel.channel < 7).map((channel) => {
+            const names = ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va']
+            const update = (changes: Partial<typeof channel>) => onSimulatorChange({
+              ...simulator,
+              channels: simulator.channels.map((candidate) =>
+                candidate.channel === channel.channel ? { ...candidate, ...changes } : candidate),
+            })
+            return <fieldset key={channel.channel}>
+              <legend>CH{channel.channel} {names[channel.channel]}</legend>
+              <label>RMS ({channel.channel < 4 ? 'A' : 'V'})<input type="number" min="0" step="0.001"
+                value={channel.rms} onChange={(event) => update({ rms: Number(event.target.value) })} /></label>
+              <label>Phase (degrees)<input type="number" step="0.001"
+                value={channel.phase_degrees}
+                onChange={(event) => update({ phase_degrees: Number(event.target.value) })} /></label>
+            </fieldset>
+          })}
+        </div>
+        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC peaks before they are sent to PL. The generator signal frequency is configured under Configuration → Meter.</p>
+        <div className="frequency-actions"><button type="submit">Apply and save</button>
+          <span>{simulatorStatus}</span></div>
+      </form>}
+    </>
       : activeTab === 'about'
         ? <DeveloperAboutPage onUnauthorized={onUnauthorized} />
         : <DeveloperLogs onUnauthorized={onUnauthorized} />}
@@ -682,23 +799,19 @@ function WaveformConfiguration({ onUnauthorized }: {
 }
 
 function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
-  adcSource, simulator, sourceStatus, simulatorStatus, onSourceChange,
-  onSimulatorChange, onSimulatorSubmit, onUnauthorized }: {
+  nominalFrequency, onNominalFrequencyChange,
+  simulator, onSimulatorChange, onUnauthorized }: {
   configuration: FrequencyConfiguration | undefined
   configurationStatus: string
   onChange: (configuration: FrequencyConfiguration) => void
   onSubmit: (event: FormEvent) => void
-  adcSource: AdcSource | undefined
+  nominalFrequency: number | undefined
+  onNominalFrequencyChange: (nominalFrequency: number) => void
   simulator: AdcSimulatorConfiguration | undefined
-  sourceStatus: string
-  simulatorStatus: string
-  onSourceChange: (source: AdcSource['source']) => void
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
-  onSimulatorSubmit: (event: FormEvent) => void
   onUnauthorized: () => void
 }) {
-  const [activeTab, setActiveTab] =
-    useState<'meter' | 'simulator' | 'waveform'>('meter')
+  const [activeTab, setActiveTab] = useState<'meter' | 'waveform'>('meter')
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
@@ -711,9 +824,6 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
       <button className={activeTab === 'waveform' ? 'active' : ''} type="button"
         aria-current={activeTab === 'waveform' ? 'page' : undefined}
         onClick={() => setActiveTab('waveform')}>Waveform</button>
-      <button className={activeTab === 'simulator' ? 'active' : ''} type="button"
-        aria-current={activeTab === 'simulator' ? 'page' : undefined}
-        onClick={() => setActiveTab('simulator')}>ADC Simulator</button>
     </nav>
     {activeTab === 'meter' ? <>
       <section className="section-heading configuration-heading">
@@ -732,6 +842,18 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         <option value="rolling_cycles">Rolling cycles</option>
         <option value="rolling_time">Rolling time</option>
       </select></label>
+      <label>Nominal grid frequency<select value={nominalFrequency ?? 60}
+        onChange={(event) => onNominalFrequencyChange(Number(event.target.value))}>
+        <option value={50}>50 Hz</option>
+        <option value={60}>60 Hz</option>
+      </select>
+        <small>Basic measurement block: {(nominalFrequency ?? 60) === 50 ? 10 : 12} cycles</small></label>
+      {simulator && <label>Signal frequency (Hz)<input type="number" min="0.001" max="1000" step="0.001"
+        value={simulator.frequency_hz}
+        onChange={(event) => onSimulatorChange({
+          ...simulator, frequency_hz: Number(event.target.value),
+        })} />
+        <small>Drives the ADC simulator source</small></label>}
       <label>Averaging cycles<input type="number" min="1" max="64"
         value={configuration.averaging_cycles}
         onChange={(event) => onChange({
@@ -759,56 +881,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         })} /></label>
       <div className="frequency-actions"><button type="submit">Apply and save</button>
         <span>{configurationStatus}</span></div>
-    </form>}</> : activeTab === 'simulator' ? <>
-      <section className="section-heading configuration-heading">
-        <div><p className="eyebrow">ADC input</p><h2>Raw sample simulator</h2></div>
-        <span>{adcSource ? `Generation 0x${adcSource.configuration_generation.toString(16).padStart(8, '0')}` : 'Loading…'}</span>
-      </section>
-      <div className="simulator-source-panel">
-        <label>Active source<select value={adcSource?.source ?? 'physical'}
-          onChange={(event) => onSourceChange(event.target.value as AdcSource['source'])}>
-          <option value="physical">Physical AD7771</option>
-          <option value="simulator">PL simulator</option>
-        </select></label>
-        <StatusPill ok={adcSource?.healthy ?? false}>
-          {adcSource?.source === 'simulator' ? 'Simulator health' : 'Physical ADC health'}
-        </StatusPill>
-        <span>{sourceStatus}</span>
-      </div>
-      {simulator && <form className="simulator-form" onSubmit={onSimulatorSubmit}>
-        <div className="simulator-summary">
-          <label>Signal frequency (Hz)<input type="number" min="0.001" max="1000" step="0.001"
-            value={simulator.frequency_hz}
-            onChange={(event) => onSimulatorChange({
-              ...simulator, frequency_hz: Number(event.target.value),
-            })} /></label>
-          <span>Frames: {formatCount(simulator.generated_frames)}</span>
-          <span>Saturation: {formatCount(simulator.saturation_count)}</span>
-          <span>Missed ticks: {formatCount(simulator.missed_sample_count)}</span>
-        </div>
-        <div className="simulator-channel-grid">
-          {simulator.channels.filter((channel) => channel.channel < 7).map((channel) => {
-            const names = ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va']
-            const update = (changes: Partial<typeof channel>) => onSimulatorChange({
-              ...simulator,
-              channels: simulator.channels.map((candidate) =>
-                candidate.channel === channel.channel ? { ...candidate, ...changes } : candidate),
-            })
-            return <fieldset key={channel.channel}>
-              <legend>CH{channel.channel} {names[channel.channel]}</legend>
-              <label>RMS ({channel.channel < 4 ? 'A' : 'V'})<input type="number" min="0" step="0.001"
-                value={channel.rms} onChange={(event) => update({ rms: Number(event.target.value) })} /></label>
-              <label>Phase (degrees)<input type="number" step="0.001"
-                value={channel.phase_degrees}
-                onChange={(event) => update({ phase_degrees: Number(event.target.value) })} /></label>
-            </fieldset>
-          })}
-        </div>
-        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC peaks before they are sent to PL.</p>
-        <div className="frequency-actions"><button type="submit">Apply and save</button>
-          <span>{simulatorStatus}</span></div>
-      </form>}
-    </> : <WaveformConfiguration onUnauthorized={onUnauthorized} />}
+    </form>}</> : <WaveformConfiguration onUnauthorized={onUnauthorized} />}
   </section>
 }
 
@@ -824,6 +897,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [history, setHistory] = useState<MeterReadings[]>([])
   const [frequencyConfiguration, setFrequencyConfiguration] =
     useState<FrequencyConfiguration>()
+  const [nominalFrequency, setNominalFrequency] = useState<number>()
   const [configurationStatus, setConfigurationStatus] = useState('')
   const [adcSource, setAdcSource] = useState<AdcSource>()
   const [simulator, setSimulator] = useState<AdcSimulatorConfiguration>()
@@ -863,6 +937,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             channels: activeSettings.settings.adc.simulator.channels,
           })
           setFrequencyConfiguration(activeSettings.settings.metering.frequency)
+          setNominalFrequency(activeSettings.settings.metering.nominal_frequency_hz)
         }
       })
       .catch((reason) => { if (active) handleError(reason) })
@@ -903,6 +978,17 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     try {
       await saveSettings((settings) => {
         settings.metering.frequency = frequencyConfiguration
+        // The nominal grid frequency lives beside, not inside, the
+        // zero-crossing configuration but is edited by the same form.
+        if (nominalFrequency !== undefined) {
+          settings.metering.nominal_frequency_hz = nominalFrequency
+        }
+        // The simulator signal frequency is edited on the Meter form but
+        // persists through the same adc.simulator path the simulator pane
+        // uses; channels stay untouched here.
+        if (simulator) {
+          settings.adc.simulator.frequency_hz = simulator.frequency_hz
+        }
       })
       setConfigurationStatus('Applied and saved.')
     } catch (reason) {
@@ -963,6 +1049,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     return () => { active = false; window.clearInterval(timer) }
   }, [handleError])
 
+  // Basic measurement block timing is absent while the meter still emits
+  // old-format 200 ms records; fall back to the legacy wording then.
+  const timing = readings?.timing
   const channels = readings?.channels ?? Array.from({ length: 8 }, (_, index) => ({
     index, name: ['ILA', 'ILB', 'ILC', 'ILN', 'VLC', 'VLB', 'VLA', 'VCM'][index],
     unit: index >= 4 && index <= 6 ? 'V' : 'A', valid: false,
@@ -1000,7 +1089,14 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         onClick={() => setActiveView('developer')}>Developer</button>}
     </nav>
     {activeView === 'developer'
-      ? <DeveloperPage onUnauthorized={onUnauthorized} health={health} readings={readings} />
+      ? <DeveloperPage onUnauthorized={onUnauthorized} health={health} readings={readings}
+          adcSource={adcSource}
+          simulator={simulator}
+          sourceStatus={sourceStatus}
+          simulatorStatus={simulatorStatus}
+          onSourceChange={changeAdcSource}
+          onSimulatorChange={setSimulator}
+          onSimulatorSubmit={saveSimulator} />
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
       : activeView === 'waveforms'
@@ -1011,21 +1107,27 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             configurationStatus={configurationStatus}
             onChange={setFrequencyConfiguration}
             onSubmit={saveFrequencyConfiguration}
-            adcSource={adcSource}
+            nominalFrequency={nominalFrequency}
+            onNominalFrequencyChange={setNominalFrequency}
             simulator={simulator}
-            sourceStatus={sourceStatus}
-            simulatorStatus={simulatorStatus}
-            onSourceChange={changeAdcSource}
             onSimulatorChange={setSimulator}
-            onSimulatorSubmit={saveSimulator}
             onUnauthorized={onUnauthorized} />
       : <>
     <section className="hero">
-      <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1><p>Mean-corrected 200 ms RMS calculated in programmable logic</p></div>
+      <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1><p>{timing
+        ? `Mean-corrected RMS, ${timing.cycle_count}-cycle basic block calculated in programmable logic`
+        : 'Mean-corrected 200 ms RMS calculated in programmable logic'}</p></div>
       <StatusPill ok={health?.healthy ?? false}>{health?.healthy ? 'System healthy' : 'Needs attention'}</StatusPill>
     </section>
     {error && <div className="error-banner"><strong>Data unavailable</strong><span>{error}</span></div>}
-    <section className="section-heading dashboard-results-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div><span>Update period: 200 ms</span></section>
+    <section className="section-heading dashboard-results-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div>
+      <div className="heading-status">
+        {timing && <StatusPill ok={timing.time_quality === 'synchronized'}>
+          {`Time ${timing.time_quality}`}</StatusPill>}
+        <span>{timing
+          ? `Basic block: ${timing.cycle_count} cycles (${timing.nominal_frequency_hz} Hz nominal)`
+          : 'Update period: 200 ms'}</span>
+      </div></section>
     <section className="channel-grid">
       <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
       {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel} history={history} healthy={health?.healthy ?? false} />)}
