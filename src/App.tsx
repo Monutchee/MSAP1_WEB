@@ -1121,11 +1121,13 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     </section>
     {error && <div className="error-banner"><strong>Data unavailable</strong><span>{error}</span></div>}
     <section className="section-heading dashboard-results-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div>
-      {timing && <StatusPill ok={timing.time_quality === 'synchronized'}>
-        {`Time ${timing.time_quality}`}</StatusPill>}
-      <span>{timing
-        ? `Basic block: ${timing.cycle_count} cycles (${timing.nominal_frequency_hz} Hz nominal)`
-        : 'Update period: 200 ms'}</span></section>
+      <div className="heading-status">
+        {timing && <StatusPill ok={timing.time_quality === 'synchronized'}>
+          {`Time ${timing.time_quality}`}</StatusPill>}
+        <span>{timing
+          ? `Basic block: ${timing.cycle_count} cycles (${timing.nominal_frequency_hz} Hz nominal)`
+          : 'Update period: 200 ms'}</span>
+      </div></section>
     <section className="channel-grid">
       <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
       {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel} history={history} healthy={health?.healthy ?? false} />)}
