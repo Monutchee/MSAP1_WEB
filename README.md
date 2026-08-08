@@ -8,9 +8,13 @@ in the API model for future reference monitoring but is not rendered.
 The viewer-facing **About** tab displays the MNCOS/Yocto version, short image
 build identifier, and software build date from `/api/v1/about`.
 
-The main **Dashboard** contains live RMS readings and pipeline health. Meter
-controls are separated under the administrator-only **Configuration → Meter**
-view, including the grid-frequency zero-crossing settings.
+The main **Dashboard** contains live RMS readings and pipeline health. When
+the meter reports basic measurement block timing, the dashboard shows the
+active cycle count, nominal frequency, and time quality instead of the legacy
+200 ms wording. Meter controls are separated under the administrator-only
+**Configuration → Meter** view, including the grid-frequency zero-crossing
+settings and the declared nominal grid frequency selector (50 Hz or 60 Hz),
+which chooses the IEC 61000-4-30 basic measurement block of 10 or 12 cycles.
 
 Administrators can open **Developer → Overview** to monitor the ZynqMP LPD,
 FPD, and PL temperatures discovered from their Linux hwmon labels, together

@@ -76,6 +76,17 @@ export interface MeterChannel {
   rms: number
 }
 
+export interface MeterBlockTiming {
+  block_sequence: number
+  first_sample_index: number
+  sample_count: number
+  cycle_count: number
+  nominal_frequency_hz: number
+  cycle_locked: boolean
+  free_run_fallback: boolean
+  time_quality: 'unsynchronized' | 'synchronized' | 'holdover'
+}
+
 export interface MeterReadings {
   sequence: number
   configuration_generation: number
@@ -89,6 +100,9 @@ export interface MeterReadings {
   hub_drops: number
   frequency: FrequencyReading
   channels: MeterChannel[]
+  // Absent while the meter still emits old-format records without
+  // IEC 61000-4-30 basic measurement block timing.
+  timing?: MeterBlockTiming
 }
 
 export interface FrequencyReading {
@@ -174,6 +188,9 @@ export interface ProductSettings {
   schema_version: number
   metering: {
     sample_rate_hz: number
+    // Declared nominal grid frequency (50 or 60), selecting the
+    // IEC 61000-4-30 basic block: 50 Hz -> 10 cycles, 60 Hz -> 12 cycles.
+    nominal_frequency_hz: number
     rms: RmsSettings
     frequency: FrequencyConfiguration
     conversion: {

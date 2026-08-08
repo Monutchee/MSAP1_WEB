@@ -682,12 +682,15 @@ function WaveformConfiguration({ onUnauthorized }: {
 }
 
 function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
+  nominalFrequency, onNominalFrequencyChange,
   adcSource, simulator, sourceStatus, simulatorStatus, onSourceChange,
   onSimulatorChange, onSimulatorSubmit, onUnauthorized }: {
   configuration: FrequencyConfiguration | undefined
   configurationStatus: string
   onChange: (configuration: FrequencyConfiguration) => void
   onSubmit: (event: FormEvent) => void
+  nominalFrequency: number | undefined
+  onNominalFrequencyChange: (nominalFrequency: number) => void
   adcSource: AdcSource | undefined
   simulator: AdcSimulatorConfiguration | undefined
   sourceStatus: string
@@ -732,6 +735,12 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         <option value="rolling_cycles">Rolling cycles</option>
         <option value="rolling_time">Rolling time</option>
       </select></label>
+      <label>Nominal grid frequency<select value={nominalFrequency ?? 60}
+        onChange={(event) => onNominalFrequencyChange(Number(event.target.value))}>
+        <option value={50}>50 Hz</option>
+        <option value={60}>60 Hz</option>
+      </select>
+        <small>Basic measurement block: {(nominalFrequency ?? 60) === 50 ? 10 : 12} cycles</small></label>
       <label>Averaging cycles<input type="number" min="1" max="64"
         value={configuration.averaging_cycles}
         onChange={(event) => onChange({
@@ -824,6 +833,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [history, setHistory] = useState<MeterReadings[]>([])
   const [frequencyConfiguration, setFrequencyConfiguration] =
     useState<FrequencyConfiguration>()
+  const [nominalFrequency, setNominalFrequency] = useState<number>()
   const [configurationStatus, setConfigurationStatus] = useState('')
   const [adcSource, setAdcSource] = useState<AdcSource>()
   const [simulator, setSimulator] = useState<AdcSimulatorConfiguration>()
@@ -863,6 +873,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             channels: activeSettings.settings.adc.simulator.channels,
           })
           setFrequencyConfiguration(activeSettings.settings.metering.frequency)
+          setNominalFrequency(activeSettings.settings.metering.nominal_frequency_hz)
         }
       })
       .catch((reason) => { if (active) handleError(reason) })
@@ -903,6 +914,11 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     try {
       await saveSettings((settings) => {
         settings.metering.frequency = frequencyConfiguration
+        // The nominal grid frequency lives beside, not inside, the
+        // zero-crossing configuration but is edited by the same form.
+        if (nominalFrequency !== undefined) {
+          settings.metering.nominal_frequency_hz = nominalFrequency
+        }
       })
       setConfigurationStatus('Applied and saved.')
     } catch (reason) {
@@ -963,6 +979,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     return () => { active = false; window.clearInterval(timer) }
   }, [handleError])
 
+  // Basic measurement block timing is absent while the meter still emits
+  // old-format 200 ms records; fall back to the legacy wording then.
+  const timing = readings?.timing
   const channels = readings?.channels ?? Array.from({ length: 8 }, (_, index) => ({
     index, name: ['ILA', 'ILB', 'ILC', 'ILN', 'VLC', 'VLB', 'VLA', 'VCM'][index],
     unit: index >= 4 && index <= 6 ? 'V' : 'A', valid: false,
@@ -1011,6 +1030,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             configurationStatus={configurationStatus}
             onChange={setFrequencyConfiguration}
             onSubmit={saveFrequencyConfiguration}
+            nominalFrequency={nominalFrequency}
+            onNominalFrequencyChange={setNominalFrequency}
             adcSource={adcSource}
             simulator={simulator}
             sourceStatus={sourceStatus}
@@ -1021,11 +1042,18 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             onUnauthorized={onUnauthorized} />
       : <>
     <section className="hero">
-      <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1><p>Mean-corrected 200 ms RMS calculated in programmable logic</p></div>
+      <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1><p>{timing
+        ? `Mean-corrected RMS, ${timing.cycle_count}-cycle basic block calculated in programmable logic`
+        : 'Mean-corrected 200 ms RMS calculated in programmable logic'}</p></div>
       <StatusPill ok={health?.healthy ?? false}>{health?.healthy ? 'System healthy' : 'Needs attention'}</StatusPill>
     </section>
     {error && <div className="error-banner"><strong>Data unavailable</strong><span>{error}</span></div>}
-    <section className="section-heading dashboard-results-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div><span>Update period: 200 ms</span></section>
+    <section className="section-heading dashboard-results-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div>
+      {timing && <StatusPill ok={timing.time_quality === 'synchronized'}>
+        {`Time ${timing.time_quality}`}</StatusPill>}
+      <span>{timing
+        ? `Basic block: ${timing.cycle_count} cycles (${timing.nominal_frequency_hz} Hz nominal)`
+        : 'Update period: 200 ms'}</span></section>
     <section className="channel-grid">
       <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
       {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel} history={history} healthy={health?.healthy ?? false} />)}
