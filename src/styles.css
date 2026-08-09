@@ -88,8 +88,17 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 .metric small { color: var(--muted); font-size: .72rem; }
 .section-heading { margin: 3.6rem 0 1.2rem; display: flex; justify-content: space-between; align-items: end; }
 .section-heading span { color: var(--muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .72rem; }
-.section-heading .heading-status { display: flex; align-items: center; gap: .9rem; }
+.section-heading .heading-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .9rem; }
 .dashboard-results-heading { margin-top: 0; }
+.tier-select { display: flex; align-items: center; gap: .5rem; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .1em; white-space: nowrap; }
+.tier-select select { border: 1px solid var(--line); border-radius: 8px; padding: .4rem .55rem; color: #ecf5f5; background: #0a151a; font: inherit; text-transform: none; letter-spacing: normal; }
+.aggregate-provenance { display: flex; flex-wrap: wrap; align-items: center; gap: 1.1rem; margin-bottom: 1rem; padding: .85rem 1.25rem; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); background: var(--panel); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .66rem; }
+.aggregate-provenance strong { color: #ecf5f5; font-weight: 500; }
+.aggregate-provenance .saturated, .aggregate-provenance .saturated strong { color: var(--amber); }
+.aggregate-pending { display: grid; gap: .55rem; padding: 1.6rem 1.5rem; border: 1px dashed var(--line); border-radius: 14px; background: var(--panel); }
+.aggregate-pending strong { font-size: .95rem; font-weight: 500; }
+.aggregate-pending span { max-width: 62ch; color: var(--muted); font-size: .82rem; line-height: 1.6; }
+.channel-note { margin: 0; padding-top: .55rem; color: var(--muted); font-size: .6rem; line-height: 1.5; }
 .channel-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
 .channel-card { min-width: 0; padding: 1.15rem; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(145deg, var(--panel-soft), var(--panel)); }
 .channel-title { display: flex; align-items: center; gap: .55rem; }

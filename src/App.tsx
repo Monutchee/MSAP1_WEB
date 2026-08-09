@@ -1,7 +1,8 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import {
   api, AdcSimulatorConfiguration, AdcSource, ApiError, DeveloperAbout,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
+  MeterAggregate, MeterAggregateResult,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
 } from './api'
@@ -9,6 +10,18 @@ import { WaveformExplorer } from './waveform/WaveformExplorer'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
+
+/**
+ * Which measurement tier the dashboard renders. Both tiers are cycle-defined:
+ * the basic measurement block is 10 cycles at 50 Hz nominal and 12 at 60 Hz,
+ * and the aggregate is exactly 15 consecutive basic blocks.
+ */
+type MeterTier = 'basic' | 'aggregate'
+
+const TIER_LABELS: Record<MeterTier, string> = {
+  basic: 'Basic (10/12-cycle)',
+  aggregate: '150/180-cycle',
+}
 
 function formatCount(value: number | undefined) {
   return value === undefined ? '—' : new Intl.NumberFormat('en-US').format(value)
@@ -89,18 +102,35 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
   </section></main>
 }
 
-function ReadingCard({ channel, history, healthy }: {
-  channel: MeterChannel
-  history: MeterReadings[]
+/**
+ * The card renders any tier's per-channel RMS. Only the footer differs, because
+ * the 150/180-cycle aggregate carries no mean correction and no RMS count.
+ */
+type ChannelReading = Pick<MeterChannel, 'index' | 'name' | 'unit' | 'valid' | 'rms'>
+
+function ReadingCard({ channel, values, healthy, footer }: {
+  channel: ChannelReading
+  values: number[]
   healthy: boolean
+  footer: ReactNode
 }) {
-  const values = history.map((record) => record.channels[channel.index]?.rms ?? 0)
   return <article className="channel-card">
     <div className="channel-title"><span>CH{channel.index}</span><strong>{channel.name}</strong><i>{channel.unit === 'V' ? 'Voltage' : 'Current'}</i></div>
     <div className="channel-value">{channel.valid ? channel.rms.toFixed(3) : '—'}<small> {channel.unit} RMS</small></div>
     <Sparkline values={values} healthy={healthy && channel.valid} />
-    <div className="range"><span>{channel.valid ? `mean ${channel.mean_micro_units} µ` : 'not implemented'}</span><span>{channel.valid ? `${channel.rms_count} count` : 'invalid'}</span></div>
+    <div className="range">{footer}</div>
   </article>
+}
+
+/**
+ * CH7/VCM stays in the API model and history for future reference monitoring
+ * but is not presented as a user-facing meter channel yet.
+ */
+function displayedChannels<T extends { index: number; unit: string }>(channels: T[]) {
+  return [
+    ...channels.filter((channel) => VISIBLE_CHANNELS.has(channel.index) && channel.unit === 'V'),
+    ...channels.filter((channel) => VISIBLE_CHANNELS.has(channel.index) && channel.unit === 'A'),
+  ]
 }
 
 function frequencyUnavailableReason(readings: MeterReadings | undefined) {
@@ -135,6 +165,62 @@ function FrequencyCard({ readings, history, healthy }: {
         : <><span>{frequencyUnavailableReason(readings)}</span><span>unavailable</span></>}
     </div>
   </article>
+}
+
+/**
+ * Aggregate grid frequency. IEC 61000-4-30:2025 defines the standardized
+ * frequency product over its own 10 s interval, which this tier is not, so the
+ * value is presented as informative and never as a Class A measurement.
+ */
+function AggregateFrequencyCard({ aggregate, history, healthy }: {
+  aggregate: MeterAggregateResult
+  history: MeterAggregateResult[]
+  healthy: boolean
+}) {
+  const values = history.map((record) => record.frequency.millihz / 1000)
+  return <article className="channel-card frequency-card">
+    <div className="channel-title"><span>GRID</span><strong>Frequency</strong><i>informative</i></div>
+    <div className="channel-value">{(aggregate.frequency.millihz / 1000).toFixed(3)}<small> Hz</small></div>
+    <Sparkline values={values} healthy={healthy} />
+    <p className="channel-note">Informative — the standardized frequency
+      interval is not this tier, so this is not a Class A frequency
+      measurement.</p>
+  </article>
+}
+
+/**
+ * Compact provenance for the displayed aggregate: what was aggregated, which
+ * basic measurement blocks it came from, and how trustworthy its timing is.
+ */
+function AggregateProvenance({ aggregate }: { aggregate: MeterAggregateResult }) {
+  const blockCycles = aggregate.basic_block_count > 0
+    ? Math.round(aggregate.cycle_count / aggregate.basic_block_count)
+    : 0
+  return <section className="aggregate-provenance">
+    <span>Window <strong>{aggregate.cycle_count} cycles</strong> ({aggregate.nominal_frequency_hz} Hz nominal, ~3 s nominal)</span>
+    <span>Blocks <strong>{aggregate.basic_block_count} × {blockCycles}-cycle</strong></span>
+    <span>Basic sequence <strong>{aggregate.first_basic_sequence}..{aggregate.last_basic_sequence}</strong></span>
+    <span>Aggregate <strong>#{aggregate.sequence}</strong></span>
+    <span>Age <strong>{formatCount(aggregate.age_ms)} ms</strong></span>
+    <StatusPill ok={aggregate.time_quality === 'synchronized'}>
+      {`Time ${aggregate.time_quality}`}</StatusPill>
+    {aggregate.arithmetic_error &&
+      <span className="saturated"><strong>Arithmetic error — aggregation saturated</strong></span>}
+  </section>
+}
+
+/**
+ * Not an error: the first aggregate simply needs 15 consecutive eligible basic
+ * measurement blocks, which is roughly three seconds of acquisition.
+ */
+function AggregatePending() {
+  return <section className="aggregate-pending">
+    <strong>Waiting for the first 150/180-cycle aggregate</strong>
+    <span>This tier aggregates 15 consecutive basic measurement blocks — 150
+      cycles at 50 Hz nominal, 180 cycles at 60 Hz nominal, roughly three
+      seconds. A result appears as soon as 15 consecutive eligible basic blocks
+      have been collected. Acquisition is not degraded while this is shown.</span>
+  </section>
 }
 
 const LOG_COMPONENTS = [
@@ -895,6 +981,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
+  const [tier, setTier] = useState<MeterTier>('basic')
+  const [aggregate, setAggregate] = useState<MeterAggregate>()
+  const [aggregateHistory, setAggregateHistory] = useState<MeterAggregateResult[]>([])
   const [frequencyConfiguration, setFrequencyConfiguration] =
     useState<FrequencyConfiguration>()
   const [nominalFrequency, setNominalFrequency] = useState<number>()
@@ -1049,20 +1138,63 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     return () => { active = false; window.clearInterval(timer) }
   }, [handleError])
 
+  // The aggregate is polled only while its tier is displayed. The interval is
+  // created by this effect and torn down again on tier change, view change, and
+  // unmount, so no aggregate request can outlive the selection that made it.
+  useEffect(() => {
+    if (activeView !== 'dashboard' || tier !== 'aggregate') return
+    let active = true
+    let pending = false
+    const load = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const next = await api.meterAggregate()
+        if (active) {
+          setAggregate(next)
+          // Aggregates arrive about every three seconds while this polls every
+          // second, so extend the history only when the aggregate sequence
+          // advances; otherwise the sparkline would repeat the same point.
+          if (next.available) {
+            setAggregateHistory((current) => current.at(-1)?.sequence === next.sequence
+              ? current : [...current, next].slice(-HISTORY))
+          }
+          setError('')
+        }
+      } catch (reason) { if (active) handleError(reason) }
+      finally { pending = false }
+    }
+    void load()
+    const timer = window.setInterval(load, 1000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [activeView, tier, handleError])
+
   // Basic measurement block timing is absent while the meter still emits
-  // old-format 200 ms records; fall back to the legacy wording then.
+  // old-format records without cycle-defined block metadata; fall back to
+  // generic 10/12-cycle wording then.
   const timing = readings?.timing
   const channels = readings?.channels ?? Array.from({ length: 8 }, (_, index) => ({
     index, name: ['ILA', 'ILB', 'ILC', 'ILN', 'VLC', 'VLB', 'VLA', 'VCM'][index],
     unit: index >= 4 && index <= 6 ? 'V' : 'A', valid: false,
     mean_micro_units: 0, rms_count: 0, rms: 0,
   }))
-  // Preserve CH7/VCM in the API model and history for future monitoring, but
-  // do not present it as a user-facing meter channel yet.
-  const displayed = [
-    ...channels.filter((channel) => VISIBLE_CHANNELS.has(channel.index) && channel.unit === 'V'),
-    ...channels.filter((channel) => VISIBLE_CHANNELS.has(channel.index) && channel.unit === 'A'),
-  ]
+  const displayed = displayedChannels(channels)
+  const aggregateResult = aggregate?.available ? aggregate : undefined
+  const aggregateDisplayed = displayedChannels(aggregateResult?.channels ?? [])
+
+  const basicBlockLabel = timing
+    ? `Basic measurement block — ${timing.cycle_count} cycles (${timing.nominal_frequency_hz} Hz nominal)`
+    : 'Basic measurement block (10/12 cycles)'
+  const aggregateLabel = aggregateResult
+    ? `150/180-cycle aggregate — ${aggregateResult.cycle_count} cycles (${aggregateResult.basic_block_count} × ${aggregateResult.basic_block_count > 0 ? Math.round(aggregateResult.cycle_count / aggregateResult.basic_block_count) : 0}-cycle blocks)`
+    : '150/180-cycle aggregate (15 basic blocks)'
+  const heroSummary = tier === 'aggregate'
+    ? aggregateResult
+      ? `RMS aggregated over ${aggregateResult.cycle_count} cycles — ${aggregateResult.basic_block_count} consecutive basic measurement blocks, ~3 s nominal`
+      : 'RMS aggregated over 15 consecutive basic measurement blocks (150/180 cycles, ~3 s nominal)'
+    : timing
+      ? `Mean-corrected RMS over the ${timing.cycle_count}-cycle basic measurement block, calculated in programmable logic`
+      : 'Mean-corrected RMS over the basic measurement block (10/12 cycles), calculated in programmable logic'
 
   return <main className="app-shell">
     <header className="topbar">
@@ -1114,24 +1246,51 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             onUnauthorized={onUnauthorized} />
       : <>
     <section className="hero">
-      <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1><p>{timing
-        ? `Mean-corrected RMS, ${timing.cycle_count}-cycle basic block calculated in programmable logic`
-        : 'Mean-corrected 200 ms RMS calculated in programmable logic'}</p></div>
+      <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1>
+        <p>{heroSummary}</p></div>
       <StatusPill ok={health?.healthy ?? false}>{health?.healthy ? 'System healthy' : 'Needs attention'}</StatusPill>
     </section>
     {error && <div className="error-banner"><strong>Data unavailable</strong><span>{error}</span></div>}
     <section className="section-heading dashboard-results-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div>
       <div className="heading-status">
-        {timing && <StatusPill ok={timing.time_quality === 'synchronized'}>
+        {tier === 'basic' && timing && <StatusPill ok={timing.time_quality === 'synchronized'}>
           {`Time ${timing.time_quality}`}</StatusPill>}
-        <span>{timing
-          ? `Basic block: ${timing.cycle_count} cycles (${timing.nominal_frequency_hz} Hz nominal)`
-          : 'Update period: 200 ms'}</span>
+        <span>{tier === 'aggregate' ? aggregateLabel : basicBlockLabel}</span>
+        <label className="tier-select">Update rate<select value={tier}
+          onChange={(event) => setTier(event.target.value as MeterTier)}>
+          <option value="basic">{TIER_LABELS.basic}</option>
+          <option value="aggregate">{TIER_LABELS.aggregate}</option>
+        </select></label>
       </div></section>
-    <section className="channel-grid">
-      <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
-      {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel} history={history} healthy={health?.healthy ?? false} />)}
-    </section>
+    {tier === 'aggregate'
+      ? aggregateResult
+        ? <>
+            <AggregateProvenance aggregate={aggregateResult} />
+            <section className="channel-grid">
+              <AggregateFrequencyCard aggregate={aggregateResult} history={aggregateHistory}
+                healthy={!aggregateResult.arithmetic_error} />
+              {aggregateDisplayed.map((channel) => {
+                const values = aggregateHistory.map((record) => record.channels[channel.index]?.rms ?? 0)
+                const minimum = values.length > 0 ? Math.min(...values).toFixed(3) : '—'
+                const maximum = values.length > 0 ? Math.max(...values).toFixed(3) : '—'
+                return <ReadingCard key={channel.index} channel={channel} values={values}
+                  healthy={health?.healthy ?? false}
+                  footer={channel.valid
+                    ? <><span>min {minimum} {channel.unit}</span><span>max {maximum} {channel.unit}</span></>
+                    : <><span>no aggregate value</span><span>invalid</span></>} />
+              })}
+            </section>
+          </>
+        : <AggregatePending />
+      : <section className="channel-grid">
+          <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
+          {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel}
+            values={history.map((record) => record.channels[channel.index]?.rms ?? 0)}
+            healthy={health?.healthy ?? false}
+            footer={channel.valid
+              ? <><span>mean {channel.mean_micro_units} µ</span><span>{channel.rms_count} count</span></>
+              : <><span>not implemented</span><span>invalid</span></>} />)}
+        </section>}
     <section className="health-panel">
       <div><p className="eyebrow">Pipeline health</p><h2>Meter components</h2></div>
       <div className="health-details">
