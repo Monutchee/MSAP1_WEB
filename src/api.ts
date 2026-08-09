@@ -105,6 +105,68 @@ export interface MeterReadings {
   timing?: MeterBlockTiming
 }
 
+/**
+ * One channel of a 150/180-cycle aggregate. The aggregate publishes RMS only:
+ * there is no mean correction term and no per-channel RMS accumulator count,
+ * so those fields are absent rather than zero.
+ */
+export interface MeterAggregateChannel {
+  index: number
+  name: string
+  unit: string
+  valid: boolean
+  rms: number
+}
+
+/**
+ * Aggregate grid frequency. Per IEC 61000-4-30:2025 the standardized frequency
+ * product is defined over its own 10 s interval, which this tier is not, so the
+ * APU publishes the Cycles150_180 frequency with quality "unavailable". The
+ * value is informative only and deliberately carries no validity flag.
+ */
+export interface MeterAggregateFrequency {
+  millihz: number
+  informative: true
+}
+
+/**
+ * A produced 150/180-cycle aggregate: exactly 15 consecutive basic measurement
+ * blocks, so 150 cycles at 50 Hz nominal and 180 cycles at 60 Hz nominal.
+ */
+export interface MeterAggregateResult {
+  available: true
+  sequence: number
+  configuration_generation: number
+  sample_rate_hz: number
+  sample_count: number
+  first_sample_index: number
+  first_basic_sequence: number
+  last_basic_sequence: number
+  basic_block_count: number
+  cycle_count: number
+  nominal_frequency_hz: number
+  arithmetic_error: boolean
+  time_quality: 'unsynchronized' | 'synchronized' | 'holdover'
+  age_ms: number
+  channels: MeterAggregateChannel[]
+  frequency: MeterAggregateFrequency
+}
+
+/**
+ * No aggregate has been produced yet: acquisition is healthy but 15 consecutive
+ * eligible basic measurement blocks have not been collected. Nothing beyond
+ * `available` is required to be present.
+ */
+export interface MeterAggregatePending {
+  available: false
+}
+
+/**
+ * Discriminated on `available` so the pending state must be handled before any
+ * aggregate field can be read.
+ */
+export type MeterAggregate = MeterAggregateResult | MeterAggregatePending
+
 export interface FrequencyReading {
   enabled: boolean
   valid: boolean
@@ -384,6 +446,7 @@ export const api = {
   health: () => request<SystemHealth>('/api/v1/health'),
   about: () => request<SystemAbout>('/api/v1/about'),
   meterReadings: () => request<MeterReadings>('/api/v1/meter/readings'),
+  meterAggregate: () => request<MeterAggregate>('/api/v1/meter/aggregate'),
   frequencyConfiguration: () =>
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency'),
   updateFrequencyConfiguration: (configuration: FrequencyConfiguration) =>
