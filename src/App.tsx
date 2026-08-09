@@ -19,8 +19,8 @@ const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
 type MeterTier = 'basic' | 'aggregate'
 
 const TIER_LABELS: Record<MeterTier, string> = {
-  basic: 'Basic (10/12-cycle)',
-  aggregate: '150/180-cycle',
+  basic: 'Basic block (10/12 cycles)',
+  aggregate: 'Aggregate (150/180 cycles)',
 }
 
 function formatCount(value: number | undefined) {
@@ -177,14 +177,22 @@ function AggregateFrequencyCard({ aggregate, history, healthy }: {
   history: MeterAggregateResult[]
   healthy: boolean
 }) {
-  const values = history.map((record) => record.frequency.millihz / 1000)
+  // The PL reports 0 mHz when it could not compute the mean (any contributing
+  // block had an invalid frequency). 0 Hz is not a meaningful grid frequency,
+  // so treat it as "not computed" rather than displaying a fabricated value.
+  const computed = aggregate.frequency.millihz > 0
+  const values = history
+    .filter((record) => record.frequency.millihz > 0)
+    .map((record) => record.frequency.millihz / 1000)
   return <article className="channel-card frequency-card">
     <div className="channel-title"><span>GRID</span><strong>Frequency</strong><i>informative</i></div>
-    <div className="channel-value">{(aggregate.frequency.millihz / 1000).toFixed(3)}<small> Hz</small></div>
-    <Sparkline values={values} healthy={healthy} />
+    <div className="channel-value">{computed
+      ? (aggregate.frequency.millihz / 1000).toFixed(3)
+      : '—'}<small> Hz</small></div>
+    <Sparkline values={values} healthy={healthy && computed} />
     <p className="channel-note">Informative — the standardized frequency
-      interval is not this tier, so this is not a Class A frequency
-      measurement.</p>
+      measurement is defined over a 10 s interval, not this tier, so this
+      mean is not a Class A frequency measurement.</p>
   </article>
 }
 
@@ -984,6 +992,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [tier, setTier] = useState<MeterTier>('basic')
   const [aggregate, setAggregate] = useState<MeterAggregate>()
   const [aggregateHistory, setAggregateHistory] = useState<MeterAggregateResult[]>([])
+  // Kept separate from the shared `error`: the 200 ms readings poll clears
+  // that five times a second, which would hide a persistent aggregate fault.
+  const [aggregateError, setAggregateError] = useState('')
   const [frequencyConfiguration, setFrequencyConfiguration] =
     useState<FrequencyConfiguration>()
   const [nominalFrequency, setNominalFrequency] = useState<number>()
@@ -1156,17 +1167,39 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           // second, so extend the history only when the aggregate sequence
           // advances; otherwise the sparkline would repeat the same point.
           if (next.available) {
-            setAggregateHistory((current) => current.at(-1)?.sequence === next.sequence
-              ? current : [...current, next].slice(-HISTORY))
+            setAggregateHistory((current) => {
+              const previous = current.at(-1)
+              // A configuration change re-scales the measurement, so a trace
+              // must never span two generations.
+              if (previous &&
+                  previous.configuration_generation !== next.configuration_generation)
+                return [next]
+              return previous?.sequence === next.sequence
+                ? current : [...current, next].slice(-HISTORY)
+            })
           }
-          setError('')
+          setAggregateError('')
         }
-      } catch (reason) { if (active) handleError(reason) }
+      } catch (reason) {
+        if (!active) return
+        if (reason instanceof ApiError && reason.status === 401) {
+          handleError(reason)
+          return
+        }
+        setAggregateError(reason instanceof Error
+          ? reason.message
+          : 'Unable to read the aggregate')
+      }
       finally { pending = false }
     }
     void load()
     const timer = window.setInterval(load, 1000)
-    return () => { active = false; window.clearInterval(timer) }
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      setAggregateHistory([])
+      setAggregateError('')
+    }
   }, [activeView, tier, handleError])
 
   // Basic measurement block timing is absent while the meter still emits
@@ -1182,9 +1215,13 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const aggregateResult = aggregate?.available ? aggregate : undefined
   const aggregateDisplayed = displayedChannels(aggregateResult?.channels ?? [])
 
-  const basicBlockLabel = timing
-    ? `Basic measurement block — ${timing.cycle_count} cycles (${timing.nominal_frequency_hz} Hz nominal)`
-    : 'Basic measurement block (10/12 cycles)'
+  // A block that closed on the free-run fallback window was not cycle-defined,
+  // so labelling it an N-cycle basic measurement block would misreport it.
+  const basicBlockLabel = !timing
+    ? 'Basic measurement block (10/12 cycles)'
+    : timing.free_run_fallback || !timing.cycle_locked
+      ? `Free-running window — grid reference unavailable (${timing.nominal_frequency_hz} Hz nominal)`
+      : `Basic measurement block — ${timing.cycle_count} cycles (${timing.nominal_frequency_hz} Hz nominal)`
   const aggregateLabel = aggregateResult
     ? `150/180-cycle aggregate — ${aggregateResult.cycle_count} cycles (${aggregateResult.basic_block_count} × ${aggregateResult.basic_block_count > 0 ? Math.round(aggregateResult.cycle_count / aggregateResult.basic_block_count) : 0}-cycle blocks)`
     : '150/180-cycle aggregate (15 basic blocks)'
@@ -1256,12 +1293,15 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         {tier === 'basic' && timing && <StatusPill ok={timing.time_quality === 'synchronized'}>
           {`Time ${timing.time_quality}`}</StatusPill>}
         <span>{tier === 'aggregate' ? aggregateLabel : basicBlockLabel}</span>
-        <label className="tier-select">Update rate<select value={tier}
+        <label className="tier-select">Measurement interval<select value={tier}
           onChange={(event) => setTier(event.target.value as MeterTier)}>
           <option value="basic">{TIER_LABELS.basic}</option>
           <option value="aggregate">{TIER_LABELS.aggregate}</option>
         </select></label>
       </div></section>
+    {tier === 'aggregate' && aggregateError &&
+      <div className="error-banner"><strong>Aggregate unavailable</strong>
+        <span>{aggregateError}</span></div>}
     {tier === 'aggregate'
       ? aggregateResult
         ? <>
@@ -1270,7 +1310,12 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
               <AggregateFrequencyCard aggregate={aggregateResult} history={aggregateHistory}
                 healthy={!aggregateResult.arithmetic_error} />
               {aggregateDisplayed.map((channel) => {
-                const values = aggregateHistory.map((record) => record.channels[channel.index]?.rms ?? 0)
+                // An invalid channel is serialised as rms 0; plotting those
+                // would pull the trace and the range down to zero.
+                const values = aggregateHistory
+                  .map((record) => record.channels[channel.index])
+                  .filter((entry) => entry?.valid)
+                  .map((entry) => entry!.rms)
                 const minimum = values.length > 0 ? Math.min(...values).toFixed(3) : '—'
                 const maximum = values.length > 0 ? Math.max(...values).toFixed(3) : '—'
                 return <ReadingCard key={channel.index} channel={channel} values={values}

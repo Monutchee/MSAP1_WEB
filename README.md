@@ -9,17 +9,18 @@ The viewer-facing **About** tab displays the MNCOS/Yocto version, short image
 build identifier, and software build date from `/api/v1/about`.
 
 The main **Dashboard** contains live RMS readings and pipeline health. The
-meter produces two cycle-defined measurement tiers, and an **Update rate**
+meter produces two cycle-defined measurement tiers, and a **Measurement
+interval**
 selector in the "RMS readings" heading chooses which one the dashboard renders:
 
-- **Basic (10/12-cycle)** reads `GET /api/v1/meter/readings`. This is the
+- **Basic block (10/12 cycles)** reads `GET /api/v1/meter/readings`. This is the
   IEC 61000-4-30 basic measurement block: 10 grid cycles at 50 Hz nominal and
   12 at 60 Hz. Its duration tracks the grid (~200 ms nominal) and is never
   defined as a fixed 200 ms period. When the meter reports block timing the
   heading shows the active cycle count, nominal frequency, and time quality;
   older records without timing metadata fall back to the generic
   "Basic measurement block (10/12 cycles)" wording.
-- **150/180-cycle** reads `GET /api/v1/meter/aggregate`, polled once per second
+- **Aggregate (150/180 cycles)** reads `GET /api/v1/meter/aggregate`, polled once per second
   and only while that tier is selected. The aggregate combines exactly 15
   consecutive basic measurement blocks into 150 cycles at 50 Hz nominal or 180
   at 60 Hz (~3 s nominal). It carries RMS per channel but no mean correction
