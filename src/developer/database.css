@@ -24,3 +24,13 @@
 .database-maintenance-actions button.danger { color:#fff; background:#8e3035; border-color:#b34b51; }
 .database-maintenance-actions button.danger:hover { background:#a93b41; }
 @media (max-width:900px) { .database-health-grid { grid-template-columns:1fr 1fr; } .database-policy-table > header { display:none; } .database-policy-table fieldset { grid-template-columns:1fr 1fr; } .database-policy-table legend { width:auto; float:none; grid-column:1 / -1; } }
+
+/* Data recorder cursor tracer. Monospace figures so cursor values line up
+   column-wise and a jump is visible between two manual samples. */
+.recorder-table { width:100%; margin:0 0 1.4rem; border:1px solid var(--line); border-radius:12px; border-collapse:separate; border-spacing:0; overflow:hidden; font-size:.72rem; }
+.recorder-table th { padding:.7rem 1rem; color:var(--muted); font-size:.66rem; font-weight:500; letter-spacing:.08em; text-transform:uppercase; text-align:left; border-bottom:1px solid var(--line); }
+.recorder-table td { padding:.65rem 1rem; color:#e2eeee; font-family:ui-monospace,monospace; border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent); }
+.recorder-table tr:last-child td { border-bottom:0; }
+/* A non-zero lag is the thing worth noticing: it is what holds spool pruning
+   back and what makes recent history missing. */
+.recorder-lagging { color:var(--amber) !important; }

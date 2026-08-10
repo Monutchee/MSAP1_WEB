@@ -8,6 +8,7 @@ import {
 } from './api'
 import { WaveformExplorer } from './waveform/WaveformExplorer'
 import { DeveloperDatabasePage } from './developer/DeveloperDatabasePage'
+import { DeveloperDataRecorderPage } from './developer/DeveloperDataRecorderPage'
 import { HistoryPage } from './history/HistoryPage'
 
 const HISTORY = 80
@@ -686,7 +687,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   onSimulatorSubmit: (event: FormEvent) => void
 }) {
   const [activeTab, setActiveTab] =
-    useState<'overview' | 'tweak' | 'simulator' | 'about' | 'logs'>('overview')
+    useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'about' | 'logs'>('overview')
   return <section className="developer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
@@ -702,6 +703,9 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       <button className={activeTab === 'simulator' ? 'active' : ''} type="button"
         aria-current={activeTab === 'simulator' ? 'page' : undefined}
         onClick={() => setActiveTab('simulator')}>ADC Simulator</button>
+      <button className={activeTab === 'recorder' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'recorder' ? 'page' : undefined}
+        onClick={() => setActiveTab('recorder')}>Data recorder</button>
       <button className={activeTab === 'about' ? 'active' : ''} type="button"
         aria-current={activeTab === 'about' ? 'page' : undefined}
         onClick={() => setActiveTab('about')}>About</button>
@@ -758,6 +762,8 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
           <span>{simulatorStatus}</span></div>
       </form>}
     </>
+      : activeTab === 'recorder'
+        ? <DeveloperDataRecorderPage onUnauthorized={onUnauthorized} />
       : activeTab === 'about'
         ? <DeveloperAboutPage onUnauthorized={onUnauthorized} />
         : <DeveloperLogs onUnauthorized={onUnauthorized} />}
