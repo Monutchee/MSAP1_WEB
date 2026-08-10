@@ -14,6 +14,19 @@ function displayUnit(unit: string) {
   return unit === 'mHz' ? 'Hz' : unit === 'uV' ? 'V' : unit === 'uA' ? 'A' : unit
 }
 
+/**
+ * Produces the wall-clock representation required by an HTML
+ * `datetime-local` input. `toISOString()` must not be used here: it emits
+ * UTC, while this control intentionally has no timezone and treats its text
+ * as the browser's local time. The API conversion below still uses
+ * `Date#getTime()`, so every request remains an epoch/UTC timestamp.
+ */
+function localDateTimeValue(date: Date) {
+  const pad = (value: number) => value.toString().padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
 function HistoryPlot({ points, capabilities, attributes }: {
   points: HistoryPoint[]
   capabilities: HistoryCapabilities
@@ -190,8 +203,12 @@ export function HistoryPage({ onUnauthorized }: { onUnauthorized: () => void }) 
   const [capabilities, setCapabilities] = useState<HistoryCapabilities>()
   const [period, setPeriod] = useState('basic')
   const [attributes, setAttributes] = useState<string[]>(['voltage.ln.a.rms'])
-  const [start, setStart] = useState(() => new Date(Date.now() - 60 * 60 * 1000).toISOString().slice(0, 16))
-  const [end, setEnd] = useState(() => new Date().toISOString().slice(0, 16))
+  // The picker is a user-facing local-time control. Its values are converted
+  // back to UTC epoch nanoseconds only at the API boundary in fetchPage().
+  const [start, setStart] = useState(() =>
+    localDateTimeValue(new Date(Date.now() - 60 * 60 * 1000)))
+  const [end, setEnd] = useState(() =>
+    localDateTimeValue(new Date(Date.now() + 60 * 60 * 1000)))
   const [points, setPoints] = useState<HistoryPoint[]>([])
   const [truncated, setTruncated] = useState(false)
   const [busy, setBusy] = useState(false)
