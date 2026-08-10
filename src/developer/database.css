@@ -1,0 +1,26 @@
+.database-health-grid { display:grid; grid-template-columns:repeat(4,1fr); border:1px solid var(--line); border-radius:18px; overflow:hidden; margin:1.4rem 0; }
+.database-health-grid article { display:grid; gap:.45rem; padding:1.25rem; border-right:1px solid var(--line); }
+.database-health-grid article:last-child { border-right:0; }
+.database-health-grid span, .database-policy-table header { color:var(--muted); font-size:.68rem; letter-spacing:.08em; text-transform:uppercase; }
+.database-health-grid strong { color:#e2eeee; font-size:1.15rem; }
+.database-health-grid small, .database-policy-table small { color:var(--muted); }
+.database-progress { padding:1rem; border:1px solid var(--amber); border-radius:10px; color:var(--amber); }
+.database-cursors { display:flex; flex-wrap:wrap; align-items:center; gap:.65rem 1.2rem; margin:0 0 1.4rem; padding:.85rem 1rem; border:1px solid var(--line); border-radius:10px; color:var(--muted); font: .7rem ui-monospace,monospace; }
+.database-cursors strong { color:#e2eeee; }
+.database-cursors small { flex-basis:100%; }
+.database-policy-table { display:grid; border:1px solid var(--line); border-radius:18px; overflow:hidden; }
+.database-policy-table > header { display:grid; grid-template-columns:1.35fr 1fr 1fr 1fr; gap:1rem; padding:1rem 1.25rem; border-bottom:1px solid var(--line); }
+.database-policy-table fieldset { position:relative; display:grid; grid-template-columns:1.35fr 1fr 1fr 1fr; gap:1rem; margin:0; padding:1.15rem 1.25rem; border:0; border-bottom:1px solid var(--line); }
+.database-policy-table legend { display:grid; align-content:center; gap:.3rem; width:calc(25% - .5rem); float:left; }
+.database-policy-table label { display:grid; gap:.35rem; color:var(--muted); font-size:.72rem; }
+.database-policy-table select, .database-policy-table input { min-width:0; }
+.dataset-live { display:flex; flex-wrap:wrap; gap:.45rem 1rem; grid-column:2 / -1; color:var(--muted); font-family:ui-monospace,monospace; font-size:.65rem; }
+.volatile-warning { grid-column:1 / -1 !important; display:flex !important; grid-template-columns:auto 1fr; align-items:center; color:var(--red) !important; }
+.database-actions { display:flex; align-items:center; gap:1rem; padding:1.15rem 1.25rem; }
+.database-danger-zone { display:flex; align-items:flex-end; justify-content:space-between; gap:2rem; margin-top:1.5rem; padding:1.25rem; border:1px solid color-mix(in srgb,var(--red) 55%,var(--line)); border-radius:18px; }
+.database-danger-zone h2, .database-danger-zone p { margin:.25rem 0; }
+.database-danger-zone p { color:var(--muted); }
+.database-maintenance-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:.65rem; }
+.database-maintenance-actions button.danger { color:#fff; background:#8e3035; border-color:#b34b51; }
+.database-maintenance-actions button.danger:hover { background:#a93b41; }
+@media (max-width:900px) { .database-health-grid { grid-template-columns:1fr 1fr; } .database-policy-table > header { display:none; } .database-policy-table fieldset { grid-template-columns:1fr 1fr; } .database-policy-table legend { width:auto; float:none; grid-column:1 / -1; } }

@@ -7,6 +7,8 @@ import {
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
 } from './api'
 import { WaveformExplorer } from './waveform/WaveformExplorer'
+import { DeveloperDatabasePage } from './developer/DeveloperDatabasePage'
+import { HistoryPage } from './history/HistoryPage'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -905,7 +907,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onUnauthorized: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'meter' | 'waveform'>('meter')
+  const [activeTab, setActiveTab] = useState<'meter' | 'waveform' | 'data-logging'>('meter')
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
@@ -918,6 +920,9 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
       <button className={activeTab === 'waveform' ? 'active' : ''} type="button"
         aria-current={activeTab === 'waveform' ? 'page' : undefined}
         onClick={() => setActiveTab('waveform')}>Waveform</button>
+      <button className={activeTab === 'data-logging' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'data-logging' ? 'page' : undefined}
+        onClick={() => setActiveTab('data-logging')}>Data Logging</button>
     </nav>
     {activeTab === 'meter' ? <>
       <section className="section-heading configuration-heading">
@@ -975,7 +980,9 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         })} /></label>
       <div className="frequency-actions"><button type="submit">Apply and save</button>
         <span>{configurationStatus}</span></div>
-    </form>}</> : <WaveformConfiguration onUnauthorized={onUnauthorized} />}
+    </form>}</> : activeTab === 'waveform'
+      ? <WaveformConfiguration onUnauthorized={onUnauthorized} />
+      : <DeveloperDatabasePage onUnauthorized={onUnauthorized} />}
   </section>
 }
 
@@ -985,7 +992,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   onUnauthorized: () => void
 }) {
   const [activeView, setActiveView] =
-    useState<'dashboard' | 'waveforms' | 'configuration' | 'about' | 'developer'>('dashboard')
+    useState<'dashboard' | 'history' | 'waveforms' | 'configuration' | 'about' | 'developer'>('dashboard')
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
@@ -1242,6 +1249,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       <button type="button" className={activeView === 'dashboard' ? 'active' : ''}
         aria-current={activeView === 'dashboard' ? 'page' : undefined}
         onClick={() => setActiveView('dashboard')}>Dashboard</button>
+      <button type="button" className={activeView === 'history' ? 'active' : ''}
+        aria-current={activeView === 'history' ? 'page' : undefined}
+        onClick={() => setActiveView('history')}>History</button>
       <button type="button" className={activeView === 'waveforms' ? 'active' : ''}
         aria-current={activeView === 'waveforms' ? 'page' : undefined}
         onClick={() => setActiveView('waveforms')}>Waveforms</button>
@@ -1268,6 +1278,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           onSimulatorSubmit={saveSimulator} />
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
+      : activeView === 'history'
+        ? <HistoryPage onUnauthorized={onUnauthorized} />
       : activeView === 'waveforms'
         ? <WaveformExplorer onUnauthorized={onUnauthorized}
             canDelete={session.role === 'admin'} />
