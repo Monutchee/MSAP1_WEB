@@ -332,6 +332,13 @@ export interface DatabaseStatus {
   }
 }
 
+export type HistorianDataset =
+  'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2'
+
+export type DatabaseMaintenanceRequest =
+  | { action: 'clear_datasets'; datasets: HistorianDataset[]; confirmed: true }
+  | { action: 'recreate_historian'; datasets: []; confirmed: true }
+
 export interface HistoryCapability {
   id: string
   unit: string
@@ -600,6 +607,11 @@ export const api = {
     request<DatabaseStatus>('/api/v1/developer/database', {
       method: 'PUT',
       body: JSON.stringify(settings),
+    }),
+  maintainDeveloperDatabase: (maintenance: DatabaseMaintenanceRequest) =>
+    request<DatabaseStatus>('/api/v1/developer/database/maintenance', {
+      method: 'POST',
+      body: JSON.stringify(maintenance),
     }),
   historyCapabilities: () =>
     request<HistoryCapabilities>('/api/v1/meter/history/capabilities'),

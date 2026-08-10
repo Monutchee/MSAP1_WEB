@@ -17,4 +17,10 @@
 .dataset-live { display:flex; flex-wrap:wrap; gap:.45rem 1rem; grid-column:2 / -1; color:var(--muted); font-family:ui-monospace,monospace; font-size:.65rem; }
 .volatile-warning { grid-column:1 / -1 !important; display:flex !important; grid-template-columns:auto 1fr; align-items:center; color:var(--red) !important; }
 .database-actions { display:flex; align-items:center; gap:1rem; padding:1.15rem 1.25rem; }
+.database-danger-zone { display:flex; align-items:flex-end; justify-content:space-between; gap:2rem; margin-top:1.5rem; padding:1.25rem; border:1px solid color-mix(in srgb,var(--red) 55%,var(--line)); border-radius:18px; }
+.database-danger-zone h2, .database-danger-zone p { margin:.25rem 0; }
+.database-danger-zone p { color:var(--muted); }
+.database-maintenance-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:.65rem; }
+.database-maintenance-actions button.danger { color:#fff; background:#8e3035; border-color:#b34b51; }
+.database-maintenance-actions button.danger:hover { background:#a93b41; }
 @media (max-width:900px) { .database-health-grid { grid-template-columns:1fr 1fr; } .database-policy-table > header { display:none; } .database-policy-table fieldset { grid-template-columns:1fr 1fr; } .database-policy-table legend { width:auto; float:none; grid-column:1 / -1; } }

@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import {
   api, ApiError, DatabaseSettings, DatabaseStatus,
-  DatasetStorageSettings,
+  DatasetStorageSettings, HistorianDataset,
 } from '../api'
 import './database.css'
 
@@ -89,7 +89,38 @@ export function DeveloperDatabasePage({ onUnauthorized }: { onUnauthorized: () =
     }
   }
 
+  async function maintain(action: 'clear_datasets' | 'recreate_historian',
+    datasets: HistorianDataset[], prompt: string) {
+    if (!window.confirm(prompt)) return
+    setBusy(true)
+    setError('')
+    setMessage(action === 'recreate_historian'
+      ? 'Deleting and recreating the historian database…'
+      : 'Clearing selected historical data…')
+    try {
+      const next = await api.maintainDeveloperDatabase(action === 'clear_datasets'
+        ? { action, datasets, confirmed: true }
+        : { action, datasets: [], confirmed: true })
+      setStatus(next)
+      setPolicies(clonePolicies(next.policies))
+      setMessage(action === 'recreate_historian'
+        ? 'Historian database recreated.'
+        : 'Historical data cleared.')
+    } catch (reason) {
+      setMessage('')
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Database maintenance failed')
+    } finally { setBusy(false) }
+  }
+
   return <section className="database-page">
+    <section className="section-heading configuration-heading">
+      <div><p className="eyebrow">Data logging</p><h2>Historical storage</h2></div>
+      <span>Raw spool and historian projections</span>
+    </section>
     <div className="database-health-grid">
       <article><span>Meter stream</span><strong>{status?.stream.healthy ? 'Healthy' : 'Unavailable'}</strong>
         <small>{status ? `${status.stream.record_count.toLocaleString()} records · ${formatBytes(status.stream.storage_bytes)}` : 'Loading…'}</small></article>
@@ -152,5 +183,20 @@ export function DeveloperDatabasePage({ onUnauthorized }: { onUnauthorized: () =
       <div className="database-actions"><button type="submit" disabled={controlsDisabled}>Apply and save</button>
         <span>{message}</span></div>
     </form>}
+    <section className="database-danger-zone">
+      <div><p className="eyebrow">Maintenance</p><h2>Clear data logs</h2>
+        <p>These operations remove historian projections. The durable raw-record spool is not deleted.</p></div>
+      <div className="database-maintenance-actions">
+        <button className="secondary" type="button" disabled={controlsDisabled}
+          onClick={() => void maintain('clear_datasets', ['basic'],
+            'Clear all Basic 10/12-cycle historical data? This cannot be undone.')}>Clear Basic data</button>
+        <button className="secondary" type="button" disabled={controlsDisabled}
+          onClick={() => void maintain('clear_datasets', ['cycles_150_180'],
+            'Clear all 150/180-cycle historical data? This cannot be undone.')}>Clear 150/180-cycle data</button>
+        <button className="danger" type="button" disabled={controlsDisabled}
+          onClick={() => void maintain('recreate_historian', [],
+            'Delete and recreate the complete historian database? All historical projections will be permanently removed; the raw spool is preserved.')}>Delete and recreate historian</button>
+      </div>
+    </section>
   </section>
 }

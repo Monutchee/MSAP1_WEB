@@ -686,7 +686,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   onSimulatorSubmit: (event: FormEvent) => void
 }) {
   const [activeTab, setActiveTab] =
-    useState<'overview' | 'tweak' | 'simulator' | 'database' | 'about' | 'logs'>('overview')
+    useState<'overview' | 'tweak' | 'simulator' | 'about' | 'logs'>('overview')
   return <section className="developer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
@@ -702,9 +702,6 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       <button className={activeTab === 'simulator' ? 'active' : ''} type="button"
         aria-current={activeTab === 'simulator' ? 'page' : undefined}
         onClick={() => setActiveTab('simulator')}>ADC Simulator</button>
-      <button className={activeTab === 'database' ? 'active' : ''} type="button"
-        aria-current={activeTab === 'database' ? 'page' : undefined}
-        onClick={() => setActiveTab('database')}>Database</button>
       <button className={activeTab === 'about' ? 'active' : ''} type="button"
         aria-current={activeTab === 'about' ? 'page' : undefined}
         onClick={() => setActiveTab('about')}>About</button>
@@ -761,8 +758,6 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
           <span>{simulatorStatus}</span></div>
       </form>}
     </>
-      : activeTab === 'database'
-        ? <DeveloperDatabasePage onUnauthorized={onUnauthorized} />
       : activeTab === 'about'
         ? <DeveloperAboutPage onUnauthorized={onUnauthorized} />
         : <DeveloperLogs onUnauthorized={onUnauthorized} />}
@@ -912,7 +907,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onUnauthorized: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'meter' | 'waveform'>('meter')
+  const [activeTab, setActiveTab] = useState<'meter' | 'waveform' | 'data-logging'>('meter')
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
@@ -925,6 +920,9 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
       <button className={activeTab === 'waveform' ? 'active' : ''} type="button"
         aria-current={activeTab === 'waveform' ? 'page' : undefined}
         onClick={() => setActiveTab('waveform')}>Waveform</button>
+      <button className={activeTab === 'data-logging' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'data-logging' ? 'page' : undefined}
+        onClick={() => setActiveTab('data-logging')}>Data Logging</button>
     </nav>
     {activeTab === 'meter' ? <>
       <section className="section-heading configuration-heading">
@@ -982,7 +980,9 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         })} /></label>
       <div className="frequency-actions"><button type="submit">Apply and save</button>
         <span>{configurationStatus}</span></div>
-    </form>}</> : <WaveformConfiguration onUnauthorized={onUnauthorized} />}
+    </form>}</> : activeTab === 'waveform'
+      ? <WaveformConfiguration onUnauthorized={onUnauthorized} />
+      : <DeveloperDatabasePage onUnauthorized={onUnauthorized} />}
   </section>
 }
 

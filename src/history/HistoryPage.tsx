@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import uPlot, { AlignedData, Options, Series } from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { api, ApiError, HistoryCapabilities, HistoryPoint } from '../api'
@@ -20,6 +20,9 @@ function HistoryPlot({ points, capabilities, attributes }: {
   attributes: string[]
 }) {
   const host = useRef<HTMLDivElement>(null)
+  const plotRef = useRef<uPlot>()
+  const visibleRange = useRef<{ min: number; max: number }>()
+  const [verticalScale, setVerticalScale] = useState<'auto' | 'fixed'>('auto')
 
   const aligned = useMemo(() => {
     const times = [...new Set(points.map((point) => point.measured_at_nanoseconds))]
@@ -37,6 +40,52 @@ function HistoryPlot({ points, capabilities, attributes }: {
     return [times.map((time) => time / 1_000_000_000), ...columns] as AlignedData
   }, [attributes, capabilities.attributes, points])
 
+  const fullRange = useMemo(() => ({
+    min: aligned[0][0] ?? 0,
+    max: aligned[0][aligned[0].length - 1] ?? 1,
+  }), [aligned])
+
+  const fixedVerticalRange = useMemo<[number, number]>(() => {
+    const values: number[] = []
+    aligned.slice(1).forEach((column) => column.forEach((value) => {
+      if (typeof value === 'number' && Number.isFinite(value)) values.push(value)
+    }))
+    if (values.length === 0) return [-1, 1]
+    const minimum = Math.min(...values)
+    const maximum = Math.max(...values)
+    const padding = Math.max((maximum - minimum) * 0.05,
+      Math.max(Math.abs(minimum), Math.abs(maximum)) * 0.01, 1e-9)
+    return [minimum - padding, maximum + padding]
+  }, [aligned])
+
+  const setHorizontalRange = useCallback((minimum: number, maximum: number) => {
+    const plot = plotRef.current
+    if (!plot) return
+    const completeSpan = Math.max(fullRange.max - fullRange.min, Number.EPSILON)
+    let span = Math.min(Math.max(maximum - minimum, completeSpan / 1_000_000), completeSpan)
+    if (!Number.isFinite(span)) span = completeSpan
+    let min = minimum
+    if (min < fullRange.min) min = fullRange.min
+    if (min + span > fullRange.max) min = fullRange.max - span
+    const next = { min, max: min + span }
+    visibleRange.current = next
+    plot.setScale('x', next)
+  }, [fullRange])
+
+  const zoom = useCallback((factor: number) => {
+    const plot = plotRef.current
+    if (!plot) return
+    const minimum = plot.scales.x.min ?? fullRange.min
+    const maximum = plot.scales.x.max ?? fullRange.max
+    const center = (minimum + maximum) / 2
+    const half = ((maximum - minimum) * factor) / 2
+    setHorizontalRange(center - half, center + half)
+  }, [fullRange, setHorizontalRange])
+
+  const fit = useCallback(() => {
+    setHorizontalRange(fullRange.min, fullRange.max)
+  }, [fullRange, setHorizontalRange])
+
   useEffect(() => {
     if (!host.current || aligned[0].length === 0) return
     const colors = ['#59e3b0', '#ffbd5c', '#7ca8ff', '#ef74ab', '#48c7ad', '#a78bfa', '#ff7a70', '#f1dc63']
@@ -44,26 +93,67 @@ function HistoryPlot({ points, capabilities, attributes }: {
       const capability = capabilities.attributes.find((entry) => entry.id === attribute)
       return { label: `${attribute} (${displayUnit(capability?.unit ?? '')})`, stroke: colors[index % colors.length], width: 1.5, spanGaps: false }
     })]
+    const scales: Options['scales'] = { x: { time: true } }
+    if (verticalScale === 'fixed')
+      scales.y = { auto: false, range: () => fixedVerticalRange }
     const options: Options = {
       width: Math.max(640, host.current.clientWidth), height: 520,
       title: 'Historical meter data', series,
-      scales: { x: { time: true } },
+      scales,
       axes: [{ stroke: '#789098', grid: { stroke: '#20363d' } },
         { stroke: '#789098', grid: { stroke: '#20363d' } }],
-      cursor: { drag: { x: true, y: false, setScale: true } },
+      // uPlot's default drag-to-scale interaction draws a zoom selection.
+      // History uses direct manipulation instead: drag pans time and wheel or
+      // the explicit buttons zooms around the pointer/viewport centre.
+      cursor: { drag: { x: false, y: false, setScale: false } },
       hooks: { ready: [(plot) => {
+        plotRef.current = plot
+        if (visibleRange.current)
+          plot.setScale('x', visibleRange.current)
+
         const wheel = (event: WheelEvent) => {
           event.preventDefault()
-          const left = plot.posToVal(event.offsetX, 'x')
+          const bounds = plot.over.getBoundingClientRect()
+          const left = plot.posToVal(event.clientX - bounds.left, 'x')
           const min = plot.scales.x.min ?? aligned[0][0]
           const max = plot.scales.x.max ?? aligned[0][aligned[0].length - 1]
           const factor = event.deltaY < 0 ? 0.8 : 1.25
-          plot.setScale('x', {
-            min: left - (left - min) * factor,
-            max: left + (max - left) * factor,
-          })
+          setHorizontalRange(
+            left - (left - min) * factor,
+            left + (max - left) * factor,
+          )
+        }
+        let dragging: { clientX: number; min: number; max: number } | undefined
+        const pointerDown = (event: PointerEvent) => {
+          if (event.button !== 0) return
+          dragging = {
+            clientX: event.clientX,
+            min: plot.scales.x.min ?? fullRange.min,
+            max: plot.scales.x.max ?? fullRange.max,
+          }
+          plot.over.setPointerCapture(event.pointerId)
+          plot.over.classList.add('panning')
+        }
+        const pointerMove = (event: PointerEvent) => {
+          if (!dragging) return
+          event.preventDefault()
+          const width = Math.max(plot.over.clientWidth, 1)
+          const offset = -((event.clientX - dragging.clientX) / width) *
+            (dragging.max - dragging.min)
+          setHorizontalRange(dragging.min + offset, dragging.max + offset)
+        }
+        const pointerUp = (event: PointerEvent) => {
+          if (!dragging) return
+          dragging = undefined
+          if (plot.over.hasPointerCapture(event.pointerId))
+            plot.over.releasePointerCapture(event.pointerId)
+          plot.over.classList.remove('panning')
         }
         plot.over.addEventListener('wheel', wheel, { passive: false })
+        plot.over.addEventListener('pointerdown', pointerDown)
+        plot.over.addEventListener('pointermove', pointerMove)
+        plot.over.addEventListener('pointerup', pointerUp)
+        plot.over.addEventListener('pointercancel', pointerUp)
       }] },
     }
     const plot = new uPlot(options, aligned, host.current)
@@ -71,10 +161,29 @@ function HistoryPlot({ points, capabilities, attributes }: {
       width: Math.max(640, host.current?.clientWidth ?? 640), height: 520,
     }))
     observer.observe(host.current)
-    return () => { observer.disconnect(); plot.destroy() }
-  }, [aligned, attributes, capabilities.attributes])
+    return () => {
+      observer.disconnect()
+      if (plotRef.current === plot) plotRef.current = undefined
+      plot.destroy()
+    }
+  }, [aligned, attributes, capabilities.attributes, fixedVerticalRange,
+    fullRange, setHorizontalRange, verticalScale])
 
-  return <div className="history-plot" ref={host} />
+  return <section className="history-chart">
+    <div className="history-plot-controls" aria-label="History plot controls">
+      <div><span>Time</span>
+        <button type="button" title="Zoom in" onClick={() => zoom(0.5)}>+</button>
+        <button type="button" title="Zoom out" onClick={() => zoom(2)}>−</button>
+        <button type="button" onClick={fit}>Fit</button></div>
+      <div><span>Vertical scale</span>
+        <button type="button" className={verticalScale === 'auto' ? 'active' : ''}
+          aria-pressed={verticalScale === 'auto'} onClick={() => setVerticalScale('auto')}>Auto</button>
+        <button type="button" className={verticalScale === 'fixed' ? 'active' : ''}
+          aria-pressed={verticalScale === 'fixed'} onClick={() => setVerticalScale('fixed')}>Fixed</button></div>
+      <small>Drag to pan · wheel to zoom</small>
+    </div>
+    <div className="history-plot" ref={host} />
+  </section>
 }
 
 export function HistoryPage({ onUnauthorized }: { onUnauthorized: () => void }) {
