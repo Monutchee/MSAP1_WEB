@@ -273,6 +273,96 @@ export interface ProductSettings {
     default_pretrigger_ms: number
     default_posttrigger_ms: number
   }
+  database: DatabaseSettings
+}
+
+export type StorageBackend = 'memory' | 'persistent'
+
+export interface DatasetStorageSettings {
+  backend: StorageBackend
+  maximum_age_seconds: number
+  maximum_bytes: number
+  volatile_spool_acknowledged: boolean
+}
+
+export interface DatabaseSettings {
+  spool: DatasetStorageSettings
+  basic: DatasetStorageSettings
+  cycles_150_180: DatasetStorageSettings
+  minutes_10: DatasetStorageSettings
+  hours_2: DatasetStorageSettings
+}
+
+export interface DatabaseConsumerCursor {
+  name: string
+  acknowledged_cursor: number
+}
+
+export interface DatabaseDatasetStatus {
+  dataset: string
+  backend: StorageBackend
+  block_count: number
+  storage_bytes: number
+  oldest_nanoseconds?: number
+  newest_nanoseconds?: number
+}
+
+export interface DatabaseStatus {
+  policies: DatabaseSettings
+  stream: {
+    healthy: boolean
+    durability: boolean
+    oldest_cursor: number
+    newest_cursor: number
+    record_count: number
+    storage_bytes: number
+    consumers: DatabaseConsumerCursor[]
+  }
+  historian: {
+    healthy: boolean
+    migration_in_progress: boolean
+    backfill_incomplete: boolean
+    acknowledged_cursor: number
+    oldest_available_stream_cursor: number
+    newest_stream_cursor: number
+    lag_records: number
+    block_count: number
+    storage_bytes: number
+    datasets: DatabaseDatasetStatus[]
+  }
+}
+
+export interface HistoryCapability {
+  id: string
+  unit: string
+}
+
+export interface HistoryCapabilities {
+  periods: string[]
+  attributes: HistoryCapability[]
+  maximum_points: number
+}
+
+export interface HistoryQuery {
+  period: string
+  attributes: string[]
+  start_nanoseconds: number
+  end_nanoseconds: number
+  limit: number
+}
+
+export interface HistoryPoint {
+  measured_at_nanoseconds: number
+  source_sequence: number
+  attribute: string
+  value: number
+  quality: string
+}
+
+export interface HistoryResponse {
+  period: string
+  points: HistoryPoint[]
+  truncated: boolean
 }
 
 export interface SettingsDocument {
@@ -504,4 +594,18 @@ export const api = {
     request<SocTemperatures>('/api/v1/developer/temperatures'),
   developerAbout: () =>
     request<DeveloperAbout>('/api/v1/developer/about'),
+  developerDatabase: () =>
+    request<DatabaseStatus>('/api/v1/developer/database'),
+  updateDeveloperDatabase: (settings: DatabaseSettings) =>
+    request<DatabaseStatus>('/api/v1/developer/database', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    }),
+  historyCapabilities: () =>
+    request<HistoryCapabilities>('/api/v1/meter/history/capabilities'),
+  historyQuery: (query: HistoryQuery) =>
+    request<HistoryResponse>('/api/v1/meter/history/query', {
+      method: 'POST',
+      body: JSON.stringify(query),
+    }),
 }
