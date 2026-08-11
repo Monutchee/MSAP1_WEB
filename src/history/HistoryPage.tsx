@@ -38,8 +38,18 @@ function HistoryPlot({ points, capabilities, attributes }: {
   const [verticalScale, setVerticalScale] = useState<'auto' | 'fixed'>('auto')
 
   const aligned = useMemo(() => {
-    const times = [...new Set(points.map((point) => point.measured_at_nanoseconds))]
-      .sort((a, b) => a - b)
+    /*
+     * Points arrive ordered by measured_at_ns -- the backend orders them and a
+     * continuation appends at the boundary -- so the distinct timestamps come
+     * from one pass with no hashing and no sort. Anything that changes the merge
+     * above must preserve that ordering or this collapses the x axis.
+     */
+    const times: number[] = []
+    for (const point of points) {
+      if (times.length === 0 ||
+          times[times.length - 1] !== point.measured_at_nanoseconds)
+        times.push(point.measured_at_nanoseconds)
+    }
     const timeIndex = new Map(times.map((time, index) => [time, index]))
     const columns: Array<Array<number | null>> = attributes.map(() =>
       Array.from({ length: times.length }, () => null))
@@ -71,33 +81,49 @@ function HistoryPlot({ points, capabilities, attributes }: {
     return [minimum - padding, maximum + padding]
   }, [aligned])
 
+  /*
+   * The chart is no longer rebuilt when data arrives, so anything the plot's
+   * own callbacks and DOM handlers read has to reach them through a ref. They
+   * are registered once at creation and would otherwise capture the ranges from
+   * the first page forever.
+   */
+  const fullRangeRef = useRef(fullRange)
+  const fixedVerticalRangeRef = useRef(fixedVerticalRange)
+  const alignedRef = useRef(aligned)
+  useEffect(() => {
+    fullRangeRef.current = fullRange
+    fixedVerticalRangeRef.current = fixedVerticalRange
+    alignedRef.current = aligned
+  }, [aligned, fixedVerticalRange, fullRange])
+
   const setHorizontalRange = useCallback((minimum: number, maximum: number) => {
     const plot = plotRef.current
     if (!plot) return
-    const completeSpan = Math.max(fullRange.max - fullRange.min, Number.EPSILON)
+    const range = fullRangeRef.current
+    const completeSpan = Math.max(range.max - range.min, Number.EPSILON)
     let span = Math.min(Math.max(maximum - minimum, completeSpan / 1_000_000), completeSpan)
     if (!Number.isFinite(span)) span = completeSpan
     let min = minimum
-    if (min < fullRange.min) min = fullRange.min
-    if (min + span > fullRange.max) min = fullRange.max - span
+    if (min < range.min) min = range.min
+    if (min + span > range.max) min = range.max - span
     const next = { min, max: min + span }
     visibleRange.current = next
     plot.setScale('x', next)
-  }, [fullRange])
+  }, [])
 
   const zoom = useCallback((factor: number) => {
     const plot = plotRef.current
     if (!plot) return
-    const minimum = plot.scales.x.min ?? fullRange.min
-    const maximum = plot.scales.x.max ?? fullRange.max
+    const minimum = plot.scales.x.min ?? fullRangeRef.current.min
+    const maximum = plot.scales.x.max ?? fullRangeRef.current.max
     const center = (minimum + maximum) / 2
     const half = ((maximum - minimum) * factor) / 2
     setHorizontalRange(center - half, center + half)
-  }, [fullRange, setHorizontalRange])
+  }, [setHorizontalRange])
 
   const fit = useCallback(() => {
-    setHorizontalRange(fullRange.min, fullRange.max)
-  }, [fullRange, setHorizontalRange])
+    setHorizontalRange(fullRangeRef.current.min, fullRangeRef.current.max)
+  }, [setHorizontalRange])
 
   useEffect(() => {
     if (!host.current || aligned[0].length === 0) return
@@ -108,7 +134,7 @@ function HistoryPlot({ points, capabilities, attributes }: {
     })]
     const scales: Options['scales'] = { x: { time: true } }
     if (verticalScale === 'fixed')
-      scales.y = { auto: false, range: () => fixedVerticalRange }
+      scales.y = { auto: false, range: () => fixedVerticalRangeRef.current }
     const options: Options = {
       width: Math.max(640, host.current.clientWidth), height: 520,
       title: 'Historical meter data', series,
@@ -128,8 +154,8 @@ function HistoryPlot({ points, capabilities, attributes }: {
           event.preventDefault()
           const bounds = plot.over.getBoundingClientRect()
           const left = plot.posToVal(event.clientX - bounds.left, 'x')
-          const min = plot.scales.x.min ?? aligned[0][0]
-          const max = plot.scales.x.max ?? aligned[0][aligned[0].length - 1]
+          const min = plot.scales.x.min ?? fullRangeRef.current.min
+          const max = plot.scales.x.max ?? fullRangeRef.current.max
           const factor = event.deltaY < 0 ? 0.8 : 1.25
           setHorizontalRange(
             left - (left - min) * factor,
@@ -141,8 +167,8 @@ function HistoryPlot({ points, capabilities, attributes }: {
           if (event.button !== 0) return
           dragging = {
             clientX: event.clientX,
-            min: plot.scales.x.min ?? fullRange.min,
-            max: plot.scales.x.max ?? fullRange.max,
+            min: plot.scales.x.min ?? fullRangeRef.current.min,
+            max: plot.scales.x.max ?? fullRangeRef.current.max,
           }
           plot.over.setPointerCapture(event.pointerId)
           plot.over.classList.add('panning')
@@ -169,7 +195,7 @@ function HistoryPlot({ points, capabilities, attributes }: {
         plot.over.addEventListener('pointercancel', pointerUp)
       }] },
     }
-    const plot = new uPlot(options, aligned, host.current)
+    const plot = new uPlot(options, alignedRef.current, host.current)
     const observer = new ResizeObserver(() => plot.setSize({
       width: Math.max(640, host.current?.clientWidth ?? 640), height: 520,
     }))
@@ -179,8 +205,24 @@ function HistoryPlot({ points, capabilities, attributes }: {
       if (plotRef.current === plot) plotRef.current = undefined
       plot.destroy()
     }
-  }, [aligned, attributes, capabilities.attributes, fixedVerticalRange,
-    fullRange, setHorizontalRange, verticalScale])
+    /*
+     * Structural dependencies only. `aligned` is deliberately absent: it changed
+     * on every appended page, and each change destroyed the chart and ran
+     * `new uPlot` again -- a full teardown and rebuild per page, on top of
+     * rebuilding every column. Data now arrives through setData() below.
+     */
+  }, [attributes, capabilities.attributes, setHorizontalRange, verticalScale])
+
+  /* Feed new data into the existing chart. */
+  useEffect(() => {
+    const plot = plotRef.current
+    if (!plot || aligned[0].length === 0) return
+    plot.setData(aligned)
+    /* setData rescales x to the whole extent, so an appended page would yank
+     * the operator out of wherever they had panned to. Restore it. */
+    if (visibleRange.current)
+      plot.setScale('x', visibleRange.current)
+  }, [aligned])
 
   return <section className="history-chart">
     <div className="history-plot-controls" aria-label="History plot controls">
@@ -240,15 +282,33 @@ export function HistoryPage({ onUnauthorized }: { onUnauthorized: () => void }) 
       })
       if (append) {
         setPoints((current) => {
-          const merged = new Map(current.map((point) => [
-            `${point.measured_at_nanoseconds}:${point.source_sequence}:${point.attribute}`,
-            point,
-          ]))
-          result.points.forEach((point) => merged.set(
-            `${point.measured_at_nanoseconds}:${point.source_sequence}:${point.attribute}`,
-            point))
-          return [...merged.values()].sort((left, right) =>
-            left.measured_at_nanoseconds - right.measured_at_nanoseconds)
+          if (current.length === 0) return result.points
+          /*
+           * A continuation restarts at the newest timestamp already held, so
+           * that single timestamp is the only one that can appear in both
+           * pages. Deduplicating just that boundary replaces the previous
+           * approach of rebuilding a keyed Map over every accumulated point
+           * and re-sorting the whole set on each page: that cost grew with the
+           * total, so the work to load N pages grew quadratically and the tab
+           * stalled long before a large range finished.
+           *
+           * The backend orders by measured_at_ns, and the continuation starts
+           * at the boundary, so appending keeps the series ordered.
+           */
+          const boundary =
+            current[current.length - 1].measured_at_nanoseconds
+          const held = new Set<string>()
+          for (let index = current.length - 1; index >= 0; index -= 1) {
+            const point = current[index]
+            if (point.measured_at_nanoseconds !== boundary) break
+            held.add(`${point.source_sequence}:${point.attribute}`)
+          }
+          /* Keeps the attributes of a block the previous page cut in half,
+           * which is why the overlap exists in the first place. */
+          const fresh = result.points.filter((point) =>
+            point.measured_at_nanoseconds !== boundary ||
+            !held.has(`${point.source_sequence}:${point.attribute}`))
+          return fresh.length === 0 ? current : current.concat(fresh)
         })
       } else {
         setPoints(result.points)

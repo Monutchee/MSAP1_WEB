@@ -36,6 +36,22 @@ export function DeveloperDatabasePage({ onUnauthorized }: { onUnauthorized: () =
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  /*
+   * The status poll below refreshes every three seconds. It must never adopt
+   * server policies once the operator has started editing, or their typing is
+   * silently reverted mid-edit and "Apply and save" appears to do nothing:
+   * `busy` is only set while a request is in flight, not while editing.
+   */
+  const [dirty, setDirty] = useState(false)
+  /*
+   * Raw retention text while a field is being edited. A number input is
+   * momentarily empty during backspacing, and Number('') is 0 -- which means
+   * "forever" in this model and would unmount the input. Keeping the raw
+   * string lets the field hold a transient empty value without changing the
+   * policy, so 0 keeps meaning forever and only an explicit choice sets it.
+   */
+  const [retentionDraft, setRetentionDraft] =
+    useState<Partial<Record<keyof DatabaseSettings, string>>>({})
   const migrationBusy = status?.historian.migration_in_progress ?? false
   const controlsDisabled = busy || migrationBusy
 
@@ -43,14 +59,16 @@ export function DeveloperDatabasePage({ onUnauthorized }: { onUnauthorized: () =
     try {
       const next = await api.developerDatabase()
       setStatus(next)
-      if (!busy && !next.historian.migration_in_progress)
+      /* Live counters always refresh; the editable form does not once the
+       * operator has unsaved changes. */
+      if (!busy && !dirty && !next.historian.migration_in_progress)
         setPolicies(clonePolicies(next.policies))
       setError('')
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 401) return onUnauthorized()
       setError(reason instanceof Error ? reason.message : 'Unable to read database status')
     }
-  }, [busy, onUnauthorized])
+  }, [busy, dirty, onUnauthorized])
 
   useEffect(() => {
     void load()
@@ -59,10 +77,30 @@ export function DeveloperDatabasePage({ onUnauthorized }: { onUnauthorized: () =
   }, [busy, load])
 
   function update(key: keyof DatabaseSettings, patch: Partial<DatasetStorageSettings>) {
+    setDirty(true)
     setPolicies((current) => current ? {
       ...current,
       [key]: { ...current[key], ...patch },
     } : current)
+  }
+
+  /* Commit a retention edit. An empty or unparseable field leaves the stored
+   * policy untouched and is reconciled on blur, so the input never collapses
+   * into the "forever" state while the operator is still typing. */
+  function editRetention(key: keyof DatabaseSettings, raw: string) {
+    setRetentionDraft((current) => ({ ...current, [key]: raw }))
+    const parsed = Number(raw)
+    if (raw.trim() === '' || !Number.isFinite(parsed) || parsed <= 0) return
+    update(key, { maximum_age_seconds: Math.floor(parsed) })
+  }
+
+  /* Discard an abandoned partial edit and show the value actually held. */
+  function commitRetention(key: keyof DatabaseSettings) {
+    setRetentionDraft((current) => {
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
   }
 
   async function save(event: FormEvent) {
@@ -79,6 +117,10 @@ export function DeveloperDatabasePage({ onUnauthorized }: { onUnauthorized: () =
     try {
       const next = await api.updateDeveloperDatabase(policies)
       setStatus(next)
+      /* Adopt what the server actually stored, and reopen the form to polling:
+       * the edit is committed, so there is nothing left to protect. */
+      setRetentionDraft({})
+      setDirty(false)
       setPolicies(clonePolicies(next.policies))
       setMessage('Applied and saved.')
     } catch (reason) {
@@ -102,6 +144,11 @@ export function DeveloperDatabasePage({ onUnauthorized }: { onUnauthorized: () =
         ? { action, datasets, confirmed: true }
         : { action, datasets: [], confirmed: true })
       setStatus(next)
+      /* Maintenance replaces the form with server state, so any pending edit is
+       * gone: clear the dirty flag too, or polling stays blocked for the rest
+       * of the session. */
+      setRetentionDraft({})
+      setDirty(false)
       setPolicies(clonePolicies(next.policies))
       setMessage(action === 'recreate_historian'
         ? 'Historian database recreated.'
@@ -161,9 +208,10 @@ export function DeveloperDatabasePage({ onUnauthorized }: { onUnauthorized: () =
               maximum_age_seconds: event.target.value === 'forever' ? 0 : 86400,
             })}>
             <option value="forever">Forever</option><option value="custom">Custom</option>
-          </select>{policy.maximum_age_seconds > 0 && <input type="number" min="60"
-            value={policy.maximum_age_seconds}
-            onChange={(event) => update(key, { maximum_age_seconds: Number(event.target.value) })}
+          </select>{policy.maximum_age_seconds > 0 && <input type="number" min="60" step="1"
+            value={retentionDraft[key] ?? String(policy.maximum_age_seconds)}
+            onChange={(event) => editRetention(key, event.target.value)}
+            onBlur={() => commitRetention(key)}
             aria-label={`${label} retention seconds`} />}<small>{policy.maximum_age_seconds > 0 ? 'seconds' : 'no age limit'}</small></label>
           <label>Maximum bytes<input type="number" min="0" step="1048576"
             value={policy.maximum_bytes}
