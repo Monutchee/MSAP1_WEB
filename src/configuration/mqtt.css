@@ -26,6 +26,12 @@
 .mqtt-passphrase label { flex: 1; }
 .mqtt-runtime { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; padding: 1rem; border: 1px solid var(--line); border-radius: 10px; }
 .mqtt-runtime .bad { color: var(--red); }
+.mqtt-status-warning {
+  display: flex; gap: .75rem 1rem; align-items: baseline; margin-bottom: 1rem;
+  padding: .8rem 1rem; border: 1px solid var(--yellow); border-radius: 10px;
+  color: var(--yellow); background: rgb(255 191 71 / 5%);
+}
+.mqtt-runtime + .database-progress, .mqtt-runtime + .mqtt-form { margin-top: 1rem; }
 .mqtt-actions { display: flex; align-items: center; gap: 1rem; color: var(--muted); }
 .mqtt-state { text-transform: capitalize; color: var(--muted); }
 .mqtt-state.connected { color: var(--green); }

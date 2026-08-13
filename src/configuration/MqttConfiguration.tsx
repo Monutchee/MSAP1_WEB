@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api, ApiError, mqttCaDownloadPath, mqttClientCertificateDownloadPath,
   MqttConfigurationDocument, MqttCredentialStatus, MqttPeriodCapability,
@@ -55,11 +55,17 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
   const [document, setDocument] = useState<MqttConfigurationDocument>()
   const [capabilities, setCapabilities] = useState<MqttPeriodCapability[]>([])
   const [runtime, setRuntime] = useState<MqttStatus>()
+  const [configurationLoading, setConfigurationLoading] = useState(true)
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(true)
+  const [runtimeLoading, setRuntimeLoading] = useState(true)
   const [password, setPassword] = useState('')
   const [keyPassphrase, setKeyPassphrase] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [capabilitiesError, setCapabilitiesError] = useState('')
+  const [runtimeError, setRuntimeError] = useState('')
+  const runtimeRequestInFlight = useRef(false)
 
   const handleError = useCallback((reason: unknown, fallback: string) => {
     if (reason instanceof ApiError && reason.status === 401) {
@@ -69,27 +75,58 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
     setError(reason instanceof Error ? reason.message : fallback)
   }, [onUnauthorized])
 
-  const load = useCallback(async () => {
+  const loadConfiguration = useCallback(async () => {
+    setConfigurationLoading(true)
     try {
-      const [configuration, available, status] = await Promise.all([
-        api.mqttConfiguration(), api.mqttCapabilities(), api.mqttStatus(),
-      ])
-      setDocument(configuration)
-      setCapabilities(available)
-      setRuntime(status)
+      setDocument(await api.mqttConfiguration())
       setError('')
     } catch (reason) {
       handleError(reason, 'Unable to read MQTT configuration')
+    } finally {
+      setConfigurationLoading(false)
     }
   }, [handleError])
 
-  useEffect(() => { void load() }, [load])
+  const loadCapabilities = useCallback(async () => {
+    setCapabilitiesLoading(true)
+    try {
+      setCapabilities(await api.mqttCapabilities())
+      setCapabilitiesError('')
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) onUnauthorized()
+      else setCapabilitiesError(reason instanceof Error
+        ? reason.message : 'Unable to read MQTT capabilities')
+    } finally {
+      setCapabilitiesLoading(false)
+    }
+  }, [onUnauthorized])
+
+  const loadRuntime = useCallback(async (showLoading: boolean) => {
+    if (runtimeRequestInFlight.current) return
+    runtimeRequestInFlight.current = true
+    if (showLoading) setRuntimeLoading(true)
+    try {
+      setRuntime(await api.mqttStatus())
+      setRuntimeError('')
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) onUnauthorized()
+      else setRuntimeError(reason instanceof Error
+        ? reason.message : 'Unable to read MQTT runtime status')
+    } finally {
+      runtimeRequestInFlight.current = false
+      if (showLoading) setRuntimeLoading(false)
+    }
+  }, [onUnauthorized])
+
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      api.mqttStatus().then(setRuntime).catch(() => undefined)
-    }, 3000)
+    void loadConfiguration()
+    void loadCapabilities()
+    void loadRuntime(true)
+  }, [loadCapabilities, loadConfiguration, loadRuntime])
+  useEffect(() => {
+    const timer = window.setInterval(() => void loadRuntime(false), 3000)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [loadRuntime])
 
   const secureTransport = document?.settings.connection.transport === 'mqtts' ||
     document?.settings.connection.transport === 'wss'
@@ -131,7 +168,7 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
       setMessage(saved.settings.enabled
         ? 'Saved. The MQTT publisher is applying the configuration.'
         : 'Saved. MQTT publishing is disabled.')
-      window.setTimeout(() => void api.mqttStatus().then(setRuntime).catch(() => undefined), 1000)
+      window.setTimeout(() => void loadRuntime(false), 1000)
     } catch (reason) {
       setMessage(''); handleError(reason, 'Unable to save MQTT settings')
     } finally { setBusy(false) }
@@ -151,12 +188,23 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
   return <div className="mqtt-configuration">
     <section className="section-heading configuration-heading">
       <div><p className="eyebrow">Publisher</p><h2>MQTT</h2></div>
-      <span className={`mqtt-state ${runtime?.state ?? 'disabled'}`}>
-        {runtime?.state ?? 'Loading…'}
+      <span className={`mqtt-state ${runtime?.state ?? 'unavailable'}`}>
+        {runtime?.state ?? (runtimeLoading ? 'Loading…' : 'Unavailable')}
       </span>
     </section>
     {error && <div className="error-banner"><strong>MQTT unavailable</strong><span>{error}</span></div>}
-    {!document && !error && <div className="database-progress">Loading MQTT settings…</div>}
+    {runtimeError && <div className="mqtt-status-warning"><strong>Runtime status unavailable</strong>
+      <span>{runtimeError}</span></div>}
+    <section className="mqtt-runtime" aria-busy={runtimeLoading}>
+      <strong>Runtime</strong>
+      <span>State: {runtime?.state ?? (runtimeLoading ? 'loading' : 'unavailable')}</span>
+      <span>Broker: {runtime?.server_uri || 'not connected'}</span>
+      <span>Published: {runtime?.successful_publishes ?? 0}</span>
+      {(runtime?.last_successful_publish_unix_ms ?? 0) > 0 &&
+        <span>Last publish: {new Date(runtime!.last_successful_publish_unix_ms).toLocaleString()}</span>}
+      {runtime?.last_error && <span className="bad">Last error: {runtime.last_error}</span>}
+    </section>
+    {!document && configurationLoading && <div className="database-progress">Loading MQTT settings…</div>}
     {document && <form className="mqtt-form" onSubmit={save}>
       <fieldset><legend>Service and broker</legend>
         <div className="mqtt-fields">
@@ -268,7 +316,10 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
 
       <fieldset><legend>Publications</legend>
         <p className="mqtt-help">Each topic independently reads the newest coherent meter snapshot. New catalog attributes appear here without changing saved selections.</p>
-        <div className="mqtt-publications">
+        {capabilitiesLoading && <div className="database-progress">Loading meter attribute catalog…</div>}
+        {capabilitiesError && <div className="mqtt-status-warning"><strong>Attribute catalog unavailable</strong>
+          <span>{capabilitiesError}</span></div>}
+        {!capabilitiesLoading && !capabilitiesError && <div className="mqtt-publications">
           {document.settings.publications.map((publication, index) => {
             const available = capabilityByPeriod.get(publication.period)?.attributes ?? []
             return <article key={`${publication.id}-${index}`}>
@@ -314,22 +365,16 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
               </p>}
             </article>
           })}
-        </div>
-        <button className="secondary" type="button" onClick={() => edit((settings) => ({
+        </div>}
+        <button className="secondary" type="button"
+          disabled={capabilitiesLoading || Boolean(capabilitiesError)}
+          onClick={() => edit((settings) => ({
           ...settings,
           publications: [...settings.publications,
             newPublication(settings.publications.length + 1, capabilities)],
         }))}>Add publication</button>
       </fieldset>
 
-      <section className="mqtt-runtime"><strong>Runtime</strong>
-        <span>State: {runtime?.state ?? 'unavailable'}</span>
-        <span>Broker: {runtime?.server_uri || 'not connected'}</span>
-        <span>Published: {runtime?.successful_publishes ?? 0}</span>
-		{(runtime?.last_successful_publish_unix_ms ?? 0) > 0 &&
-		  <span>Last publish: {new Date(runtime!.last_successful_publish_unix_ms).toLocaleString()}</span>}
-        {runtime?.last_error && <span className="bad">Last error: {runtime.last_error}</span>}
-      </section>
       <div className="mqtt-actions"><button type="submit" disabled={busy}>
         {busy ? 'Applying…' : 'Apply and save'}</button><span>{message}</span></div>
     </form>}
