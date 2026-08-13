@@ -246,6 +246,31 @@ export interface VoltageChannelConfiguration {
   rf_ohms: number
 }
 
+export interface ModbusTcpSettings {
+  enabled: boolean
+  listen_address: string
+  port: number
+  maximum_clients: number
+  unit_id: number
+}
+
+export interface ModbusRtuPortSettings {
+  enabled: boolean
+  device: string
+  baud_rate: number
+  parity: 'none' | 'even' | 'odd'
+  data_bits: 7 | 8
+  stop_bits: 1 | 2
+  unit_id: number
+}
+
+/** Persistent Modbus policy owned by the central MSAP1 settings service. */
+export interface ModbusSettings {
+  enabled: boolean
+  tcp: ModbusTcpSettings
+  rtu: ModbusRtuPortSettings[]
+}
+
 export interface ProductSettings {
   schema_version: number
   metering: {
@@ -274,6 +299,7 @@ export interface ProductSettings {
     default_posttrigger_ms: number
   }
   database: DatabaseSettings
+  modbus: ModbusSettings
 }
 
 export type StorageBackend = 'memory' | 'persistent'

@@ -1,0 +1,36 @@
+.modbus-form { display: grid; gap: 1rem; }
+.modbus-form fieldset {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.modbus-form legend { padding: 0 .45rem; color: var(--green); font: .84rem var(--mono); }
+.modbus-form label {
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+  color: var(--muted);
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.modbus-form input, .modbus-form select {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: .65rem .7rem;
+  color: #ecf5f5;
+  background: #0a151a;
+  font: inherit;
+}
+.modbus-form .toggle { flex-direction: row; align-items: center; align-self: end; min-height: 2.7rem; }
+.modbus-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
+.modbus-rtu-list { display: grid; gap: 1rem; }
+.modbus-rtu-list article { padding: 1rem; border: 1px solid var(--line); border-radius: 10px; }
+.modbus-rtu-list header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+.modbus-empty, .modbus-form small, .modbus-actions { color: var(--muted); }
+.modbus-actions { display: flex; align-items: center; gap: 1rem; }

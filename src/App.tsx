@@ -10,6 +10,7 @@ import { WaveformExplorer } from './waveform/WaveformExplorer'
 import { DeveloperDatabasePage } from './developer/DeveloperDatabasePage'
 import { DeveloperDataRecorderPage } from './developer/DeveloperDataRecorderPage'
 import { HistoryPage } from './history/HistoryPage'
+import { ModbusConfiguration } from './configuration/ModbusConfiguration'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -913,7 +914,8 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onUnauthorized: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'meter' | 'waveform' | 'data-logging'>('meter')
+  const [activeTab, setActiveTab] =
+    useState<'meter' | 'waveform' | 'data-logging' | 'modbus'>('meter')
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
@@ -929,6 +931,9 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
       <button className={activeTab === 'data-logging' ? 'active' : ''} type="button"
         aria-current={activeTab === 'data-logging' ? 'page' : undefined}
         onClick={() => setActiveTab('data-logging')}>Data Logging</button>
+      <button className={activeTab === 'modbus' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'modbus' ? 'page' : undefined}
+        onClick={() => setActiveTab('modbus')}>Modbus</button>
     </nav>
     {activeTab === 'meter' ? <>
       <section className="section-heading configuration-heading">
@@ -988,7 +993,9 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         <span>{configurationStatus}</span></div>
     </form>}</> : activeTab === 'waveform'
       ? <WaveformConfiguration onUnauthorized={onUnauthorized} />
-      : <DeveloperDatabasePage onUnauthorized={onUnauthorized} />}
+      : activeTab === 'data-logging'
+        ? <DeveloperDatabasePage onUnauthorized={onUnauthorized} />
+        : <ModbusConfiguration onUnauthorized={onUnauthorized} />}
   </section>
 }
 
