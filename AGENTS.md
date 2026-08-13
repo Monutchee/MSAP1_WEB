@@ -30,6 +30,9 @@
   `PUT /api/v1/settings/active`; a successful request hot-applies and
   atomically saves the settings. Do not persist settings in browser storage.
   Factory reset remains an administrator-only, explicitly confirmed operation.
+- Configuration -> Modbus edits `ProductSettings.modbus` through the same
+  complete-document settings endpoint. Keep TCP/RTU validation aligned with
+  the backend schema; the browser must never bind sockets or open serial ports.
 - The authenticated Waveforms explorer lists persisted sessions returned by
   `GET /api/v1/waveforms`. View/download requests use the WebEngine-protected
   `/protected/waveforms/` nginx routes. Keep binary parsing and plotting in the
