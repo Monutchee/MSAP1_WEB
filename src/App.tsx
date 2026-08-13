@@ -11,6 +11,7 @@ import { DeveloperDatabasePage } from './developer/DeveloperDatabasePage'
 import { DeveloperDataRecorderPage } from './developer/DeveloperDataRecorderPage'
 import { HistoryPage } from './history/HistoryPage'
 import { ModbusConfiguration } from './configuration/ModbusConfiguration'
+import { MqttConfiguration } from './configuration/MqttConfiguration'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -915,7 +916,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onUnauthorized: () => void
 }) {
   const [activeTab, setActiveTab] =
-    useState<'meter' | 'waveform' | 'data-logging' | 'modbus'>('meter')
+    useState<'meter' | 'waveform' | 'data-logging' | 'modbus' | 'mqtt'>('meter')
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
@@ -934,6 +935,9 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
       <button className={activeTab === 'modbus' ? 'active' : ''} type="button"
         aria-current={activeTab === 'modbus' ? 'page' : undefined}
         onClick={() => setActiveTab('modbus')}>Modbus</button>
+      <button className={activeTab === 'mqtt' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'mqtt' ? 'page' : undefined}
+        onClick={() => setActiveTab('mqtt')}>MQTT</button>
     </nav>
     {activeTab === 'meter' ? <>
       <section className="section-heading configuration-heading">
@@ -995,7 +999,9 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
       ? <WaveformConfiguration onUnauthorized={onUnauthorized} />
       : activeTab === 'data-logging'
         ? <DeveloperDatabasePage onUnauthorized={onUnauthorized} />
-        : <ModbusConfiguration onUnauthorized={onUnauthorized} />}
+        : activeTab === 'modbus'
+          ? <ModbusConfiguration onUnauthorized={onUnauthorized} />
+          : <MqttConfiguration onUnauthorized={onUnauthorized} />}
   </section>
 }
 
