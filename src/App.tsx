@@ -240,6 +240,8 @@ const LOG_COMPONENTS = [
   { value: '', label: 'All components' },
   { value: 'fpga-acquisition', label: 'FPGA acquisition' },
   { value: 'web-backend', label: 'Web backend' },
+  { value: 'mqtt-publisher', label: 'MQTT publisher' },
+  { value: 'modbus', label: 'Modbus server' },
   { value: 'firmware', label: 'Firmware lifecycle' },
 ]
 
