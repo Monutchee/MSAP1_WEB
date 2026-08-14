@@ -1,0 +1,42 @@
+.mqtt-form { display: grid; gap: 1rem; }
+.mqtt-form fieldset {
+  display: grid; gap: 1rem; margin: 0; padding: 1.25rem 1.5rem;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel);
+}
+.mqtt-form legend { padding: 0 .45rem; color: var(--green); font: .84rem var(--mono); }
+.mqtt-form label { display: flex; flex-direction: column; gap: .45rem; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; }
+.mqtt-form input, .mqtt-form select {
+  min-width: 0; border: 1px solid var(--line); border-radius: 8px;
+  padding: .65rem .7rem; color: #ecf5f5; background: #0a151a; font: inherit;
+}
+.mqtt-form .toggle { flex-direction: row; align-items: center; align-self: center; min-height: 2.7rem; }
+.mqtt-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; }
+.mqtt-toggles { display: flex; flex-wrap: wrap; gap: 1rem 2rem; }
+.mqtt-publications, .mqtt-assets { display: grid; gap: 1rem; }
+.mqtt-publications article { padding: 1rem; border: 1px solid var(--line); border-radius: 10px; }
+.mqtt-publications header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+.mqtt-attributes { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); background: #0a151a !important; }
+.mqtt-asset { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto auto; gap: .75rem; align-items: center; padding: .75rem; border: 1px solid var(--line); border-radius: 9px; }
+.mqtt-asset > div { display: grid; gap: .2rem; }
+.mqtt-asset span, .mqtt-help, .mqtt-statistics, .mqtt-warning { color: var(--muted); }
+.file-button, .button-link { display: inline-flex !important; align-items: center; justify-content: center; cursor: pointer; }
+.file-button input { display: none; }
+.button-link { border: 1px solid var(--line); border-radius: 8px; padding: .65rem .9rem; color: inherit; text-decoration: none; }
+.mqtt-passphrase { display: flex; align-items: end; gap: .75rem; }
+.mqtt-passphrase label { flex: 1; }
+.mqtt-runtime { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; padding: 1rem; border: 1px solid var(--line); border-radius: 10px; }
+.mqtt-runtime .bad { color: var(--red); }
+.mqtt-status-warning {
+  display: flex; gap: .75rem 1rem; align-items: baseline; margin-bottom: 1rem;
+  padding: .8rem 1rem; border: 1px solid var(--yellow); border-radius: 10px;
+  color: var(--yellow); background: rgb(255 191 71 / 5%);
+}
+.mqtt-runtime + .database-progress, .mqtt-runtime + .mqtt-form { margin-top: 1rem; }
+.mqtt-actions { display: flex; align-items: center; gap: 1rem; color: var(--muted); }
+.mqtt-state { text-transform: capitalize; color: var(--muted); }
+.mqtt-state.connected { color: var(--green); }
+.mqtt-state.degraded, .mqtt-state.reconnecting { color: var(--yellow); }
+@media (max-width: 720px) {
+  .mqtt-asset { grid-template-columns: 1fr 1fr; }
+  .mqtt-asset > div { grid-column: 1 / -1; }
+}

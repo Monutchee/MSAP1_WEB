@@ -271,6 +271,84 @@ export interface ModbusSettings {
   rtu: ModbusRtuPortSettings[]
 }
 
+export type MqttTransport = 'mqtt' | 'mqtts' | 'ws' | 'wss'
+
+export interface MqttConnectionSettings {
+  transport: MqttTransport
+  broker_host: string
+  broker_port: number
+  websocket_path: string
+  client_id: string
+  username: string
+  keep_alive_seconds: number
+  connect_timeout_seconds: number
+  reconnect_min_seconds: number
+  reconnect_max_seconds: number
+}
+
+export interface MqttTlsSettings {
+  use_system_ca: boolean
+  verify_peer: boolean
+  verify_hostname: boolean
+  use_client_certificate: boolean
+}
+
+export interface MqttPublicationSettings {
+  id: string
+  enabled: boolean
+  topic: string
+  period: string
+  interval_ms: number
+  qos: 0 | 1 | 2
+  retain: boolean
+  attributes: string[]
+}
+
+/** Persistent MQTT policy. Passwords and TLS assets never appear here. */
+export interface MqttSettings {
+  enabled: boolean
+  connection: MqttConnectionSettings
+  tls: MqttTlsSettings
+  publications: MqttPublicationSettings[]
+}
+
+export interface MqttCredentialStatus {
+  password_configured: boolean
+  private_key_passphrase_configured: boolean
+  ca_configured: boolean
+  client_certificate_configured: boolean
+  client_key_configured: boolean
+}
+
+export interface MqttConfigurationDocument {
+  settings: MqttSettings
+  credentials: MqttCredentialStatus
+}
+
+export interface MqttPeriodCapability {
+  id: string
+  attributes: { id: string; unit: string }[]
+}
+
+export interface MqttPublicationStatus {
+  attempts: number
+  successes: number
+  failures: number
+  last_source_sequence: number
+  last_successful_publish_unix_ms: number
+  last_error: string
+}
+
+export interface MqttStatus {
+  enabled: boolean
+  state: string
+  server_uri: string
+  last_error: string
+  successful_publishes: number
+  last_successful_publish_unix_ms: number
+  publications: Record<string, MqttPublicationStatus>
+}
+
 export interface ProductSettings {
   schema_version: number
   metering: {
@@ -300,6 +378,7 @@ export interface ProductSettings {
   }
   database: DatabaseSettings
   modbus: ModbusSettings
+  mqtt: MqttSettings
 }
 
 export type StorageBackend = 'memory' | 'persistent'
@@ -550,6 +629,22 @@ async function requestBinary(path: string): Promise<ArrayBuffer> {
   return response.arrayBuffer()
 }
 
+async function uploadFile(path: string, file: File): Promise<MqttCredentialStatus> {
+  const response = await fetch(path, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      'X-File-Name': file.name,
+    },
+    body: file,
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok)
+    throw new ApiError(response.status, payload.error ?? `Upload failed (${response.status})`)
+  return payload as MqttCredentialStatus
+}
+
 export function waveformViewPath(filename: string) {
   return `/protected/waveforms/view/${encodeURIComponent(filename)}`
 }
@@ -646,4 +741,45 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(query),
     }),
+  mqttCapabilities: () =>
+    request<MqttPeriodCapability[]>('/api/v1/mqtt/capabilities'),
+  mqttConfiguration: () =>
+    request<MqttConfigurationDocument>('/api/v1/mqtt/configuration'),
+  updateMqttConfiguration: (settings: MqttSettings) =>
+    request<MqttConfigurationDocument>('/api/v1/mqtt/configuration', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    }),
+  mqttStatus: () => request<MqttStatus>('/api/v1/mqtt/status'),
+  setMqttPassword: (password: string) =>
+    request<MqttCredentialStatus>('/api/v1/mqtt/credentials/password', {
+      method: 'PUT', body: JSON.stringify({ password }),
+    }),
+  clearMqttPassword: () =>
+    request<MqttCredentialStatus>('/api/v1/mqtt/credentials/password', {
+      method: 'DELETE',
+    }),
+  setMqttPrivateKeyPassphrase: (password: string) =>
+    request<MqttCredentialStatus>('/api/v1/mqtt/credentials/private-key-passphrase', {
+      method: 'PUT', body: JSON.stringify({ password }),
+    }),
+  clearMqttPrivateKeyPassphrase: () =>
+    request<MqttCredentialStatus>('/api/v1/mqtt/credentials/private-key-passphrase', {
+      method: 'DELETE',
+    }),
+  uploadMqttCa: (file: File) => uploadFile('/api/v1/mqtt/tls/ca', file),
+  deleteMqttCa: () =>
+    request<MqttCredentialStatus>('/api/v1/mqtt/tls/ca', { method: 'DELETE' }),
+  uploadMqttClientCertificate: (file: File) =>
+    uploadFile('/api/v1/mqtt/tls/client-certificate', file),
+  deleteMqttClientCertificate: () =>
+    request<MqttCredentialStatus>('/api/v1/mqtt/tls/client-certificate', { method: 'DELETE' }),
+  uploadMqttClientKey: (file: File) =>
+    uploadFile('/api/v1/mqtt/tls/client-key', file),
+  deleteMqttClientKey: () =>
+    request<MqttCredentialStatus>('/api/v1/mqtt/tls/client-key', { method: 'DELETE' }),
 }
+
+export const mqttCaDownloadPath = '/api/v1/mqtt/tls/ca'
+export const mqttClientCertificateDownloadPath =
+  '/api/v1/mqtt/tls/client-certificate'
