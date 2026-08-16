@@ -91,17 +91,17 @@ export interface MeterReadings {
   sequence: number
   configuration_generation: number
   sample_rate_hz: number
-  rms_window_samples: number
+  block_sample_count: number
   status: number
   capture_frames: number
   header_errors: number
   fifo_overflows: number
-  packetizer_drops: number
-  hub_drops: number
+  emit_drops: number
+  result_drops: number
   frequency: FrequencyReading
   channels: MeterChannel[]
-  // Absent while the meter still emits old-format records without
-  // IEC 61000-4-30 basic measurement block timing.
+  // Present on every basic record since the MTR1-v3 format; kept
+  // optional so a stale document renders gracefully.
   timing?: MeterBlockTiming
 }
 
