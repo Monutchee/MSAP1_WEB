@@ -220,7 +220,8 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
             </div>
             <dl>
               <div><dt>Duration</dt><dd>{duration(session)}</dd></div>
-              <div><dt>Sample rate</dt><dd>{count(session.sample_rate_hz)} frame/s</dd></div>
+              <div><dt>Sample rate</dt><dd>{count(session.sample_rate_hz)} frame/s
+                {session.decimation > 1 ? ` ÷ ${session.decimation}` : ''}</dd></div>
               <div><dt>Frames</dt><dd>{count(session.last_sequence - session.first_sequence + 1)}</dd></div>
               <div><dt>Events</dt><dd>{session.event_count}</dd></div>
             </dl>

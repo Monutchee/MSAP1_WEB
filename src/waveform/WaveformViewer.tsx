@@ -132,13 +132,15 @@ export function WaveformViewer({ filename, buffer, onClose }: {
       verticalScale === 'fixed' ? wholeCaptureRanges[index] : undefined,
     ),
   })), [waveform, pyramid, converted, viewport, verticalScale, wholeCaptureRanges])
-  const durationSeconds = waveform.sampleRateHz
-    ? waveform.frameCount / waveform.sampleRateHz
+  const durationSeconds = waveform.effectiveSampleRateHz
+    ? waveform.frameCount / waveform.effectiveSampleRateHz
     : 0
   const triggerInCapture = waveform.triggerSequence >= waveform.firstSequence &&
     waveform.triggerSequence <= waveform.lastSequence
+  /* Sequences are acquisition frames; stored frames are decimated. */
   const triggerIndex = triggerInCapture
-    ? Number(waveform.triggerSequence - waveform.firstSequence)
+    ? Math.round(Number(waveform.triggerSequence - waveform.firstSequence) /
+        waveform.decimation)
     : 0
   const visibleFrames = viewport.last - viewport.first
   const triggerInViewport = triggerInCapture &&
@@ -182,8 +184,9 @@ export function WaveformViewer({ filename, buffer, onClose }: {
 
   function centerOnTrigger() {
     if (!triggerInCapture) return
-    const detailFrames = waveform.sampleRateHz
-      ? Math.max(MIN_VISIBLE_FRAMES, Math.round(waveform.sampleRateHz / 4))
+    const detailFrames = waveform.effectiveSampleRateHz
+      ? Math.max(MIN_VISIBLE_FRAMES,
+          Math.round(waveform.effectiveSampleRateHz / 4))
       : Math.max(MIN_VISIBLE_FRAMES, Math.round(waveform.frameCount / 10))
     const frames = Math.min(waveform.frameCount, detailFrames)
     setViewport(normalizedWindow(triggerIndex - frames / 2, frames))
@@ -259,8 +262,8 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   }
 
   function relativeTime(frame: number) {
-    if (!waveform.sampleRateHz) return 'unknown'
-    const seconds = (frame - triggerIndex) / waveform.sampleRateHz
+    if (!waveform.effectiveSampleRateHz) return 'unknown'
+    const seconds = (frame - triggerIndex) / waveform.effectiveSampleRateHz
     return `${seconds >= 0 ? '+' : ''}${seconds.toFixed(6)} s`
   }
 
@@ -278,7 +281,9 @@ export function WaveformViewer({ filename, buffer, onClose }: {
       <div>
         <p className="eyebrow">Waveform viewer</p>
         <h2>{filename}</h2>
-        <span>{captureTime(waveform)} · {waveform.sampleRateHz.toLocaleString()} frame/s ·
+        <span>{captureTime(waveform)} · {waveform.sampleRateHz.toLocaleString()} frame/s
+          {waveform.decimation > 1 &&
+            ` ÷ ${waveform.decimation} (mean of each group)`} ·
           {' '}{durationSeconds.toFixed(3)} s · MNCWF v{waveform.version}</span>
       </div>
       <button type="button" onClick={onClose}>Close viewer</button>
