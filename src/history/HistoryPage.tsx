@@ -44,11 +44,36 @@ function HistoryPlot({ points, capabilities, attributes }: {
      * from one pass with no hashing and no sort. Anything that changes the merge
      * above must preserve that ordering or this collapses the x axis.
      */
-    const times: number[] = []
+    const sampled: number[] = []
     for (const point of points) {
-      if (times.length === 0 ||
-          times[times.length - 1] !== point.measured_at_nanoseconds)
-        times.push(point.measured_at_nanoseconds)
+      if (sampled.length === 0 ||
+          sampled[sampled.length - 1] !== point.measured_at_nanoseconds)
+        sampled.push(point.measured_at_nanoseconds)
+    }
+    /*
+     * Downtime leaves no rows at all, so two samples on either side of an
+     * outage would otherwise be joined by a line fabricating data that was
+     * never measured. The historian records on a fixed cadence for the
+     * selected measurement period, and the median inter-sample interval
+     * recovers that cadence even when the window contains outages. The
+     * boundary is unambiguous: a single missing record already doubles an
+     * interval, while grid-frequency wander moves it a few percent, so
+     * anything beyond 1.5x the cadence gets an explicit all-null row at the
+     * gap's midpoint and spanGaps:false breaks the line there.
+     */
+    let gapThreshold = Infinity
+    if (sampled.length >= 3) {
+      const deltas = sampled.slice(1)
+        .map((time, index) => time - sampled[index])
+        .sort((a, b) => a - b)
+      gapThreshold = deltas[Math.floor(deltas.length / 2)] * 1.5
+    }
+    const times: number[] = []
+    for (const time of sampled) {
+      const previous = times[times.length - 1]
+      if (times.length > 0 && time - previous > gapThreshold)
+        times.push(previous + (time - previous) / 2)
+      times.push(time)
     }
     const timeIndex = new Map(times.map((time, index) => [time, index]))
     const columns: Array<Array<number | null>> = attributes.map(() =>
