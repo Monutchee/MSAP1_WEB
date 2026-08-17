@@ -868,6 +868,14 @@ function WaveformConfiguration({ onUnauthorized }: {
   const retainedSeconds = status?.sample_rate_hz
     ? status.history_capacity_frames / status.sample_rate_hz
     : 0
+  // The capture budget is rate-derived: the frame-sized history buffer spans
+  // fewer seconds at higher sample rates, so a fixed input cap silently stops
+  // fitting when the rate changes. 0 until the daemon has seen a block.
+  const maxTotalMs = status?.sample_rate_hz
+    ? Math.floor(status.max_capture_frames * 1000 / status.sample_rate_hz)
+    : 0
+  const requestedTotalMs = pretriggerMs + posttriggerMs
+  const overBudget = maxTotalMs > 0 && requestedTotalMs > maxTotalMs
 
   return <div className="waveform-configuration">
     <section className="section-heading configuration-heading">
@@ -882,24 +890,38 @@ function WaveformConfiguration({ onUnauthorized }: {
       <article><span>DMA blocks</span><strong>{formatCount(status?.blocks)}</strong></article>
       <article><span>Sequence gaps</span><strong>{formatCount(status?.sequence_gaps)}</strong></article>
       <article><span>Transport overruns</span><strong>{formatCount(status?.transport_overrun_blocks)}</strong>
-        <small>{status ? `${status.transport_ring_blocks} DMA-block ring` : 'transport status unavailable'}</small></article>
+        <small>{status ? `lapped-ring events, ${status.transport_ring_blocks}-block ring` : 'transport status unavailable'}</small></article>
+      <article><span>Invalid blocks</span><strong>{formatCount(status?.invalid_blocks)}</strong>
+        <small>discarded before history</small></article>
+      <article><span>PL dropped frames</span><strong>{formatCount(status?.pl_dropped_frames)}</strong>
+        <small>lost upstream of the DMA</small></article>
       <article><span>File write failures</span><strong>{formatCount(status?.materialization_failures)}</strong></article>
       <article><span>Active capture</span><strong>{status?.active_session ? 'Yes' : 'No'}</strong></article>
       <article><span>Completed files</span><strong>{formatCount(status?.completed_sessions)}</strong></article>
     </section>
     <form className="waveform-trigger-form" onSubmit={trigger}>
-      <label>History before trigger (ms)<input type="number" min="0" max="120000"
+      <label>History before trigger (ms)<input type="number" min="0"
+        max={maxTotalMs > 0 ? maxTotalMs : 120000}
         value={pretriggerMs} onChange={(event) => setPretriggerMs(Number(event.target.value))} /></label>
-      <label>Capture after trigger (ms)<input type="number" min="0" max="120000"
+      <label>Capture after trigger (ms)<input type="number" min="0"
+        max={maxTotalMs > 0 ? maxTotalMs : 120000}
         value={posttriggerMs} onChange={(event) => setPosttriggerMs(Number(event.target.value))} /></label>
       <div className="waveform-trigger-action">
-        <button type="submit" disabled={busy || !status?.running}>
+        <button type="submit" disabled={busy || !status?.running || overBudget}>
           {busy ? 'Triggering…' : 'Trigger waveform'}
         </button>
         <button className="secondary" type="button" onClick={() => void saveDefaults()}
           disabled={busy}>Apply and save</button>
-        <span>{message}</span>
+        <span>{overBudget
+          ? `Requested ${(requestedTotalMs / 1000).toFixed(1)} s exceeds the `
+            + `${(maxTotalMs / 1000).toFixed(1)} s budget at `
+            + `${status?.sample_rate_hz.toLocaleString()} frame/s`
+          : message}</span>
       </div>
+      {maxTotalMs > 0 && <small className="waveform-budget-hint">
+        Pre + post may total {(maxTotalMs / 1000).toFixed(1)} s at the current
+        sample rate ({status?.sample_rate_hz.toLocaleString()} frame/s).
+      </small>}
     </form>
   </div>
 }

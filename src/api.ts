@@ -590,6 +590,8 @@ export interface WaveformStatus {
   sequence_gaps: number
   transport_overrun_blocks: number
   materialization_failures: number
+  pl_dropped_frames: number
+  max_capture_frames: number
   history_oldest_sequence: number
   history_latest_sequence: number
   history_capacity_frames: number
