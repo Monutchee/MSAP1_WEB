@@ -12,8 +12,8 @@ export function WaveformTriggerPanel({ status, onStatus, onUnauthorized }: {
   onStatus: (status: WaveformStatus) => void
   onUnauthorized: () => void
 }) {
-  const [pretriggerMs, setPretriggerMs] = useState(10000)
-  const [posttriggerMs, setPosttriggerMs] = useState(10000)
+  const [pretriggerMs, setPretriggerMs] = useState(3000)
+  const [posttriggerMs, setPosttriggerMs] = useState(3000)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
