@@ -381,3 +381,104 @@
     justify-content: space-between;
   }
 }
+
+.waveform-capture-strip {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding: .9rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+}
+
+.waveform-trigger-panel {
+  margin-bottom: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+}
+
+.waveform-trigger-panel > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.35rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.waveform-trigger-panel > header .eyebrow {
+  margin-top: 0;
+}
+
+.waveform-trigger-panel > header > span {
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: .68rem;
+}
+
+/* The form keeps its grid but sheds its own card chrome inside the panel. */
+.waveform-trigger-panel > .waveform-trigger-form {
+  margin-top: 0;
+  padding: 1.15rem 1.5rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.waveform-trigger-panel > .error-banner {
+  margin: 1.15rem 1.5rem 0;
+}
+
+.waveform-library-tools {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.waveform-library-tools > span {
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: .68rem;
+}
+
+.waveform-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  color: var(--muted);
+  font-size: .74rem;
+  white-space: nowrap;
+}
+
+.waveform-library-tools .waveform-delete {
+  display: inline-flex;
+  align-items: center;
+  padding: .65rem .9rem;
+  border: 1px solid rgba(255, 107, 107, .4);
+  border-radius: 8px;
+  color: #ff8c8c;
+  background: #0a151a;
+  font-size: .74rem;
+  font-weight: 700;
+}
+
+.waveform-library-tools .waveform-delete:hover {
+  border-color: #ff6b6b;
+  color: #ffb0b0;
+}
+
+.waveform-library-tools .waveform-delete:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.waveform-session-select {
+  accent-color: #54e2a4;
+}
+
+.waveform-library-list > article.selected {
+  background: rgba(84, 226, 164, .05);
+}

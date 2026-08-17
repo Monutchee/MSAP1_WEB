@@ -1,11 +1,11 @@
 import {
-  useEffect, useMemo, useRef, useState,
+  useCallback, useEffect, useMemo, useRef, useState,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
-  convertedSample, ParsedWaveform, parseWaveform, rawSample,
-  waveformEnvelope, waveformRange,
+  buildWaveformPyramid, convertedSample, ParsedWaveform, parseWaveform,
+  pyramidEnvelope, pyramidRange, rawSample,
 } from './waveformFile'
 
 const PLOT_WIDTH = 1200
@@ -49,6 +49,12 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   onClose: () => void
 }) {
   const waveform = useMemo(() => parseWaveform(buffer), [buffer])
+  /*
+   * One full pass over the samples at open builds the min/max pyramid;
+   * every pan/zoom afterwards reads the pyramid instead of the samples, so
+   * gesture cost scales with plot width, not with visible frame count.
+   */
+  const pyramid = useMemo(() => buildWaveformPyramid(waveform), [waveform])
   const conversionAvailable = waveform.channels.some((channel) => channel.conversionValid)
   const [displayMode, setDisplayMode] = useState<'raw' | 'converted'>(
     conversionAvailable ? 'converted' : 'raw',
@@ -64,6 +70,33 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   const [dragging, setDragging] = useState(false)
   const plotsRef = useRef<HTMLDivElement>(null)
   const panGesture = useRef<PanGesture>()
+  /*
+   * Pointer events can arrive far faster than the display refreshes (gaming
+   * mice report at 500-1000 Hz). Panning and cursor moves stage their state
+   * here and commit once per animation frame, so React renders at most once
+   * per displayed frame however fast the pointer streams.
+   */
+  const pendingViewport = useRef<FrameWindow>()
+  const pendingCursor = useRef<number>()
+  const flushHandle = useRef<number>()
+  const flushView = useCallback(() => {
+    flushHandle.current = undefined
+    if (pendingViewport.current !== undefined) {
+      setViewport(pendingViewport.current)
+      pendingViewport.current = undefined
+    }
+    if (pendingCursor.current !== undefined) {
+      setCursorFrame(pendingCursor.current)
+      pendingCursor.current = undefined
+    }
+  }, [])
+  const scheduleFlush = useCallback(() => {
+    flushHandle.current ??= requestAnimationFrame(flushView)
+  }, [flushView])
+  useEffect(() => () => {
+    if (flushHandle.current !== undefined)
+      cancelAnimationFrame(flushHandle.current)
+  }, [])
 
   useEffect(() => {
     setViewport({ first: 0, last: waveform.frameCount })
@@ -89,16 +122,16 @@ export function WaveformViewer({ filename, buffer, onClose }: {
 
   const converted = displayMode === 'converted'
   const wholeCaptureRanges = useMemo(() => waveform.channels.map((_, index) =>
-    waveformRange(waveform, index, converted),
-  ), [waveform, converted])
+    pyramidRange(waveform, pyramid, index, converted),
+  ), [waveform, pyramid, converted])
   const envelopes = useMemo(() => waveform.channels.map((channel, index) => ({
     channel,
-    envelope: waveformEnvelope(
-      waveform, index, converted, PLOT_WIDTH, PLOT_HEIGHT,
+    envelope: pyramidEnvelope(
+      waveform, pyramid, index, converted, PLOT_WIDTH, PLOT_HEIGHT,
       viewport.first, viewport.last,
       verticalScale === 'fixed' ? wholeCaptureRanges[index] : undefined,
     ),
-  })), [waveform, converted, viewport, verticalScale, wholeCaptureRanges])
+  })), [waveform, pyramid, converted, viewport, verticalScale, wholeCaptureRanges])
   const durationSeconds = waveform.sampleRateHz
     ? waveform.frameCount / waveform.sampleRateHz
     : 0
@@ -174,11 +207,15 @@ export function WaveformViewer({ filename, buffer, onClose }: {
     const ratio = bounds.width
       ? clamp((event.clientX - bounds.left) / bounds.width, 0, 1)
       : 0
-    setCursorFrame(clamp(
-      viewport.first + Math.round(ratio * Math.max(0, visibleFrames - 1)),
-      viewport.first,
-      viewport.last - 1,
-    ))
+    /* Against the staged viewport when a pan is in flight this frame. */
+    const window = pendingViewport.current ?? viewport
+    const frames = window.last - window.first
+    pendingCursor.current = clamp(
+      window.first + Math.round(ratio * Math.max(0, frames - 1)),
+      window.first,
+      window.last - 1,
+    )
+    scheduleFlush()
   }
 
   function beginPan(event: ReactPointerEvent<HTMLDivElement>) {
@@ -196,13 +233,16 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   }
 
   function continuePan(event: ReactPointerEvent<HTMLDivElement>) {
-    updateCursor(event)
     const gesture = panGesture.current
-    if (!gesture || gesture.pointerId !== event.pointerId) return
-    const frames = gesture.viewport.last - gesture.viewport.first
-    const frameDelta = (gesture.startClientX - event.clientX) /
-      gesture.width * frames
-    setViewport(normalizedWindow(gesture.viewport.first + frameDelta, frames))
+    if (gesture && gesture.pointerId === event.pointerId) {
+      const frames = gesture.viewport.last - gesture.viewport.first
+      const frameDelta = (gesture.startClientX - event.clientX) /
+        gesture.width * frames
+      pendingViewport.current =
+        normalizedWindow(gesture.viewport.first + frameDelta, frames)
+    }
+    updateCursor(event)
+    scheduleFlush()
   }
 
   function endPan(event: ReactPointerEvent<HTMLDivElement>) {

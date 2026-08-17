@@ -250,6 +250,236 @@ function expandedRange(range: WaveformRange): WaveformRange {
   }
 }
 
+/**
+ * Hierarchical min/max reduction of the raw samples, built once per file.
+ *
+ * A 20 s capture at 128 kSPS holds ~2.6M frames x 7 channels; scanning that
+ * per pan/zoom event is what made the viewer lag. Level 0 folds every
+ * `baseGranularity` frames into a min/max pair per channel; each further
+ * level folds two entries into one. Any envelope query then reads the
+ * coarsest level that still gives >= 2 entries per pixel bucket, so its cost
+ * is proportional to the plot width, never to the visible frame count.
+ *
+ * The pyramid stores raw ADC counts only: unit conversion is a non-negative
+ * linear scale (scaleMicroUnitsQ16 is unsigned), which preserves min/max
+ * ordering, so converted views multiply at query time instead of needing a
+ * second pyramid.
+ */
+export interface WaveformPyramidLevel {
+  /** Frames covered by one entry. */
+  granularity: number
+  /** Channel-major: index = channel * entryCount + entry. */
+  minima: Int32Array
+  maxima: Int32Array
+  entryCount: number
+}
+
+export interface WaveformPyramid {
+  /** Frame-major interleaved raw samples: index = frame * channels + channel. */
+  samples: Int32Array
+  levels: WaveformPyramidLevel[]
+}
+
+const INT32_MINIMUM = -2147483648
+const INT32_MAXIMUM = 2147483647
+
+/**
+ * The frame data as one typed-array view. Every MNCWF layout keeps the frame
+ * data 4-byte aligned (headers, channel descriptors, and 24-byte events are
+ * all multiples of 4), so the copy fallback exists only for defence.
+ */
+function frameSamples(waveform: ParsedWaveform): Int32Array {
+  const length = waveform.frameCount * waveform.channels.length
+  const byteOffset = waveform.data.byteOffset + waveform.frameDataOffset
+  if (byteOffset % 4 === 0)
+    return new Int32Array(waveform.data.buffer, byteOffset, length)
+  const copy = new Int32Array(length)
+  for (let index = 0; index < length; ++index)
+    copy[index] = waveform.data.getInt32(
+      waveform.frameDataOffset + index * 4, true)
+  return copy
+}
+
+export function buildWaveformPyramid(
+  waveform: ParsedWaveform,
+  baseGranularity = 32,
+): WaveformPyramid {
+  const channelCount = waveform.channels.length
+  const frames = waveform.frameCount
+  const samples = frameSamples(waveform)
+  const levels: WaveformPyramidLevel[] = []
+
+  let entryCount = Math.max(1, Math.ceil(frames / baseGranularity))
+  let minima = new Int32Array(channelCount * entryCount).fill(INT32_MAXIMUM)
+  let maxima = new Int32Array(channelCount * entryCount).fill(INT32_MINIMUM)
+  for (let frame = 0, entry = 0, used = 0; frame < frames; ++frame) {
+    const row = frame * channelCount
+    for (let channel = 0; channel < channelCount; ++channel) {
+      const value = samples[row + channel]
+      const index = channel * entryCount + entry
+      if (value < minima[index]) minima[index] = value
+      if (value > maxima[index]) maxima[index] = value
+    }
+    if (++used === baseGranularity) {
+      used = 0
+      ++entry
+    }
+  }
+  levels.push({ granularity: baseGranularity, minima, maxima, entryCount })
+
+  let granularity = baseGranularity
+  while (entryCount > 2) {
+    const parentCount = Math.ceil(entryCount / 2)
+    const parentMinima =
+      new Int32Array(channelCount * parentCount).fill(INT32_MAXIMUM)
+    const parentMaxima =
+      new Int32Array(channelCount * parentCount).fill(INT32_MINIMUM)
+    for (let channel = 0; channel < channelCount; ++channel) {
+      const childBase = channel * entryCount
+      const parentBase = channel * parentCount
+      for (let entry = 0; entry < entryCount; ++entry) {
+        const parent = parentBase + (entry >> 1)
+        const child = childBase + entry
+        if (minima[child] < parentMinima[parent])
+          parentMinima[parent] = minima[child]
+        if (maxima[child] > parentMaxima[parent])
+          parentMaxima[parent] = maxima[child]
+      }
+    }
+    granularity *= 2
+    entryCount = parentCount
+    minima = parentMinima
+    maxima = parentMaxima
+    levels.push({ granularity, minima, maxima, entryCount })
+  }
+  return { samples, levels }
+}
+
+/** Non-negative factor mapping raw counts to display units (1 = raw). */
+function displayFactor(
+  waveform: ParsedWaveform,
+  channelIndex: number,
+  converted: boolean,
+) {
+  const channel = waveform.channels[channelIndex]
+  return converted && channel.conversionValid
+    ? channel.scaleMicroUnitsQ16 / 65536 / 1_000_000
+    : 1
+}
+
+/** Whole-capture range from the pyramid's coarsest level — O(entries). */
+export function pyramidRange(
+  waveform: ParsedWaveform,
+  pyramid: WaveformPyramid,
+  channelIndex: number,
+  converted: boolean,
+): WaveformRange {
+  const top = pyramid.levels[pyramid.levels.length - 1]
+  let minimum = INT32_MAXIMUM
+  let maximum = INT32_MINIMUM
+  const base = channelIndex * top.entryCount
+  for (let entry = 0; entry < top.entryCount; ++entry) {
+    if (top.minima[base + entry] < minimum) minimum = top.minima[base + entry]
+    if (top.maxima[base + entry] > maximum) maximum = top.maxima[base + entry]
+  }
+  const factor = displayFactor(waveform, channelIndex, converted)
+  return { minimum: minimum * factor, maximum: maximum * factor }
+}
+
+export function pyramidEnvelope(
+  waveform: ParsedWaveform,
+  pyramid: WaveformPyramid,
+  channelIndex: number,
+  converted: boolean,
+  width = 1200,
+  height = 88,
+  firstFrame = 0,
+  lastFrame = waveform.frameCount,
+  verticalRange?: WaveformRange,
+): WaveformEnvelope {
+  const channelCount = waveform.channels.length
+  const windowFirst = Math.max(0, Math.min(
+    waveform.frameCount - 1, Math.floor(firstFrame),
+  ))
+  const windowLast = Math.max(windowFirst + 1, Math.min(
+    waveform.frameCount, Math.ceil(lastFrame),
+  ))
+  const windowFrames = windowLast - windowFirst
+  const bucketCount = Math.max(1, Math.min(width, windowFrames))
+  const bucketSpan = windowFrames / bucketCount
+  const factor = displayFactor(waveform, channelIndex, converted)
+
+  /*
+   * Pick the coarsest level that still yields at least two entries per
+   * bucket; below two the bucket boundary quantization would visibly widen
+   * the envelope. When even the base level is too coarse (deep zoom, few
+   * frames per pixel), scan the raw samples directly — the window is at
+   * most 2 * baseGranularity * width frames, which is small.
+   */
+  let level: WaveformPyramidLevel | undefined
+  for (const candidate of pyramid.levels) {
+    if (candidate.granularity * 2 > bucketSpan) break
+    level = candidate
+  }
+
+  const minima = new Array<number>(bucketCount)
+  const maxima = new Array<number>(bucketCount)
+  let captureMinimum = Number.POSITIVE_INFINITY
+  let captureMaximum = Number.NEGATIVE_INFINITY
+  for (let bucket = 0; bucket < bucketCount; ++bucket) {
+    const first = windowFirst +
+      Math.floor(bucket * windowFrames / bucketCount)
+    const last = windowFirst +
+      Math.floor((bucket + 1) * windowFrames / bucketCount)
+    let minimum = INT32_MAXIMUM
+    let maximum = INT32_MINIMUM
+    if (level) {
+      const channelBase = channelIndex * level.entryCount
+      const firstEntry = Math.floor(first / level.granularity)
+      const lastEntry = Math.min(level.entryCount,
+        Math.ceil(last / level.granularity))
+      for (let entry = firstEntry; entry < lastEntry; ++entry) {
+        if (level.minima[channelBase + entry] < minimum)
+          minimum = level.minima[channelBase + entry]
+        if (level.maxima[channelBase + entry] > maximum)
+          maximum = level.maxima[channelBase + entry]
+      }
+    } else {
+      for (let frame = first; frame < last; ++frame) {
+        const value = pyramid.samples[frame * channelCount + channelIndex]
+        if (value < minimum) minimum = value
+        if (value > maximum) maximum = value
+      }
+    }
+    const low = minimum * factor
+    const high = maximum * factor
+    minima[bucket] = low
+    maxima[bucket] = high
+    if (low < captureMinimum) captureMinimum = low
+    if (high > captureMaximum) captureMaximum = high
+  }
+
+  const scale = expandedRange(verticalRange ?? {
+    minimum: captureMinimum,
+    maximum: captureMaximum,
+  })
+  const span = scale.maximum - scale.minimum
+  const point = (bucket: number, value: number) => {
+    const x = bucketCount === 1 ? 0 : bucket / (bucketCount - 1) * width
+    const y = height - (value - scale.minimum) / span * height
+    return `${x.toFixed(2)},${y.toFixed(2)}`
+  }
+  const upper = maxima.map((value, bucket) => point(bucket, value))
+  const lower = minima.map((value, bucket) => point(bucket, value)).reverse()
+  return {
+    minimum: captureMinimum,
+    maximum: captureMaximum,
+    scaleMinimum: scale.minimum,
+    scaleMaximum: scale.maximum,
+    points: [...upper, ...lower].join(' '),
+  }
+}
+
 export function waveformEnvelope(
   waveform: ParsedWaveform,
   channelIndex: number,
