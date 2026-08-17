@@ -241,7 +241,17 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
               <div><dt>Duration</dt><dd>{duration(session)}</dd></div>
               <div><dt>Sample rate</dt><dd>{count(session.sample_rate_hz)} frame/s
                 {session.decimation > 1 ? ` ÷ ${session.decimation}` : ''}</dd></div>
-              <div><dt>Frames</dt><dd>{count(session.last_sequence - session.first_sequence + 1)}</dd></div>
+              {/*
+                * Sequences span acquisition frames whatever the decimation,
+                * so the window span is the same for any divisor; the stored
+                * count is what the file actually contains.
+                */}
+              <div><dt>Samples</dt><dd>
+                {count((session.last_sequence - session.first_sequence) /
+                  Math.max(1, session.decimation) + 1)}
+                {session.decimation > 1 &&
+                  ` of ${count(session.last_sequence - session.first_sequence + 1)}`}
+              </dd></div>
               <div><dt>Events</dt><dd>{session.event_count}</dd></div>
               {fileSize(session) &&
                 <div><dt>File size</dt><dd>{fileSize(session)}</dd></div>}
