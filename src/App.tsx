@@ -370,6 +370,36 @@ function AboutPage({ onUnauthorized }: { onUnauthorized: () => void }) {
   </section>
 }
 
+/** Per-component pipeline pills, moved off the dashboard to keep it lean. */
+function PipelineHealthPanel({ health }: { health: SystemHealth | undefined }) {
+  return <section className="health-panel">
+    <div><p className="eyebrow">Pipeline health</p><h2>Meter components</h2></div>
+    <div className="health-details">
+      <div className="health-list">
+        {health?.adc.source === 'simulator'
+          ? <StatusPill ok={health.adc.simulator_healthy}>ADC simulator</StatusPill>
+          : <StatusPill ok={health?.adc.spi_responsive ?? false}>AD7771 SPI</StatusPill>}
+        <StatusPill ok={health?.adc.rate_match ?? false}>ADC sample rate</StatusPill>
+        <StatusPill ok={health?.adc.headers_valid ?? false}>Frame headers</StatusPill>
+        <StatusPill ok={health?.adc.fifo_ok ?? false}>PL FIFO</StatusPill>
+        <StatusPill ok={health?.adc.meter_generation_match ?? false}>PL configuration</StatusPill>
+        <StatusPill ok={(health?.acquisition.read_errors ?? 1) === 0 &&
+          !(health?.acquisition.record_stale ?? true)}>Meter DMA</StatusPill>
+        <StatusPill ok={!(health?.acquisition.health_probe_pending ?? true)}>
+          ADC health audit
+        </StatusPill>
+        <StatusPill ok={health?.frequency_arithmetic_ok ?? false}>Frequency arithmetic</StatusPill>
+        <StatusPill ok={health?.nginx_running ?? false}>nginx</StatusPill>
+      </div>
+      {(health?.adc.degraded_reasons?.length ?? 0) > 0 &&
+        <ul className="health-reasons" aria-label="ADC degradation reasons">
+          {health?.adc.degraded_reasons?.map((reason) =>
+            <li key={reason.code}><code>{reason.code}</code>{reason.message}</li>)}
+        </ul>}
+    </div>
+  </section>
+}
+
 function DeveloperOverview({ onUnauthorized, health, readings }: {
   onUnauthorized: () => void
   health: SystemHealth | undefined
@@ -416,6 +446,7 @@ function DeveloperOverview({ onUnauthorized, health, readings }: {
 
   return <div className="developer-overview">
     <TelemetryPanel health={health} readings={readings} />
+    <PipelineHealthPanel health={health} />
     <section className="temperature-panel">
     <header className="temperature-panel-header">
       <div><p className="eyebrow">Thermal monitoring</p><h2>SoC temperatures</h2></div>
@@ -691,7 +722,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   onSimulatorSubmit: (event: FormEvent) => void
 }) {
   const [activeTab, setActiveTab] =
-    useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'about' | 'logs'>('overview')
+    useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'waveform' | 'about' | 'logs'>('overview')
   return <section className="developer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
@@ -710,6 +741,9 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       <button className={activeTab === 'recorder' ? 'active' : ''} type="button"
         aria-current={activeTab === 'recorder' ? 'page' : undefined}
         onClick={() => setActiveTab('recorder')}>Data recorder</button>
+      <button className={activeTab === 'waveform' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'waveform' ? 'page' : undefined}
+        onClick={() => setActiveTab('waveform')}>Waveform</button>
       <button className={activeTab === 'about' ? 'active' : ''} type="button"
         aria-current={activeTab === 'about' ? 'page' : undefined}
         onClick={() => setActiveTab('about')}>About</button>
@@ -768,21 +802,24 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
     </>
       : activeTab === 'recorder'
         ? <DeveloperDataRecorderPage onUnauthorized={onUnauthorized} />
+      : activeTab === 'waveform'
+        ? <DeveloperWaveformStatus onUnauthorized={onUnauthorized} />
       : activeTab === 'about'
         ? <DeveloperAboutPage onUnauthorized={onUnauthorized} />
         : <DeveloperLogs onUnauthorized={onUnauthorized} />}
   </section>
 }
 
-function WaveformConfiguration({ onUnauthorized }: {
+/**
+ * Waveform transport diagnostics, hosted under Developer -> Waveform. The
+ * manual trigger lives on the Waveforms page next to the history it
+ * produces; this grid is the detail behind that page's one-line health flag.
+ */
+function DeveloperWaveformStatus({ onUnauthorized }: {
   onUnauthorized: () => void
 }) {
   const [status, setStatus] = useState<WaveformStatus>()
-  const [pretriggerMs, setPretriggerMs] = useState(10000)
-  const [posttriggerMs, setPosttriggerMs] = useState(10000)
-  const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -807,79 +844,13 @@ function WaveformConfiguration({ onUnauthorized }: {
     return () => { active = false; window.clearInterval(timer) }
   }, [load])
 
-  useEffect(() => {
-    let active = true
-    api.activeSettings().then((activeSettings) => {
-      if (!active) return
-      setPretriggerMs(activeSettings.settings.waveform.default_pretrigger_ms)
-      setPosttriggerMs(activeSettings.settings.waveform.default_posttrigger_ms)
-    }).catch((reason) => {
-      if (!active) return
-      if (reason instanceof ApiError && reason.status === 401) {
-        onUnauthorized()
-        return
-      }
-      setError(reason instanceof Error ? reason.message : 'Unable to read waveform defaults')
-    })
-    return () => { active = false }
-  }, [onUnauthorized])
-
-  async function trigger(event: FormEvent) {
-    event.preventDefault()
-    setBusy(true)
-    setMessage('Arming capture…')
-    setError('')
-    try {
-      const updated = await api.triggerWaveform(pretriggerMs, posttriggerMs)
-      setStatus(updated)
-      setMessage(updated.active_session
-        ? 'Capture active; overlapping triggers will extend this session.'
-        : 'Capture request accepted.')
-    } catch (reason) {
-      setMessage('')
-      if (reason instanceof ApiError && reason.status === 401) {
-        onUnauthorized()
-        return
-      }
-      setError(reason instanceof Error ? reason.message : 'Unable to trigger waveform capture')
-    } finally { setBusy(false) }
-  }
-
-  async function saveDefaults() {
-    setBusy(true)
-    setMessage('Saving defaults…')
-    setError('')
-    try {
-      await saveSettings((settings) => {
-        settings.waveform.default_pretrigger_ms = pretriggerMs
-        settings.waveform.default_posttrigger_ms = posttriggerMs
-      })
-      setMessage('Defaults applied and saved.')
-    } catch (reason) {
-      setMessage('')
-      if (reason instanceof ApiError && reason.status === 401) {
-        onUnauthorized()
-        return
-      }
-      setError(reason instanceof Error ? reason.message : 'Unable to save waveform defaults')
-    } finally { setBusy(false) }
-  }
-
   const retainedSeconds = status?.sample_rate_hz
     ? status.history_capacity_frames / status.sample_rate_hz
     : 0
-  // The capture budget is rate-derived: the frame-sized history buffer spans
-  // fewer seconds at higher sample rates, so a fixed input cap silently stops
-  // fitting when the rate changes. 0 until the daemon has seen a block.
-  const maxTotalMs = status?.sample_rate_hz
-    ? Math.floor(status.max_capture_frames * 1000 / status.sample_rate_hz)
-    : 0
-  const requestedTotalMs = pretriggerMs + posttriggerMs
-  const overBudget = maxTotalMs > 0 && requestedTotalMs > maxTotalMs
 
   return <div className="waveform-configuration">
     <section className="section-heading configuration-heading">
-      <div><p className="eyebrow">Waveform</p><h2>Pre/post-trigger capture</h2></div>
+      <div><p className="eyebrow">Waveform</p><h2>Transport diagnostics</h2></div>
       <span>Continuous 8-channel DDR history</span>
     </section>
     {error && <div className="error-banner"><strong>Waveform unavailable</strong><span>{error}</span></div>}
@@ -899,30 +870,20 @@ function WaveformConfiguration({ onUnauthorized }: {
       <article><span>Active capture</span><strong>{status?.active_session ? 'Yes' : 'No'}</strong></article>
       <article><span>Completed files</span><strong>{formatCount(status?.completed_sessions)}</strong></article>
     </section>
-    <form className="waveform-trigger-form" onSubmit={trigger}>
-      <label>History before trigger (ms)<input type="number" min="0"
-        max={maxTotalMs > 0 ? maxTotalMs : 120000}
-        value={pretriggerMs} onChange={(event) => setPretriggerMs(Number(event.target.value))} /></label>
-      <label>Capture after trigger (ms)<input type="number" min="0"
-        max={maxTotalMs > 0 ? maxTotalMs : 120000}
-        value={posttriggerMs} onChange={(event) => setPosttriggerMs(Number(event.target.value))} /></label>
-      <div className="waveform-trigger-action">
-        <button type="submit" disabled={busy || !status?.running || overBudget}>
-          {busy ? 'Triggering…' : 'Trigger waveform'}
-        </button>
-        <button className="secondary" type="button" onClick={() => void saveDefaults()}
-          disabled={busy}>Apply and save</button>
-        <span>{overBudget
-          ? `Requested ${(requestedTotalMs / 1000).toFixed(1)} s exceeds the `
-            + `${(maxTotalMs / 1000).toFixed(1)} s budget at `
-            + `${status?.sample_rate_hz.toLocaleString()} frame/s`
-          : message}</span>
-      </div>
-      {maxTotalMs > 0 && <small className="waveform-budget-hint">
-        Pre + post may total {(maxTotalMs / 1000).toFixed(1)} s at the current
-        sample rate ({status?.sample_rate_hz.toLocaleString()} frame/s).
-      </small>}
-    </form>
+  </div>
+}
+
+function WaveformConfiguration() {
+  return <div className="waveform-configuration">
+    <section className="section-heading configuration-heading">
+      <div><p className="eyebrow">Waveform</p><h2>Capture configuration</h2></div>
+      <span>Continuous 8-channel DDR history</span>
+    </section>
+    <div className="waveform-config-placeholder">
+      <strong>No configurable waveform options yet</strong>
+      <span>Manual captures are triggered from the Waveforms page; transport
+        diagnostics live under Developer → Waveform.</span>
+    </div>
   </div>
 }
 
@@ -1020,7 +981,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
       <div className="frequency-actions"><button type="submit">Apply and save</button>
         <span>{configurationStatus}</span></div>
     </form>}</> : activeTab === 'waveform'
-      ? <WaveformConfiguration onUnauthorized={onUnauthorized} />
+      ? <WaveformConfiguration />
       : activeTab === 'data-logging'
         ? <DeveloperDatabasePage onUnauthorized={onUnauthorized} />
         : activeTab === 'modbus'
@@ -1391,32 +1352,6 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
               ? <><span>mean {channel.mean_micro_units} µ</span><span>{channel.rms_count} count</span></>
               : <><span>not implemented</span><span>invalid</span></>} />)}
         </section>}
-    <section className="health-panel">
-      <div><p className="eyebrow">Pipeline health</p><h2>Meter components</h2></div>
-      <div className="health-details">
-        <div className="health-list">
-          {health?.adc.source === 'simulator'
-            ? <StatusPill ok={health.adc.simulator_healthy}>ADC simulator</StatusPill>
-            : <StatusPill ok={health?.adc.spi_responsive ?? false}>AD7771 SPI</StatusPill>}
-          <StatusPill ok={health?.adc.rate_match ?? false}>ADC sample rate</StatusPill>
-          <StatusPill ok={health?.adc.headers_valid ?? false}>Frame headers</StatusPill>
-          <StatusPill ok={health?.adc.fifo_ok ?? false}>PL FIFO</StatusPill>
-          <StatusPill ok={health?.adc.meter_generation_match ?? false}>PL configuration</StatusPill>
-          <StatusPill ok={(health?.acquisition.read_errors ?? 1) === 0 &&
-            !(health?.acquisition.record_stale ?? true)}>Meter DMA</StatusPill>
-          <StatusPill ok={!(health?.acquisition.health_probe_pending ?? true)}>
-            ADC health audit
-          </StatusPill>
-          <StatusPill ok={health?.frequency_arithmetic_ok ?? false}>Frequency arithmetic</StatusPill>
-          <StatusPill ok={health?.nginx_running ?? false}>nginx</StatusPill>
-        </div>
-        {(health?.adc.degraded_reasons?.length ?? 0) > 0 &&
-          <ul className="health-reasons" aria-label="ADC degradation reasons">
-            {health?.adc.degraded_reasons?.map((reason) =>
-              <li key={reason.code}><code>{reason.code}</code>{reason.message}</li>)}
-          </ul>}
-      </div>
-    </section>
     </>}
   </main>
 }

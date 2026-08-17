@@ -2,8 +2,27 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   api, ApiError, waveformDownloadPath, WaveformSession, WaveformStatus,
 } from '../api'
+import { WaveformTriggerPanel } from './WaveformTriggerPanel'
 import { WaveformViewer } from './WaveformViewer'
 import './waveform.css'
+
+/**
+ * One coarse health verdict for the page header. The detailed counters live
+ * in Developer -> Waveform; here a capture either looks healthy or it does
+ * not. All inputs are cumulative since daemon start, so the flag latches
+ * until the acquisition service restarts - deliberate, because the loss it
+ * reports usually happened while nobody was watching.
+ */
+function waveformIssue(status: WaveformStatus | undefined) {
+  if (!status) return undefined
+  if (!status.running) return 'Waveform DMA is not running'
+  if (status.sequence_gaps > 0 || status.invalid_blocks > 0 ||
+    status.transport_overrun_blocks > 0 || status.pl_dropped_frames > 0)
+    return 'Frames were lost since start-up'
+  if (status.materialization_failures > 0)
+    return 'A capture file failed to write'
+  return ''
+}
 
 function count(value: number) {
   return new Intl.NumberFormat('en-US').format(value)
@@ -28,6 +47,8 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
   const [status, setStatus] = useState<WaveformStatus>()
   const [loadingFile, setLoadingFile] = useState('')
   const [deletingSession, setDeletingSession] = useState(0)
+  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
   const [viewer, setViewer] = useState<{ filename: string; buffer: ArrayBuffer }>()
   const [error, setError] = useState('')
 
@@ -93,6 +114,57 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
     }
   }
 
+  const sessions = status?.sessions ?? []
+  // A capture still being written cannot be deleted, so it never selects.
+  const deletable = sessions.filter((session) => session.state !== 'capturing')
+  const allSelected = deletable.length > 0 &&
+    deletable.every((session) => selected.has(session.id))
+
+  function toggleSelected(id: number) {
+    const next = new Set(selected)
+    if (!next.delete(id)) next.add(id)
+    setSelected(next)
+  }
+
+  function toggleSelectAll() {
+    setSelected(allSelected
+      ? new Set()
+      : new Set(deletable.map((session) => session.id)))
+  }
+
+  async function removeSelected() {
+    const targets = deletable.filter((session) => selected.has(session.id))
+    if (targets.length === 0 ||
+      !window.confirm(`Delete ${targets.length} waveform session(s)? This cannot be undone.`))
+      return
+    setBulkDeleting(true)
+    setError('')
+    const failures: string[] = []
+    try {
+      for (const session of targets) {
+        try {
+          const next = await api.deleteWaveform(session.id)
+          setStatus(next)
+          if (viewer?.filename === session.filename) setViewer(undefined)
+        } catch (reason) {
+          if (reason instanceof ApiError && reason.status === 401) {
+            onUnauthorized()
+            return
+          }
+          failures.push(`session ${session.id}: ${
+            reason instanceof Error ? reason.message : 'delete failed'}`)
+        }
+      }
+      if (failures.length > 0)
+        setError(`Unable to delete ${failures.length} of ${targets.length} — ${failures[0]}`)
+    } finally {
+      setSelected(new Set())
+      setBulkDeleting(false)
+    }
+  }
+
+  const issue = waveformIssue(status)
+
   return <section className="waveform-explorer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Waveforms</p><h1>Capture history</h1>
@@ -101,16 +173,47 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
         Refresh history
       </button>
     </div>
+    <div className="waveform-capture-strip">
+      <span className={`status-pill ${status?.active_session ? 'ok' : ''}`}>
+        <i />{status?.active_session ? 'Capture active' : 'Idle'}
+      </span>
+      {issue !== undefined &&
+        <span className={`status-pill ${issue ? 'bad' : 'ok'}`}
+          title={issue ? 'Details in Developer → Waveform' : undefined}>
+          <i />{issue || 'Healthy'}
+        </span>}
+    </div>
     {error && <div className="error-banner"><strong>Waveform error</strong><span>{error}</span></div>}
+    {canDelete && <WaveformTriggerPanel status={status} onStatus={setStatus}
+      onUnauthorized={onUnauthorized} />}
     <section className="waveform-library">
       <header>
         <div><p className="eyebrow">Persistent storage</p><h2>Saved captures</h2></div>
-        <span>{status?.completed_sessions ?? 0} complete · {status?.incomplete_sessions ?? 0} incomplete</span>
+        <div className="waveform-library-tools">
+          <span>{status?.completed_sessions ?? 0} complete · {status?.incomplete_sessions ?? 0} incomplete</span>
+          {canDelete && deletable.length > 0 && <>
+            <label className="waveform-select-all">
+              <input type="checkbox" checked={allSelected}
+                onChange={toggleSelectAll} />Select all
+            </label>
+            <button className="waveform-delete" type="button"
+              disabled={selected.size === 0 || bulkDeleting}
+              onClick={() => void removeSelected()}>
+              {bulkDeleting ? 'Deleting…' : `Delete selected (${selected.size})`}
+            </button>
+          </>}
+        </div>
       </header>
       <div className="waveform-library-list">
-        {(status?.sessions ?? []).map((session) =>
-          <article key={session.id}>
+        {sessions.map((session) =>
+          <article key={session.id}
+            className={selected.has(session.id) ? 'selected' : undefined}>
             <div className="waveform-session-identity">
+              {canDelete && <input type="checkbox" className="waveform-session-select"
+                aria-label={`Select session ${session.id}`}
+                checked={selected.has(session.id)}
+                disabled={session.state === 'capturing'}
+                onChange={() => toggleSelected(session.id)} />}
               <strong>Session {session.id}</strong>
               <span className={`session-state ${session.state}`}>{session.state}</span>
               <time>{sessionTime(session)}</time>
@@ -139,10 +242,12 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
               </button>}
             </div>
           </article>)}
-        {(status?.sessions.length ?? 0) === 0 &&
+        {sessions.length === 0 &&
           <div className="waveform-library-empty">
             <strong>No persistent waveform captures</strong>
-            <span>Trigger a capture from Configuration → Waveform.</span>
+            <span>{canDelete
+              ? 'Trigger a capture with the form above.'
+              : 'An administrator can trigger a capture from this page.'}</span>
           </div>}
       </div>
     </section>

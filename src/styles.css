@@ -189,6 +189,16 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 }
 .waveform-trigger-action button { width: auto; padding: .75rem 1.4rem; }
 .waveform-trigger-action span { color: var(--muted); font-size: .78rem; }
+.waveform-config-placeholder {
+  display: grid;
+  gap: .4rem;
+  padding: 1.4rem 1.5rem;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: .82rem;
+}
+.waveform-config-placeholder strong { color: #dbe7e8; }
 .waveform-session-panel {
   margin-top: 1rem;
   overflow: hidden;
