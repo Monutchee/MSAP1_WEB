@@ -24,6 +24,14 @@ export interface ParsedWaveform {
   triggerTaiNanoseconds: bigint
   triggerRealtimeNanoseconds: bigint
   sampleRateHz: number
+  /**
+   * Capture-file decimation divisor (v3): each stored frame is the mean of
+   * this many acquisition frames, and sequence numbers stay in the
+   * acquisition domain. 1 for v1/v2 files.
+   */
+  decimation: number
+  /** Stored-frame rate: sampleRateHz / decimation. */
+  effectiveSampleRateHz: number
   frameCount: number
   frameBytes: number
   frameDataOffset: number
@@ -84,9 +92,9 @@ export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
   const version = data.getUint32(8, true)
   const headerBytes = data.getUint32(12, true)
   if ((version === 1 && headerBytes !== 128) ||
-      (version === 2 && headerBytes !== 256))
+      (version >= 2 && headerBytes !== 256))
     throw new Error(`Unsupported MNCWF header for version ${version}`)
-  if (version !== 1 && version !== 2)
+  if (version !== 1 && version !== 2 && version !== 3)
     throw new Error(`Unsupported MNCWF version ${version}`)
   requireRange(data.byteLength, 0, headerBytes, 'header')
 
@@ -104,8 +112,9 @@ export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
   let frameCount: number
   let eventTableOffset: number
   let triggerRealtimeNanoseconds = 0n
+  let decimation = 1
 
-  if (version === 2) {
+  if (version >= 2) {
     const channelCount = data.getUint32(96, true)
     frameBytes = data.getUint32(100, true)
     const descriptorBytes = data.getUint32(104, true)
@@ -114,6 +123,12 @@ export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
     frameDataOffset = safeNumber(data.getBigUint64(128, true), 'frame data offset')
     frameCount = safeNumber(data.getBigUint64(136, true), 'frame count')
     triggerRealtimeNanoseconds = data.getBigUint64(144, true)
+    /* v2 wrote zeros where v3 keeps the decimation divisor. */
+    if (version >= 3) {
+      decimation = data.getUint32(152, true)
+      if (![1, 2, 4, 8, 16, 32].includes(decimation))
+        throw new Error(`Invalid MNCWF decimation ${decimation}`)
+    }
     if (channelCount === 0 || channelCount > 8 ||
         descriptorBytes !== CHANNEL_DESCRIPTOR_BYTES ||
         frameBytes !== channelCount * 4)
@@ -144,8 +159,14 @@ export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
 
   requireRange(data.byteLength, eventTableOffset, eventCount * EVENT_BYTES, 'event table')
   requireRange(data.byteLength, frameDataOffset, frameCount * frameBytes, 'sample data')
+  /*
+   * Sequences stay in the acquisition frame domain, so a decimated file
+   * covers (frameCount - 1) * decimation + 1 acquisition frames exactly.
+   */
   if (lastSequence < firstSequence ||
-      BigInt(frameCount) !== lastSequence - firstSequence + 1n)
+      (lastSequence - firstSequence) % BigInt(decimation) !== 0n ||
+      BigInt(frameCount - 1) !==
+        (lastSequence - firstSequence) / BigInt(decimation))
     throw new Error('MNCWF frame count does not match its sequence range')
 
   const events = Array.from({ length: eventCount }, (_, index) => {
@@ -166,6 +187,8 @@ export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
     triggerTaiNanoseconds,
     triggerRealtimeNanoseconds,
     sampleRateHz,
+    decimation,
+    effectiveSampleRateHz: sampleRateHz / decimation,
     frameCount,
     frameBytes,
     frameDataOffset,

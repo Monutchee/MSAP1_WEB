@@ -375,6 +375,8 @@ export interface ProductSettings {
   waveform: {
     default_pretrigger_ms: number
     default_posttrigger_ms: number
+    // Capture-file decimation divisor (1, 2, 4, 8, 16, or 32).
+    default_decimation: number
   }
   database: DatabaseSettings
   modbus: ModbusSettings
@@ -575,6 +577,7 @@ export interface WaveformSession {
   trigger_realtime_nanoseconds: number
   sample_rate_hz: number
   event_count: number
+  decimation: number
   filename: string
 }
 
@@ -700,10 +703,11 @@ export const api = {
     }),
   waveforms: () => request<WaveformStatus>('/api/v1/waveforms'),
   waveformFile: (filename: string) => requestBinary(waveformViewPath(filename)),
-  triggerWaveform: (pretrigger_ms: number, posttrigger_ms: number) =>
+  triggerWaveform: (pretrigger_ms: number, posttrigger_ms: number,
+    decimation: number) =>
     request<WaveformStatus>('/api/v1/waveforms/trigger', {
       method: 'POST',
-      body: JSON.stringify({ pretrigger_ms, posttrigger_ms }),
+      body: JSON.stringify({ pretrigger_ms, posttrigger_ms, decimation }),
     }),
   deleteWaveform: (session_id: number) =>
     request<WaveformStatus>('/api/v1/waveforms', {
