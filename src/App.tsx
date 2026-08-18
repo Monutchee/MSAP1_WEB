@@ -852,7 +852,52 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
             </fieldset>
           })}
         </div>
-        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC counts before they are sent to PL: RMS to a sine peak, DC as a constant offset, and noise RMS to a uniform white fluctuation so readings jitter like a real grid input. The signal frequency here is the generated waveform; the declared nominal grid frequency stays under Configuration → Meter. Preserve phase keeps the waveform and packet framing continuous across a reconfiguration.</p>
+        <div className="simulator-channel-grid">
+          {simulator.harmonics.map((harmonic, index) => {
+            const update = (changes: Partial<typeof harmonic>) => onSimulatorChange({
+              ...simulator,
+              harmonics: simulator.harmonics.map((candidate, position) =>
+                position === index ? { ...candidate, ...changes } : candidate),
+            })
+            return <fieldset key={index}>
+              <legend>Harmonic slot {index + 1}
+                <button type="button" onClick={() => onSimulatorChange({
+                  ...simulator,
+                  harmonics: simulator.harmonics.filter((_, position) => position !== index),
+                })}>Remove</button>
+              </legend>
+              <NumberField label="Order (2..63)" min="2" max="63" step="1"
+                value={harmonic.order}
+                onValue={(value) => update({ order: Math.round(value) })} />
+              <NumberField label="Amplitude (% of fundamental)" min="0" max="99.9"
+                step="0.1" value={harmonic.percent}
+                onValue={(value) => update({ percent: value })} />
+              <NumberField label="Extra phase (degrees)" step="0.001"
+                value={harmonic.phase_degrees}
+                onValue={(value) => update({ phase_degrees: value })} />
+              <label className="simulator-checkbox">
+                Lanes
+                <select value={harmonic.channels}
+                  onChange={(event) => update({
+                    channels: event.target.value as typeof harmonic.channels,
+                  })}>
+                  <option value="voltage">Voltage</option>
+                  <option value="current">Current</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
+            </fieldset>
+          })}
+          {simulator.harmonics.length < 4 && <fieldset>
+            <legend>Harmonics</legend>
+            <button type="button" onClick={() => onSimulatorChange({
+              ...simulator,
+              harmonics: [...simulator.harmonics,
+                { order: 3, percent: 5, phase_degrees: 0, channels: 'voltage' as const }],
+            })}>Add harmonic slot</button>
+          </fieldset>}
+        </div>
+        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC counts before they are sent to PL: RMS to a sine peak, DC as a constant offset, and noise RMS to a uniform white fluctuation so readings jitter like a real grid input. Harmonic slots ride on top: each adds order&times;frequency at a percentage of every receiving lane's fundamental, with the lane's phase offset scaled by the order (so a 3rd harmonic on a balanced set is zero-sequence, as on a real grid). The signal frequency here is the generated waveform; the declared nominal grid frequency stays under Configuration → Meter. Preserve phase keeps the waveform and packet framing continuous across a reconfiguration.</p>
         <div className="frequency-actions"><button type="submit">Apply and save</button>
           <span>{simulatorStatus}</span></div>
       </form>}
@@ -939,6 +984,12 @@ function SingleCycleReadout({ onUnauthorized }: {
         <span key={phases[index]}>
           {phases[index]}: {(value / 1e12).toFixed(2)} W
         </span>)}
+      {snapshot.phasor_valid
+        ? snapshot.fundamental_rms_micro_units.map((value, index) =>
+          <span key={`fund-${lanes[index]}`}>
+            {lanes[index]} fund: {(value / 1e6).toFixed(3)} {laneUnit(index)}
+          </span>)
+        : <span>fundamental: invalid (no frequency reference)</span>}
     </div>}
   </div>
 }
@@ -1175,6 +1226,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             frequency_hz: activeSettings.settings.adc.simulator.frequency_hz,
             preserve_phase: activeSettings.settings.adc.simulator.preserve_phase,
             channels: activeSettings.settings.adc.simulator.channels,
+            harmonics: activeSettings.settings.adc.simulator.harmonics,
           })
           setFrequencyConfiguration(activeSettings.settings.metering.frequency)
           setNominalFrequency(activeSettings.settings.metering.nominal_frequency_hz)
@@ -1259,6 +1311,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           frequency_hz: simulator.frequency_hz,
           preserve_phase: simulator.preserve_phase,
           channels: simulator.channels,
+          harmonics: simulator.harmonics,
         }
       })
       setSimulatorStatus('Applied and saved.')

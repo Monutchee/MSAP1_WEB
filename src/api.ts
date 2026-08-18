@@ -211,11 +211,24 @@ export interface AdcSimulatorChannel {
   noise_rms: number
 }
 
+export interface AdcSimulatorHarmonic {
+  /** Harmonic order, 2..63. */
+  order: number
+  /** Amplitude, percent of each receiving lane's fundamental (0..99.9). */
+  percent: number
+  /** Extra phase (degrees) on top of the physical order-scaled lane rule. */
+  phase_degrees: number
+  /** Which lanes receive it. */
+  channels: 'voltage' | 'current' | 'all'
+}
+
 export interface AdcSimulatorConfiguration {
   frequency_hz: number
   /** Keep waveform phase/framing across the configuration commit. */
   preserve_phase: boolean
   channels: AdcSimulatorChannel[]
+  /** Up to four global harmonic slots; empty keeps a pure tone. */
+  harmonics: AdcSimulatorHarmonic[]
   active_source: 'physical' | 'simulator'
   configuration_generation: number
   active_generation: number
@@ -225,7 +238,7 @@ export interface AdcSimulatorConfiguration {
   healthy: boolean
 }
 
-/** GET /api/v1/meter/single-cycle — SCYC diagnostic snapshot (metrology M3/M4). */
+/** GET /api/v1/meter/single-cycle — SCYC diagnostic snapshot (metrology M3-M5). */
 export interface SingleCycleStatus {
   running: boolean
   has_snapshot: boolean
@@ -243,6 +256,9 @@ export interface SingleCycleStatus {
   rms_micro_units: number[]
   vll_rms_micro_units: number[]
   active_power_picowatts: number[]
+  /** Fundamental (phasor) RMS per lane; meaningful only when phasor_valid. */
+  fundamental_rms_micro_units: number[]
+  phasor_valid: boolean
 }
 
 export interface RmsSettings {
@@ -397,6 +413,7 @@ export interface ProductSettings {
       frequency_hz: number
       preserve_phase: boolean
       channels: AdcSimulatorChannel[]
+      harmonics: AdcSimulatorHarmonic[]
     }
   }
   waveform: {
