@@ -777,9 +777,24 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
           <span>Saturation: {formatCount(simulator.saturation_count)}</span>
           <span>Missed ticks: {formatCount(simulator.missed_sample_count)}</span>
         </div>
+        <div className="simulator-global-grid">
+          <label>Signal frequency (Hz)<input type="number" min="0.001" max="1000" step="0.001"
+            value={simulator.frequency_hz}
+            onChange={(event) => onSimulatorChange({
+              ...simulator, frequency_hz: Number(event.target.value),
+            })} /></label>
+          <label className="simulator-checkbox">
+            <input type="checkbox" checked={simulator.preserve_phase}
+              onChange={(event) => onSimulatorChange({
+                ...simulator, preserve_phase: event.target.checked,
+              })} />
+            Preserve phase across apply
+          </label>
+        </div>
         <div className="simulator-channel-grid">
           {simulator.channels.filter((channel) => channel.channel < 7).map((channel) => {
             const names = ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va']
+            const unit = channel.channel < 4 ? 'A' : 'V'
             const update = (changes: Partial<typeof channel>) => onSimulatorChange({
               ...simulator,
               channels: simulator.channels.map((candidate) =>
@@ -787,15 +802,21 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
             })
             return <fieldset key={channel.channel}>
               <legend>CH{channel.channel} {names[channel.channel]}</legend>
-              <label>RMS ({channel.channel < 4 ? 'A' : 'V'})<input type="number" min="0" step="0.001"
+              <label>RMS ({unit})<input type="number" min="0" step="0.001"
                 value={channel.rms} onChange={(event) => update({ rms: Number(event.target.value) })} /></label>
               <label>Phase (degrees)<input type="number" step="0.001"
                 value={channel.phase_degrees}
                 onChange={(event) => update({ phase_degrees: Number(event.target.value) })} /></label>
+              <label>DC offset ({unit})<input type="number" step="0.001"
+                value={channel.dc}
+                onChange={(event) => update({ dc: Number(event.target.value) })} /></label>
+              <label>Noise RMS ({unit})<input type="number" min="0" step="0.001"
+                value={channel.noise_rms}
+                onChange={(event) => update({ noise_rms: Number(event.target.value) })} /></label>
             </fieldset>
           })}
         </div>
-        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC peaks before they are sent to PL. The generator signal frequency is configured under Configuration → Meter.</p>
+        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC counts before they are sent to PL: RMS to a sine peak, DC as a constant offset, and noise RMS to a uniform white fluctuation so readings jitter like a real grid input. The signal frequency here is the generated waveform; the declared nominal grid frequency stays under Configuration → Meter. Preserve phase keeps the waveform and packet framing continuous across a reconfiguration.</p>
         <div className="frequency-actions"><button type="submit">Apply and save</button>
           <span>{simulatorStatus}</span></div>
       </form>}
@@ -1045,6 +1066,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           setSimulator({
             ...configuration,
             frequency_hz: activeSettings.settings.adc.simulator.frequency_hz,
+            preserve_phase: activeSettings.settings.adc.simulator.preserve_phase,
             channels: activeSettings.settings.adc.simulator.channels,
           })
           setFrequencyConfiguration(activeSettings.settings.metering.frequency)
@@ -1128,6 +1150,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       await saveSettings((settings) => {
         settings.adc.simulator = {
           frequency_hz: simulator.frequency_hz,
+          preserve_phase: simulator.preserve_phase,
           channels: simulator.channels,
         }
       })

@@ -205,10 +205,16 @@ export interface AdcSimulatorChannel {
   channel: number
   rms: number
   phase_degrees: number
+  /** Constant offset, engineering units (volts/amps). */
+  dc: number
+  /** RMS of the uniform white fluctuation the PL adds; 0 disables. */
+  noise_rms: number
 }
 
 export interface AdcSimulatorConfiguration {
   frequency_hz: number
+  /** Keep waveform phase/framing across the configuration commit. */
+  preserve_phase: boolean
   channels: AdcSimulatorChannel[]
   active_source: 'physical' | 'simulator'
   configuration_generation: number
@@ -369,6 +375,7 @@ export interface ProductSettings {
     source: AdcSource['source']
     simulator: {
       frequency_hz: number
+      preserve_phase: boolean
       channels: AdcSimulatorChannel[]
     }
   }
