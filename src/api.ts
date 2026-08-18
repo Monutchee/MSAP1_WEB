@@ -225,6 +225,26 @@ export interface AdcSimulatorConfiguration {
   healthy: boolean
 }
 
+/** GET /api/v1/meter/single-cycle — SCYC diagnostic snapshot (metrology M3/M4). */
+export interface SingleCycleStatus {
+  running: boolean
+  has_snapshot: boolean
+  records: number
+  sequence: number
+  cycle_sequence: number
+  sample_count: number
+  first_sample: number
+  last_sample: number
+  processing_tick: number
+  nominal_hz: number
+  flags: number
+  status: number
+  frequency_millihz: number
+  rms_micro_units: number[]
+  vll_rms_micro_units: number[]
+  active_power_picowatts: number[]
+}
+
 export interface RmsSettings {
   window_ms: number
   remove_dc: boolean
@@ -692,6 +712,8 @@ export const api = {
     }),
   adcSimulator: () =>
     request<AdcSimulatorConfiguration>('/api/v1/adc/simulator'),
+  meterSingleCycle: () =>
+    request<SingleCycleStatus>('/api/v1/meter/single-cycle'),
   updateAdcSimulator: (configuration: AdcSimulatorConfiguration) =>
     request<AdcSimulatorConfiguration>('/api/v1/adc/simulator', {
       method: 'PUT',

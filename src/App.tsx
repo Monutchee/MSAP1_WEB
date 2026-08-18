@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import {
-  api, AdcSimulatorConfiguration, AdcSource, ApiError, DeveloperAbout,
+  api, AdcSimulatorConfiguration, AdcSource, ApiError, DeveloperAbout, SingleCycleStatus,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
   MeterAggregate, MeterAggregateResult,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
@@ -707,6 +707,42 @@ function DeveloperTweak({ onUnauthorized }: { onUnauthorized: () => void }) {
   </div>
 }
 
+/**
+ * Controlled numeric input that tolerates transient states while typing.
+ * Coercing every keystroke with Number() swallows a lone "-" or "0."
+ * (Number("-") is NaN), which made negative phase angles untypable. The
+ * field keeps the raw text as a local draft and propagates only finite
+ * parses; blur reverts an unparseable draft to the last good value.
+ */
+function NumberField({ label, value, onValue, min, max, step }: {
+  label: string
+  value: number
+  onValue: (value: number) => void
+  min?: string
+  max?: string
+  step?: string
+}) {
+  const [draft, setDraft] = useState(String(value))
+  const [editing, setEditing] = useState(false)
+  useEffect(() => {
+    if (!editing) setDraft(String(value))
+  }, [value, editing])
+  return <label>{label}<input type="number" min={min} max={max} step={step}
+    value={draft}
+    onFocus={() => setEditing(true)}
+    onBlur={() => {
+      setEditing(false)
+      const parsed = Number(draft)
+      if (draft !== '' && Number.isFinite(parsed)) onValue(parsed)
+      else setDraft(String(value))
+    }}
+    onChange={(event) => {
+      setDraft(event.target.value)
+      const parsed = Number(event.target.value)
+      if (event.target.value !== '' && Number.isFinite(parsed)) onValue(parsed)
+    }} /></label>
+}
+
 function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   sourceStatus, simulatorStatus, onSourceChange, onSimulatorChange,
   onSimulatorSubmit }: {
@@ -771,6 +807,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
         </StatusPill>
         <span>{sourceStatus}</span>
       </div>
+      <SingleCycleReadout onUnauthorized={onUnauthorized} />
       {simulator && <form className="simulator-form" onSubmit={onSimulatorSubmit}>
         <div className="simulator-summary">
           <span>Frames: {formatCount(simulator.generated_frames)}</span>
@@ -778,11 +815,11 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
           <span>Missed ticks: {formatCount(simulator.missed_sample_count)}</span>
         </div>
         <div className="simulator-global-grid">
-          <label>Signal frequency (Hz)<input type="number" min="0.001" max="1000" step="0.001"
-            value={simulator.frequency_hz}
-            onChange={(event) => onSimulatorChange({
-              ...simulator, frequency_hz: Number(event.target.value),
-            })} /></label>
+          <NumberField label="Signal frequency (Hz)" min="0.001" max="1000"
+            step="0.001" value={simulator.frequency_hz}
+            onValue={(value) => onSimulatorChange({
+              ...simulator, frequency_hz: value,
+            })} />
           <label className="simulator-checkbox">
             <input type="checkbox" checked={simulator.preserve_phase}
               onChange={(event) => onSimulatorChange({
@@ -802,17 +839,16 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
             })
             return <fieldset key={channel.channel}>
               <legend>CH{channel.channel} {names[channel.channel]}</legend>
-              <label>RMS ({unit})<input type="number" min="0" step="0.001"
-                value={channel.rms} onChange={(event) => update({ rms: Number(event.target.value) })} /></label>
-              <label>Phase (degrees)<input type="number" step="0.001"
+              <NumberField label={`RMS (${unit})`} min="0" step="0.001"
+                value={channel.rms} onValue={(value) => update({ rms: value })} />
+              <NumberField label="Phase (degrees)" step="0.001"
                 value={channel.phase_degrees}
-                onChange={(event) => update({ phase_degrees: Number(event.target.value) })} /></label>
-              <label>DC offset ({unit})<input type="number" step="0.001"
-                value={channel.dc}
-                onChange={(event) => update({ dc: Number(event.target.value) })} /></label>
-              <label>Noise RMS ({unit})<input type="number" min="0" step="0.001"
+                onValue={(value) => update({ phase_degrees: value })} />
+              <NumberField label={`DC offset (${unit})`} step="0.001"
+                value={channel.dc} onValue={(value) => update({ dc: value })} />
+              <NumberField label={`Noise RMS (${unit})`} min="0" step="0.001"
                 value={channel.noise_rms}
-                onChange={(event) => update({ noise_rms: Number(event.target.value) })} /></label>
+                onValue={(value) => update({ noise_rms: value })} />
             </fieldset>
           })}
         </div>
@@ -836,6 +872,77 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
  * manual trigger lives on the Waveforms page next to the history it
  * produces; this grid is the detail behind that page's one-line health flag.
  */
+/**
+ * Live single-cycle diagnostic readout (SCYC records, metrology M3/M4),
+ * shown beside the simulator controls so a phase/amplitude edit and its
+ * measured effect sit on one screen. Values convert from the record's
+ * micro-units and picowatts to engineering units.
+ */
+function SingleCycleReadout({ onUnauthorized }: {
+  onUnauthorized: () => void
+}) {
+  const [status, setStatus] = useState<SingleCycleStatus>()
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await api.meterSingleCycle())
+      setError('')
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to read single-cycle diagnostics')
+    }
+  }, [onUnauthorized])
+
+  useEffect(() => {
+    let active = true
+    const refresh = async () => {
+      if (active) await load()
+    }
+    void refresh()
+    const timer = window.setInterval(refresh, 1000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [load])
+
+  const lanes = ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va']
+  const laneUnit = (index: number) => (index < 4 ? 'A' : 'V')
+  const pairs = ['Vab', 'Vbc', 'Vca']
+  const phases = ['PA', 'PB', 'PC']
+  const snapshot = status?.has_snapshot ? status : undefined
+
+  return <div className="simulator-source-panel">
+    <label>
+      Single-cycle readout
+      <span className="simulator-note">
+        {status
+          ? snapshot
+            ? `cycle #${status.cycle_sequence} — ${status.sample_count} samples, ` +
+              `${(status.frequency_millihz / 1000).toFixed(3)} Hz, status 0x${status.status.toString(16)}`
+            : 'no snapshot (cycle timing unlocked or capture stopped)'
+          : 'loading…'}
+      </span>
+    </label>
+    {error && <span className="simulator-note">{error}</span>}
+    {snapshot && <div className="simulator-summary">
+      {snapshot.rms_micro_units.map((value, index) =>
+        <span key={lanes[index]}>
+          {lanes[index]}: {(value / 1e6).toFixed(3)} {laneUnit(index)}
+        </span>)}
+      {snapshot.vll_rms_micro_units.map((value, index) =>
+        <span key={pairs[index]}>
+          {pairs[index]}: {(value / 1e6).toFixed(2)} V
+        </span>)}
+      {snapshot.active_power_picowatts.map((value, index) =>
+        <span key={phases[index]}>
+          {phases[index]}: {(value / 1e12).toFixed(2)} W
+        </span>)}
+    </div>}
+  </div>
+}
+
 function DeveloperWaveformStatus({ onUnauthorized }: {
   onUnauthorized: () => void
 }) {
