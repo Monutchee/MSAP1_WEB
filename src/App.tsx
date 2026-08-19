@@ -1526,7 +1526,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             </section>
           </>
         : <AggregatePending />
-      : <section className="channel-grid">
+      : <><section className="channel-grid">
           <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
           {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel}
             values={history.map((record) => record.channels[channel.index]?.rms ?? 0)}
@@ -1534,7 +1534,27 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             footer={channel.valid
               ? <><span>mean {channel.mean_micro_units} µ</span><span>{channel.rms_count} count</span></>
               : <><span>not implemented</span><span>invalid</span></>} />)}
-        </section>}
+        </section>
+        {(readings?.attributes?.length ?? 0) > 0 &&
+          <section className="telemetry-panel">
+            <header className="temperature-panel-header">
+              <div><p className="eyebrow">Derived quantities</p><h2>Line-line, power, and power factor</h2></div>
+              <span>10/12-cycle finalized tier</span>
+            </header>
+            <div className="metric-grid developer-metrics">
+              {readings!.attributes!.map((attribute) => (
+                <article className="metric" key={attribute.key}>
+                  <span>{attribute.key}</span>
+                  <strong>{attribute.valid
+                    ? attribute.unit === 'PF'
+                      ? attribute.value.toFixed(4)
+                      : attribute.value.toFixed(attribute.unit === 'W' || attribute.unit === 'VA' ? 2 : 3)
+                    : '—'}{attribute.unit !== 'PF' && <small> {attribute.unit}</small>}</strong>
+                </article>
+              ))}
+            </div>
+          </section>}
+        </>}
     </>}
   </main>
 }

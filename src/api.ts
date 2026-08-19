@@ -100,9 +100,19 @@ export interface MeterReadings {
   result_drops: number
   frequency: FrequencyReading
   channels: MeterChannel[]
+  /** Catalog attributes beyond per-channel RMS (VLL, power, PF, ...):
+   *  base engineering units; optional so stale documents render. */
+  attributes?: MeterReadingAttribute[]
   // Present on every basic record since the MTR1-v3 format; kept
   // optional so a stale document renders gracefully.
   timing?: MeterBlockTiming
+}
+
+export interface MeterReadingAttribute {
+  key: string
+  unit: string
+  valid: boolean
+  value: number
 }
 
 /**
