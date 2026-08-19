@@ -1538,7 +1538,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         {(readings?.attributes?.length ?? 0) > 0 &&
           <section className="telemetry-panel">
             <header className="temperature-panel-header">
-              <div><p className="eyebrow">Derived quantities</p><h2>Line-line, power, and power factor</h2></div>
+              <div><p className="eyebrow">Derived quantities</p><h2>Line-line, power, phasors, and power factor</h2></div>
               <span>10/12-cycle finalized tier</span>
             </header>
             <div className="metric-grid developer-metrics">
@@ -1548,7 +1548,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
                   <strong>{attribute.valid
                     ? attribute.unit === 'PF'
                       ? attribute.value.toFixed(4)
-                      : attribute.value.toFixed(attribute.unit === 'W' || attribute.unit === 'VA' ? 2 : 3)
+                      : attribute.value.toFixed(attribute.unit === 'W' || attribute.unit === 'VA' || attribute.unit === 'var' ? 2 : 3)
                     : '—'}{attribute.unit !== 'PF' && <small> {attribute.unit}</small>}</strong>
                 </article>
               ))}
