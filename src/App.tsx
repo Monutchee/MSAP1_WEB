@@ -707,6 +707,11 @@ function DeveloperTweak({ onUnauthorized }: { onUnauthorized: () => void }) {
   </div>
 }
 
+/** Normalize any angle into the industry 0..359.999-degree convention. */
+function wrapDegrees(value: number): number {
+  return ((value % 360) + 360) % 360
+}
+
 /**
  * Controlled numeric input that tolerates transient states while typing.
  * Coercing every keystroke with Number() swallows a lone "-" or "0."
@@ -841,9 +846,9 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
               <legend>CH{channel.channel} {names[channel.channel]}</legend>
               <NumberField label={`RMS (${unit})`} min="0" step="0.001"
                 value={channel.rms} onValue={(value) => update({ rms: value })} />
-              <NumberField label="Phase (degrees)" step="0.001"
-                value={channel.phase_degrees}
-                onValue={(value) => update({ phase_degrees: value })} />
+              <NumberField label="Phase (degrees)" min="0" max="359.999"
+                step="0.001" value={wrapDegrees(channel.phase_degrees)}
+                onValue={(value) => update({ phase_degrees: wrapDegrees(value) })} />
               <NumberField label={`DC offset (${unit})`} step="0.001"
                 value={channel.dc} onValue={(value) => update({ dc: value })} />
               <NumberField label={`Noise RMS (${unit})`} min="0" step="0.001"
@@ -872,9 +877,9 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
               <NumberField label="Amplitude (% of fundamental)" min="0" max="99.9"
                 step="0.1" value={harmonic.percent}
                 onValue={(value) => update({ percent: value })} />
-              <NumberField label="Extra phase (degrees)" step="0.001"
-                value={harmonic.phase_degrees}
-                onValue={(value) => update({ phase_degrees: value })} />
+              <NumberField label="Extra phase (degrees)" min="0" max="359.999"
+                step="0.001" value={wrapDegrees(harmonic.phase_degrees)}
+                onValue={(value) => update({ phase_degrees: wrapDegrees(value) })} />
               <label className="simulator-checkbox">
                 Lanes
                 <select value={harmonic.channels}
@@ -897,7 +902,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
             })}>Add harmonic slot</button>
           </fieldset>}
         </div>
-        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC counts before they are sent to PL: RMS to a sine peak, DC as a constant offset, and noise RMS to a uniform white fluctuation so readings jitter like a real grid input. Harmonic slots ride on top: each adds order&times;frequency at a percentage of every receiving lane's fundamental, with the lane's phase offset scaled by the order (so a 3rd harmonic on a balanced set is zero-sequence, as on a real grid). The signal frequency here is the generated waveform; the declared nominal grid frequency stays under Configuration → Meter. Preserve phase keeps the waveform and packet framing continuous across a reconfiguration.</p>
+        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC counts before they are sent to PL: RMS to a sine peak, DC as a constant offset, and noise RMS to a uniform white fluctuation so readings jitter like a real grid input. Harmonic slots ride on top: each adds order&times;frequency at a percentage of every receiving lane's fundamental, with the lane's phase offset scaled by the order (so a 3rd harmonic on a balanced set is zero-sequence, as on a real grid). The signal frequency here is the generated waveform; the declared nominal grid frequency stays under Configuration → Meter. Preserve phase keeps the waveform and packet framing continuous across a reconfiguration. Phase angles use the 0&ndash;359.999&deg; convention; out-of-range or negative entries wrap onto it.</p>
         <div className="frequency-actions"><button type="submit">Apply and save</button>
           <span>{simulatorStatus}</span></div>
       </form>}
