@@ -1,6 +1,7 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import {
-  api, AdcSimulatorConfiguration, AdcSource, ApiError, DeveloperAbout, SingleCycleStatus,
+  api, AdcSimulatorConfiguration, AdcSimulatorEvent, AdcSimulatorEventCommand,
+  AdcSource, ApiError, DeveloperAbout, SingleCycleStatus, PowerQualityStatus,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
   MeterAggregate, MeterAggregateResult,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
@@ -813,6 +814,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
         <span>{sourceStatus}</span>
       </div>
       <SingleCycleReadout onUnauthorized={onUnauthorized} />
+      <PowerQualityPanel onUnauthorized={onUnauthorized} />
       {simulator && <form className="simulator-form" onSubmit={onSimulatorSubmit}>
         <div className="simulator-summary">
           <span>Frames: {formatCount(simulator.generated_frames)}</span>
@@ -996,6 +998,166 @@ function SingleCycleReadout({ onUnauthorized }: {
           </span>)
         : <span>fundamental: invalid (no frequency reference)</span>}
     </div>}
+  </div>
+}
+
+/**
+ * Urms(1/2) readout and the simulator's event trigger, side by side. This
+ * pairing IS the power-quality test: arm a sag here and the half-cycle RMS
+ * beside it moves within one half cycle, with the resulting event edge and
+ * its exact duration shown underneath.
+ */
+function PowerQualityPanel({ onUnauthorized }: {
+  onUnauthorized: () => void
+}) {
+  const [status, setStatus] = useState<PowerQualityStatus>()
+  const [sequencer, setSequencer] = useState<AdcSimulatorEvent>()
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [channels, setChannels] = useState('voltage')
+  const [scalePercent, setScalePercent] = useState(70)
+  const [durationHalfCycles, setDurationHalfCycles] = useState(20)
+  const [periodHalfCycles, setPeriodHalfCycles] = useState(200)
+  const [repeat, setRepeat] = useState(false)
+
+  const handle = useCallback((reason: unknown, fallback: string) => {
+    if (reason instanceof ApiError && reason.status === 401) {
+      onUnauthorized()
+      return
+    }
+    setError(reason instanceof Error ? reason.message : fallback)
+  }, [onUnauthorized])
+
+  const load = useCallback(async () => {
+    try {
+      const [quality, event] = await Promise.all([
+        api.meterPowerQuality(), api.adcSimulatorEvent(),
+      ])
+      setStatus(quality)
+      setSequencer(event)
+      setError('')
+    } catch (reason) {
+      handle(reason, 'Unable to read power-quality state')
+    }
+  }, [handle])
+
+  useEffect(() => {
+    let active = true
+    const refresh = async () => { if (active) await load() }
+    void refresh()
+    const timer = window.setInterval(refresh, 1000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [load])
+
+  async function command(action: AdcSimulatorEventCommand['action']) {
+    setMessage(action === 'arm' ? 'Arming…' : 'Sending…')
+    try {
+      const next = await api.commandAdcSimulatorEvent(action === 'arm'
+        ? {
+          action, channels, scale_percent: scalePercent,
+          duration_half_cycles: durationHalfCycles,
+          period_half_cycles: periodHalfCycles, repeat,
+        }
+        : { action })
+      setSequencer(next)
+      setMessage(action === 'arm'
+        ? 'Armed — the burst starts at the next half-cycle boundary.'
+        : 'Done.')
+      setError('')
+    } catch (reason) {
+      setMessage('')
+      handle(reason, 'Unable to drive the event sequencer')
+    }
+  }
+
+  const latest = status?.has_latest ? status.latest : undefined
+  const event = status?.has_event ? status.event : undefined
+  const state = sequencer?.running ? 'running'
+    : sequencer?.holding ? 'holding'
+    : sequencer?.armed ? 'armed' : 'idle'
+
+  return <div className="simulator-source-panel">
+    <label>
+      Power quality — Urms(1/2)
+      <span className="simulator-note">
+        {status
+          ? latest
+            ? `${formatCount(status.records)} records, ` +
+              `${formatCount(status.events)} event(s)` +
+              (latest.armed
+                ? ` — detection armed at ${latest.reference_volts.toFixed(1)} V`
+                : ' — detection DISARMED (set a reference voltage in settings)')
+            : 'no record yet (capture stopped or the sliding tier is priming)'
+          : 'loading…'}
+      </span>
+    </label>
+    {error && <span className="simulator-note">{error}</span>}
+    {latest && <div className="simulator-summary">
+      {latest.phases.map((phase) =>
+        <span key={phase.phase}>
+          U{phase.phase}: {phase.urms_half.toFixed(2)} V
+          {' '}(min {phase.urms_half_minimum.toFixed(2)},
+          {' '}max {phase.urms_half_maximum.toFixed(2)})
+        </span>)}
+      {latest.phases.map((phase) =>
+        <span key={`i-${phase.phase}`}>
+          I{phase.phase}: {phase.irms_half.toFixed(3)} A
+        </span>)}
+    </div>}
+    {event && <div className="simulator-summary">
+      <span>Last event: {event.event_type}</span>
+      <span>Kind: {event.kind === 'event_end' ? 'ended' : 'in progress'}</span>
+      <span>Phases: {event.affected_phases.join(', ') || 'none'}</span>
+      <span>Duration: {event.duration_ms.toFixed(1)} ms
+        {' '}({formatCount(event.duration_samples)} samples)</span>
+      <span>Residual/peak: {event.phases
+        .map((phase) => event.event_type === 'swell'
+          ? phase.urms_half_maximum.toFixed(2)
+          : phase.urms_half_minimum.toFixed(2))
+        .join(' / ')} V</span>
+    </div>}
+    <label>
+      Amplitude event
+      <span className="simulator-note">
+        {sequencer
+          ? `${state}, ${formatCount(sequencer.completed)} burst(s) completed` +
+            (sequencer.running
+              ? `, ${sequencer.remaining_half_cycles} half cycle(s) left`
+              : '') +
+            (sequencer.simulator_active ? '' : ' — simulator is not the active source')
+          : 'loading…'}
+      </span>
+    </label>
+    <div className="simulator-global-grid">
+      <label>Channels<select value={channels}
+        onChange={(event_) => setChannels(event_.target.value)}>
+        <option value="voltage">All voltages</option>
+        <option value="va">Va only</option>
+        <option value="vb">Vb only</option>
+        <option value="vc">Vc only</option>
+        <option value="va,vb">Va and Vb</option>
+        <option value="all">All channels</option>
+      </select></label>
+      <NumberField label="Amplitude (% of nominal)" min="0" max="400" step="0.1"
+        value={scalePercent} onValue={setScalePercent} />
+      <NumberField label="Duration (half cycles)" min="1" max="65535" step="1"
+        value={durationHalfCycles} onValue={setDurationHalfCycles} />
+      <NumberField label="Repeat period (half cycles)" min="0" max="65535"
+        step="1" value={periodHalfCycles} onValue={setPeriodHalfCycles} />
+      <label className="simulator-checkbox">
+        <input type="checkbox" checked={repeat}
+          onChange={(event_) => setRepeat(event_.target.checked)} />
+        Repeat until cancelled
+      </label>
+    </div>
+    <div className="simulator-source-panel">
+      <button type="button" onClick={() => void command('arm')}>Arm burst</button>
+      <button type="button" onClick={() => void command('cancel')}>Cancel</button>
+      <button type="button" onClick={() => void command('clear')}>
+        Clear counter
+      </button>
+      <span>{message}</span>
+    </div>
   </div>
 }
 

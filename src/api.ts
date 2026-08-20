@@ -271,6 +271,104 @@ export interface SingleCycleStatus {
   phasor_valid: boolean
 }
 
+/**
+ * GET /api/v1/meter/power-quality — the Urms(1/2) sliding tier (metrology
+ * M12). `latest` is the newest record of any kind (live half-cycle RMS);
+ * `event` is the newest event EDGE, kept apart so the heartbeat stream
+ * cannot erase a short sag before the page reads it.
+ */
+export interface PowerQualityPhase {
+  phase: string
+  /** Volts. */
+  urms_half: number
+  urms_half_minimum: number
+  urms_half_maximum: number
+  /** Amperes. */
+  irms_half: number
+  /** msap1::MeasurementQuality; 1 = a live measurement. */
+  quality: number
+}
+
+export interface PowerQualityRecord {
+  kind: 'periodic' | 'event_start' | 'event_end' | 'unknown'
+  event_type: 'none' | 'sag' | 'swell' | 'interruption' | 'unknown'
+  affected_phases: string[]
+  sequence: number
+  event_sequence: number
+  first_sample: number
+  last_sample: number
+  sample_count: number
+  half_cycle_updates: number
+  /** Exact event length from the PL sample counter. */
+  duration_samples: number
+  duration_ms: number
+  /** False when no reference voltage is configured: detection is off. */
+  armed: boolean
+  cycle_locked: boolean
+  synthetic_half_cycle: boolean
+  reference_volts: number
+  sag_percent: number
+  swell_percent: number
+  interruption_percent: number
+  hysteresis_percent: number
+  phases: PowerQualityPhase[]
+}
+
+export interface PowerQualityStatus {
+  running: boolean
+  records: number
+  events: number
+  has_latest: boolean
+  has_event: boolean
+  latest: PowerQualityRecord
+  event: PowerQualityRecord
+}
+
+/**
+ * GET/POST /api/v1/adc/simulator/event — the simulator's amplitude
+ * envelope. Arming is NOT a configuration change: the burst starts on the
+ * generator's own half-cycle boundary, so the programmed amplitude step
+ * is the only discontinuity the metrology engines see.
+ */
+export interface AdcSimulatorEvent {
+  action: 'arm' | 'cancel' | 'clear' | 'query'
+  /** 'voltage' | 'current' | 'all', or a comma-separated lane list. */
+  channels: string
+  /** 100 unity, 0 a full interruption, 110 a 10 % swell. */
+  scale_percent: number
+  /** Burst length in HALF cycles — Urms(1/2)'s own resolution. */
+  duration_half_cycles: number
+  period_half_cycles: number
+  repeat: boolean
+  armed: boolean
+  running: boolean
+  holding: boolean
+  completed: number
+  remaining_half_cycles: number
+  until_repeat_half_cycles: number
+  simulator_active: boolean
+}
+
+export interface AdcSimulatorEventCommand {
+  action: AdcSimulatorEvent['action']
+  channels?: string
+  scale_percent?: number
+  duration_half_cycles?: number
+  period_half_cycles?: number
+  repeat?: boolean
+}
+
+export interface PowerQualitySettings {
+  /** Declared reference Udin, volts. 0 disables event detection. */
+  reference_volts: number
+  /** Thresholds as a percent of the reference; ordered
+   *  interruption < sag < swell, with a hysteresis below the sag. */
+  sag_percent: number
+  swell_percent: number
+  interruption_percent: number
+  hysteresis_percent: number
+}
+
 export interface RmsSettings {
   window_ms: number
   remove_dc: boolean
@@ -410,6 +508,10 @@ export interface ProductSettings {
     nominal_frequency_hz: number
     rms: RmsSettings
     frequency: FrequencyConfiguration
+    // IEC 61000-4-30 Urms(1/2) event detection. reference_volts = 0 is
+    // the DISARMED state: the PL still measures half-cycle RMS but never
+    // declares a sag, swell, or interruption.
+    power_quality: PowerQualitySettings
     conversion: {
       profile_id: string
       adc_reference_volts: number
@@ -741,6 +843,15 @@ export const api = {
     request<AdcSimulatorConfiguration>('/api/v1/adc/simulator'),
   meterSingleCycle: () =>
     request<SingleCycleStatus>('/api/v1/meter/single-cycle'),
+  meterPowerQuality: () =>
+    request<PowerQualityStatus>('/api/v1/meter/power-quality'),
+  adcSimulatorEvent: () =>
+    request<AdcSimulatorEvent>('/api/v1/adc/simulator/event'),
+  commandAdcSimulatorEvent: (command: AdcSimulatorEventCommand) =>
+    request<AdcSimulatorEvent>('/api/v1/adc/simulator/event', {
+      method: 'POST',
+      body: JSON.stringify(command),
+    }),
   updateAdcSimulator: (configuration: AdcSimulatorConfiguration) =>
     request<AdcSimulatorConfiguration>('/api/v1/adc/simulator', {
       method: 'PUT',
