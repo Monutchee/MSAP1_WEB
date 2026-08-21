@@ -3,7 +3,8 @@ import {
   api, AdcSimulatorConfiguration, AdcSimulatorEvent, AdcSimulatorEventCommand,
   AdcSource, ApiError, DeveloperAbout, SingleCycleStatus, PowerQualityStatus,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
-  MeterAggregate, MeterAggregateResult,
+  MeterAggregate, MeterAggregateResult, MeterReadingAttribute,
+  MeterTenMinute, MeterTenMinuteResult,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
 } from './api'
@@ -18,15 +19,17 @@ const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
 
 /**
- * Which measurement tier the dashboard renders. Both tiers are cycle-defined:
+ * Which measurement tier the dashboard renders. The first two tiers are
+ * cycle-defined; the third is the finalized, clock-aligned ten-minute result:
  * the basic measurement block is 10 cycles at 50 Hz nominal and 12 at 60 Hz,
  * and the aggregate is exactly 15 consecutive basic blocks.
  */
-type MeterTier = 'basic' | 'aggregate'
+type MeterTier = 'basic' | 'aggregate' | 'min10'
 
 const TIER_LABELS: Record<MeterTier, string> = {
   basic: 'Basic block (10/12 cycles)',
   aggregate: 'Aggregate (150/180 cycles)',
+  min10: '10-minute aggregate',
 }
 
 function formatCount(value: number | undefined) {
@@ -234,6 +237,69 @@ function AggregatePending() {
       cycles at 50 Hz nominal, 180 cycles at 60 Hz nominal, roughly three
       seconds. A result appears as soon as 15 consecutive eligible basic blocks
       have been collected. Acquisition is not degraded while this is shown.</span>
+  </section>
+}
+
+/** The ten-minute record intentionally contains no frequency estimate. */
+function TenMinuteFrequencyCard() {
+  return <article className="channel-card frequency-card">
+    <div className="channel-title"><span>GRID</span><strong>Frequency</strong><i>separate interval</i></div>
+    <div className="channel-value">—<small> Hz</small></div>
+    <div className="sparkline empty" />
+    <p className="channel-note">Unavailable at this tier — standardized grid
+      frequency is measured over its own 10-second interval and is not
+      synthesized from the ten-minute aggregate.</p>
+  </article>
+}
+
+/** Identity and timing provenance of the displayed PL ten-minute result. */
+function TenMinuteProvenance({ aggregate }: { aggregate: MeterTenMinuteResult }) {
+  return <section className="aggregate-provenance">
+    <span>Window <strong>10 minutes</strong> (clock aligned)</span>
+    <span>Cycles <strong>{formatCount(aggregate.cycle_count)}</strong> ({aggregate.nominal_frequency_hz} Hz nominal)</span>
+    <span>Samples <strong>{formatCount(aggregate.sample_count)}</strong></span>
+    <span>First sample <strong>{formatCount(aggregate.first_sample_index)}</strong></span>
+    <span>Aggregate <strong>#{aggregate.sequence}</strong></span>
+    <span>Age <strong>{formatCount(aggregate.age_ms)} ms</strong></span>
+    <StatusPill ok={aggregate.time_quality === 'synchronized'}>
+      {`Time ${aggregate.time_quality}`}</StatusPill>
+    {aggregate.arithmetic_error &&
+      <span className="saturated"><strong>Arithmetic error — aggregation saturated</strong></span>}
+  </section>
+}
+
+/** Waiting for an aligned block is normal and must not look like a fault. */
+function TenMinutePending() {
+  return <section className="aggregate-pending">
+    <strong>Waiting for the first ten-minute aggregate</strong>
+    <span>The programmable-logic result closes on a clock-aligned ten-minute
+      boundary. After acquisition starts, the first complete result can take
+      up to ten minutes. Acquisition is not degraded while this is shown.</span>
+  </section>
+}
+
+function DerivedAttributesPanel({ attributes, interval }: {
+  attributes: MeterReadingAttribute[]
+  interval: string
+}) {
+  if (attributes.length === 0) return null
+  return <section className="telemetry-panel">
+    <header className="temperature-panel-header">
+      <div><p className="eyebrow">Derived quantities</p><h2>Line-line, power, phasors, and unbalance</h2></div>
+      <span>{interval}</span>
+    </header>
+    <div className="metric-grid developer-metrics">
+      {attributes.map((attribute) => (
+        <article className="metric" key={attribute.key}>
+          <span>{attribute.key}</span>
+          <strong>{attribute.valid
+            ? attribute.unit === 'PF'
+              ? attribute.value.toFixed(4)
+              : attribute.value.toFixed(attribute.unit === 'W' || attribute.unit === 'VA' || attribute.unit === 'var' ? 2 : 3)
+            : '—'}{attribute.unit !== 'PF' && <small> {attribute.unit}</small>}</strong>
+        </article>
+      ))}
+    </div>
   </section>
 }
 
@@ -1352,6 +1418,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   // Kept separate from the shared `error`: the 200 ms readings poll clears
   // that five times a second, which would hide a persistent aggregate fault.
   const [aggregateError, setAggregateError] = useState('')
+  const [tenMinute, setTenMinute] = useState<MeterTenMinute>()
+  const [tenMinuteHistory, setTenMinuteHistory] = useState<MeterTenMinuteResult[]>([])
+  const [tenMinuteError, setTenMinuteError] = useState('')
   const [frequencyConfiguration, setFrequencyConfiguration] =
     useState<FrequencyConfiguration>()
   const [nominalFrequency, setNominalFrequency] = useState<number>()
@@ -1563,6 +1632,53 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     }
   }, [activeView, tier, handleError])
 
+  // Ten-minute blocks are sparse, but poll often enough that a just-finalized
+  // block appears promptly. Sequence de-duplication prevents repeated points
+  // while the same immutable result is returned between block boundaries.
+  useEffect(() => {
+    if (activeView !== 'dashboard' || tier !== 'min10') return
+    let active = true
+    let pending = false
+    const load = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const next = await api.meterTenMinute()
+        if (active) {
+          setTenMinute(next)
+          if (next.available) {
+            setTenMinuteHistory((current) => {
+              const previous = current.at(-1)
+              if (previous &&
+                  previous.configuration_generation !== next.configuration_generation)
+                return [next]
+              return previous?.sequence === next.sequence
+                ? current : [...current, next].slice(-HISTORY)
+            })
+          }
+          setTenMinuteError('')
+        }
+      } catch (reason) {
+        if (!active) return
+        if (reason instanceof ApiError && reason.status === 401) {
+          handleError(reason)
+          return
+        }
+        setTenMinuteError(reason instanceof Error
+          ? reason.message
+          : 'Unable to read the ten-minute aggregate')
+      } finally { pending = false }
+    }
+    void load()
+    const timer = window.setInterval(load, 5000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      setTenMinuteHistory([])
+      setTenMinuteError('')
+    }
+  }, [activeView, tier, handleError])
+
   // Basic measurement block timing is absent while the meter still emits
   // old-format records without cycle-defined block metadata; fall back to
   // generic 10/12-cycle wording then.
@@ -1575,6 +1691,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const displayed = displayedChannels(channels)
   const aggregateResult = aggregate?.available ? aggregate : undefined
   const aggregateDisplayed = displayedChannels(aggregateResult?.channels ?? [])
+  const tenMinuteResult = tenMinute?.available ? tenMinute : undefined
+  const tenMinuteDisplayed = displayedChannels(tenMinuteResult?.channels ?? [])
 
   // A block that closed on the free-run fallback window was not cycle-defined,
   // so labelling it an N-cycle basic measurement block would misreport it.
@@ -1586,13 +1704,18 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const aggregateLabel = aggregateResult
     ? `150/180-cycle aggregate — ${aggregateResult.cycle_count} cycles (${aggregateResult.basic_block_count} × ${aggregateResult.basic_block_count > 0 ? Math.round(aggregateResult.cycle_count / aggregateResult.basic_block_count) : 0}-cycle blocks)`
     : '150/180-cycle aggregate (15 basic blocks)'
+  const tenMinuteLabel = tenMinuteResult
+    ? `10-minute aggregate — ${formatCount(tenMinuteResult.cycle_count)} cycles (${tenMinuteResult.nominal_frequency_hz} Hz nominal)`
+    : 'Clock-aligned 10-minute aggregate'
   const heroSummary = tier === 'aggregate'
     ? aggregateResult
       ? `RMS aggregated over ${aggregateResult.cycle_count} cycles — ${aggregateResult.basic_block_count} consecutive basic measurement blocks, ~3 s nominal`
       : 'RMS aggregated over 15 consecutive basic measurement blocks (150/180 cycles, ~3 s nominal)'
-    : timing
-      ? `Mean-corrected RMS over the ${timing.cycle_count}-cycle basic measurement block, calculated in programmable logic`
-      : 'Mean-corrected RMS over the basic measurement block (10/12 cycles), calculated in programmable logic'
+    : tier === 'min10'
+      ? 'RMS aggregated over the clock-aligned ten-minute interval, calculated in programmable logic'
+      : timing
+        ? `Mean-corrected RMS over the ${timing.cycle_count}-cycle basic measurement block, calculated in programmable logic`
+        : 'Mean-corrected RMS over the basic measurement block (10/12 cycles), calculated in programmable logic'
 
   return <main className="app-shell">
     <header className="topbar">
@@ -1658,16 +1781,22 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       <div className="heading-status">
         {tier === 'basic' && timing && <StatusPill ok={timing.time_quality === 'synchronized'}>
           {`Time ${timing.time_quality}`}</StatusPill>}
-        <span>{tier === 'aggregate' ? aggregateLabel : basicBlockLabel}</span>
+        <span>{tier === 'aggregate'
+          ? aggregateLabel
+          : tier === 'min10' ? tenMinuteLabel : basicBlockLabel}</span>
         <label className="tier-select">Measurement interval<select value={tier}
           onChange={(event) => setTier(event.target.value as MeterTier)}>
           <option value="basic">{TIER_LABELS.basic}</option>
           <option value="aggregate">{TIER_LABELS.aggregate}</option>
+          <option value="min10">{TIER_LABELS.min10}</option>
         </select></label>
       </div></section>
     {tier === 'aggregate' && aggregateError &&
       <div className="error-banner"><strong>Aggregate unavailable</strong>
         <span>{aggregateError}</span></div>}
+    {tier === 'min10' && tenMinuteError &&
+      <div className="error-banner"><strong>Ten-minute aggregate unavailable</strong>
+        <span>{tenMinuteError}</span></div>}
     {tier === 'aggregate'
       ? aggregateResult
         ? <>
@@ -1693,6 +1822,30 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             </section>
           </>
         : <AggregatePending />
+      : tier === 'min10'
+        ? tenMinuteResult
+          ? <>
+              <TenMinuteProvenance aggregate={tenMinuteResult} />
+              <section className="channel-grid">
+                <TenMinuteFrequencyCard />
+                {tenMinuteDisplayed.map((channel) => {
+                  const values = tenMinuteHistory
+                    .map((record) => record.channels[channel.index])
+                    .filter((entry) => entry?.valid)
+                    .map((entry) => entry!.rms)
+                  const minimum = values.length > 0 ? Math.min(...values).toFixed(3) : '—'
+                  const maximum = values.length > 0 ? Math.max(...values).toFixed(3) : '—'
+                  return <ReadingCard key={channel.index} channel={channel} values={values}
+                    healthy={!tenMinuteResult.arithmetic_error}
+                    footer={channel.valid
+                      ? <><span>min {minimum} {channel.unit}</span><span>max {maximum} {channel.unit}</span></>
+                      : <><span>no ten-minute value</span><span>invalid</span></>} />
+                })}
+              </section>
+              <DerivedAttributesPanel attributes={tenMinuteResult.attributes}
+                interval="Clock-aligned ten-minute finalized tier" />
+            </>
+          : <TenMinutePending />
       : <><section className="channel-grid">
           <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
           {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel}
@@ -1702,25 +1855,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
               ? <><span>mean {channel.mean_micro_units} µ</span><span>{channel.rms_count} count</span></>
               : <><span>not implemented</span><span>invalid</span></>} />)}
         </section>
-        {(readings?.attributes?.length ?? 0) > 0 &&
-          <section className="telemetry-panel">
-            <header className="temperature-panel-header">
-              <div><p className="eyebrow">Derived quantities</p><h2>Line-line, power, phasors, and unbalance</h2></div>
-              <span>10/12-cycle finalized tier</span>
-            </header>
-            <div className="metric-grid developer-metrics">
-              {readings!.attributes!.map((attribute) => (
-                <article className="metric" key={attribute.key}>
-                  <span>{attribute.key}</span>
-                  <strong>{attribute.valid
-                    ? attribute.unit === 'PF'
-                      ? attribute.value.toFixed(4)
-                      : attribute.value.toFixed(attribute.unit === 'W' || attribute.unit === 'VA' || attribute.unit === 'var' ? 2 : 3)
-                    : '—'}{attribute.unit !== 'PF' && <small> {attribute.unit}</small>}</strong>
-                </article>
-              ))}
-            </div>
-          </section>}
+        <DerivedAttributesPanel attributes={readings?.attributes ?? []}
+          interval="10/12-cycle finalized tier" />
         </>}
     </>}
   </main>

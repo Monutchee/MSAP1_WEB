@@ -177,6 +177,33 @@ export interface MeterAggregatePending {
  */
 export type MeterAggregate = MeterAggregateResult | MeterAggregatePending
 
+/**
+ * A finalized, clock-aligned ten-minute aggregate produced in programmable
+ * logic. Frequency is intentionally absent: its standardized product uses an
+ * independent 10-second interval rather than this aggregation tier.
+ */
+export interface MeterTenMinuteResult {
+  available: true
+  sequence: number
+  configuration_generation: number
+  sample_rate_hz: number
+  sample_count: number
+  first_sample_index: number
+  cycle_count: number
+  nominal_frequency_hz: number
+  arithmetic_error: boolean
+  time_quality: 'unsynchronized' | 'synchronized' | 'holdover'
+  age_ms: number
+  channels: MeterAggregateChannel[]
+  attributes: MeterReadingAttribute[]
+}
+
+export interface MeterTenMinutePending {
+  available: false
+}
+
+export type MeterTenMinute = MeterTenMinuteResult | MeterTenMinutePending
+
 export interface FrequencyReading {
   enabled: boolean
   valid: boolean
@@ -826,6 +853,7 @@ export const api = {
   about: () => request<SystemAbout>('/api/v1/about'),
   meterReadings: () => request<MeterReadings>('/api/v1/meter/readings'),
   meterAggregate: () => request<MeterAggregate>('/api/v1/meter/aggregate'),
+  meterTenMinute: () => request<MeterTenMinute>('/api/v1/meter/minutes-10'),
   frequencyConfiguration: () =>
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency'),
   updateFrequencyConfiguration: (configuration: FrequencyConfiguration) =>
