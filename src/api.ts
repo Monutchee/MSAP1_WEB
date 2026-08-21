@@ -100,9 +100,19 @@ export interface MeterReadings {
   result_drops: number
   frequency: FrequencyReading
   channels: MeterChannel[]
+  /** Catalog attributes beyond per-channel RMS (VLL, power, PF, ...):
+   *  base engineering units; optional so stale documents render. */
+  attributes?: MeterReadingAttribute[]
   // Present on every basic record since the MTR1-v3 format; kept
   // optional so a stale document renders gracefully.
   timing?: MeterBlockTiming
+}
+
+export interface MeterReadingAttribute {
+  key: string
+  unit: string
+  valid: boolean
+  value: number
 }
 
 /**
@@ -205,11 +215,30 @@ export interface AdcSimulatorChannel {
   channel: number
   rms: number
   phase_degrees: number
+  /** Constant offset, engineering units (volts/amps). */
+  dc: number
+  /** RMS of the uniform white fluctuation the PL adds; 0 disables. */
+  noise_rms: number
+}
+
+export interface AdcSimulatorHarmonic {
+  /** Harmonic order, 2..63. */
+  order: number
+  /** Amplitude, percent of each receiving lane's fundamental (0..99.9). */
+  percent: number
+  /** Extra phase (degrees) on top of the physical order-scaled lane rule. */
+  phase_degrees: number
+  /** Which lanes receive it. */
+  channels: 'voltage' | 'current' | 'all'
 }
 
 export interface AdcSimulatorConfiguration {
   frequency_hz: number
+  /** Keep waveform phase/framing across the configuration commit. */
+  preserve_phase: boolean
   channels: AdcSimulatorChannel[]
+  /** Up to four global harmonic slots; empty keeps a pure tone. */
+  harmonics: AdcSimulatorHarmonic[]
   active_source: 'physical' | 'simulator'
   configuration_generation: number
   active_generation: number
@@ -217,6 +246,127 @@ export interface AdcSimulatorConfiguration {
   saturation_count: number
   missed_sample_count: number
   healthy: boolean
+}
+
+/** GET /api/v1/meter/single-cycle — SCYC diagnostic snapshot (metrology M3-M5). */
+export interface SingleCycleStatus {
+  running: boolean
+  has_snapshot: boolean
+  records: number
+  sequence: number
+  cycle_sequence: number
+  sample_count: number
+  first_sample: number
+  last_sample: number
+  processing_tick: number
+  nominal_hz: number
+  flags: number
+  status: number
+  frequency_millihz: number
+  rms_micro_units: number[]
+  vll_rms_micro_units: number[]
+  active_power_picowatts: number[]
+  /** Fundamental (phasor) RMS per lane; meaningful only when phasor_valid. */
+  fundamental_rms_micro_units: number[]
+  phasor_valid: boolean
+}
+
+/**
+ * GET /api/v1/meter/power-quality — the Urms(1/2) sliding tier (metrology
+ * M12). `latest` is the newest record of any kind (live half-cycle RMS);
+ * `event` is the newest event EDGE, kept apart so the heartbeat stream
+ * cannot erase a short sag before the page reads it.
+ */
+export interface PowerQualityPhase {
+  phase: string
+  /** Volts. */
+  urms_half: number
+  urms_half_minimum: number
+  urms_half_maximum: number
+  /** Amperes. */
+  irms_half: number
+  /** msap1::MeasurementQuality; 1 = a live measurement. */
+  quality: number
+}
+
+export interface PowerQualityRecord {
+  kind: 'periodic' | 'event_start' | 'event_end' | 'unknown'
+  event_type: 'none' | 'sag' | 'swell' | 'interruption' | 'unknown'
+  affected_phases: string[]
+  sequence: number
+  event_sequence: number
+  first_sample: number
+  last_sample: number
+  sample_count: number
+  half_cycle_updates: number
+  /** Exact event length from the PL sample counter. */
+  duration_samples: number
+  duration_ms: number
+  /** False when no reference voltage is configured: detection is off. */
+  armed: boolean
+  cycle_locked: boolean
+  synthetic_half_cycle: boolean
+  reference_volts: number
+  sag_percent: number
+  swell_percent: number
+  interruption_percent: number
+  hysteresis_percent: number
+  phases: PowerQualityPhase[]
+}
+
+export interface PowerQualityStatus {
+  running: boolean
+  records: number
+  events: number
+  has_latest: boolean
+  has_event: boolean
+  latest: PowerQualityRecord
+  event: PowerQualityRecord
+}
+
+/**
+ * GET/POST /api/v1/adc/simulator/event — the simulator's amplitude
+ * envelope. Arming is NOT a configuration change: the burst starts on the
+ * generator's own half-cycle boundary, so the programmed amplitude step
+ * is the only discontinuity the metrology engines see.
+ */
+export interface AdcSimulatorEvent {
+  action: 'arm' | 'cancel' | 'clear' | 'query'
+  /** 'voltage' | 'current' | 'all', or a comma-separated lane list. */
+  channels: string
+  /** 100 unity, 0 a full interruption, 110 a 10 % swell. */
+  scale_percent: number
+  /** Burst length in HALF cycles — Urms(1/2)'s own resolution. */
+  duration_half_cycles: number
+  period_half_cycles: number
+  repeat: boolean
+  armed: boolean
+  running: boolean
+  holding: boolean
+  completed: number
+  remaining_half_cycles: number
+  until_repeat_half_cycles: number
+  simulator_active: boolean
+}
+
+export interface AdcSimulatorEventCommand {
+  action: AdcSimulatorEvent['action']
+  channels?: string
+  scale_percent?: number
+  duration_half_cycles?: number
+  period_half_cycles?: number
+  repeat?: boolean
+}
+
+export interface PowerQualitySettings {
+  /** Declared reference Udin, volts. 0 disables event detection. */
+  reference_volts: number
+  /** Thresholds as a percent of the reference; ordered
+   *  interruption < sag < swell, with a hysteresis below the sag. */
+  sag_percent: number
+  swell_percent: number
+  interruption_percent: number
+  hysteresis_percent: number
 }
 
 export interface RmsSettings {
@@ -358,6 +508,10 @@ export interface ProductSettings {
     nominal_frequency_hz: number
     rms: RmsSettings
     frequency: FrequencyConfiguration
+    // IEC 61000-4-30 Urms(1/2) event detection. reference_volts = 0 is
+    // the DISARMED state: the PL still measures half-cycle RMS but never
+    // declares a sag, swell, or interruption.
+    power_quality: PowerQualitySettings
     conversion: {
       profile_id: string
       adc_reference_volts: number
@@ -369,7 +523,9 @@ export interface ProductSettings {
     source: AdcSource['source']
     simulator: {
       frequency_hz: number
+      preserve_phase: boolean
       channels: AdcSimulatorChannel[]
+      harmonics: AdcSimulatorHarmonic[]
     }
   }
   waveform: {
@@ -685,6 +841,17 @@ export const api = {
     }),
   adcSimulator: () =>
     request<AdcSimulatorConfiguration>('/api/v1/adc/simulator'),
+  meterSingleCycle: () =>
+    request<SingleCycleStatus>('/api/v1/meter/single-cycle'),
+  meterPowerQuality: () =>
+    request<PowerQualityStatus>('/api/v1/meter/power-quality'),
+  adcSimulatorEvent: () =>
+    request<AdcSimulatorEvent>('/api/v1/adc/simulator/event'),
+  commandAdcSimulatorEvent: (command: AdcSimulatorEventCommand) =>
+    request<AdcSimulatorEvent>('/api/v1/adc/simulator/event', {
+      method: 'POST',
+      body: JSON.stringify(command),
+    }),
   updateAdcSimulator: (configuration: AdcSimulatorConfiguration) =>
     request<AdcSimulatorConfiguration>('/api/v1/adc/simulator', {
       method: 'PUT',

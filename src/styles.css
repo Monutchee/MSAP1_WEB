@@ -128,6 +128,9 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 .simulator-form { padding: 1.4rem 1.5rem; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
 .simulator-summary { display: flex; align-items: end; flex-wrap: wrap; gap: 1.25rem; margin-bottom: 1.25rem; color: var(--muted); font: .78rem var(--mono); }
 .simulator-summary label { min-width: 210px; }
+.simulator-global-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .8rem; align-items: end; margin-bottom: .9rem; }
+.simulator-checkbox { flex-direction: row !important; align-items: center; gap: .6rem !important; }
+.simulator-checkbox input { width: auto; }
 .simulator-channel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .8rem; }
 .simulator-channel-grid fieldset { display: grid; gap: .7rem; margin: 0; padding: 1rem; border: 1px solid var(--line); border-radius: 10px; }
 .simulator-channel-grid legend { padding: 0 .35rem; color: var(--green); font: .78rem var(--mono); }

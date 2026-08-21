@@ -1,6 +1,7 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import {
-  api, AdcSimulatorConfiguration, AdcSource, ApiError, DeveloperAbout,
+  api, AdcSimulatorConfiguration, AdcSimulatorEvent, AdcSimulatorEventCommand,
+  AdcSource, ApiError, DeveloperAbout, SingleCycleStatus, PowerQualityStatus,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
   MeterAggregate, MeterAggregateResult,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
@@ -707,6 +708,47 @@ function DeveloperTweak({ onUnauthorized }: { onUnauthorized: () => void }) {
   </div>
 }
 
+/** Normalize any angle into the industry 0..359.999-degree convention. */
+function wrapDegrees(value: number): number {
+  return ((value % 360) + 360) % 360
+}
+
+/**
+ * Controlled numeric input that tolerates transient states while typing.
+ * Coercing every keystroke with Number() swallows a lone "-" or "0."
+ * (Number("-") is NaN), which made negative phase angles untypable. The
+ * field keeps the raw text as a local draft and propagates only finite
+ * parses; blur reverts an unparseable draft to the last good value.
+ */
+function NumberField({ label, value, onValue, min, max, step }: {
+  label: string
+  value: number
+  onValue: (value: number) => void
+  min?: string
+  max?: string
+  step?: string
+}) {
+  const [draft, setDraft] = useState(String(value))
+  const [editing, setEditing] = useState(false)
+  useEffect(() => {
+    if (!editing) setDraft(String(value))
+  }, [value, editing])
+  return <label>{label}<input type="number" min={min} max={max} step={step}
+    value={draft}
+    onFocus={() => setEditing(true)}
+    onBlur={() => {
+      setEditing(false)
+      const parsed = Number(draft)
+      if (draft !== '' && Number.isFinite(parsed)) onValue(parsed)
+      else setDraft(String(value))
+    }}
+    onChange={(event) => {
+      setDraft(event.target.value)
+      const parsed = Number(event.target.value)
+      if (event.target.value !== '' && Number.isFinite(parsed)) onValue(parsed)
+    }} /></label>
+}
+
 function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   sourceStatus, simulatorStatus, onSourceChange, onSimulatorChange,
   onSimulatorSubmit }: {
@@ -771,15 +813,32 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
         </StatusPill>
         <span>{sourceStatus}</span>
       </div>
+      <SingleCycleReadout onUnauthorized={onUnauthorized} />
+      <PowerQualityPanel onUnauthorized={onUnauthorized} />
       {simulator && <form className="simulator-form" onSubmit={onSimulatorSubmit}>
         <div className="simulator-summary">
           <span>Frames: {formatCount(simulator.generated_frames)}</span>
           <span>Saturation: {formatCount(simulator.saturation_count)}</span>
           <span>Missed ticks: {formatCount(simulator.missed_sample_count)}</span>
         </div>
+        <div className="simulator-global-grid">
+          <NumberField label="Signal frequency (Hz)" min="0.001" max="1000"
+            step="0.001" value={simulator.frequency_hz}
+            onValue={(value) => onSimulatorChange({
+              ...simulator, frequency_hz: value,
+            })} />
+          <label className="simulator-checkbox">
+            <input type="checkbox" checked={simulator.preserve_phase}
+              onChange={(event) => onSimulatorChange({
+                ...simulator, preserve_phase: event.target.checked,
+              })} />
+            Preserve phase across apply
+          </label>
+        </div>
         <div className="simulator-channel-grid">
           {simulator.channels.filter((channel) => channel.channel < 7).map((channel) => {
             const names = ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va']
+            const unit = channel.channel < 4 ? 'A' : 'V'
             const update = (changes: Partial<typeof channel>) => onSimulatorChange({
               ...simulator,
               channels: simulator.channels.map((candidate) =>
@@ -787,15 +846,65 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
             })
             return <fieldset key={channel.channel}>
               <legend>CH{channel.channel} {names[channel.channel]}</legend>
-              <label>RMS ({channel.channel < 4 ? 'A' : 'V'})<input type="number" min="0" step="0.001"
-                value={channel.rms} onChange={(event) => update({ rms: Number(event.target.value) })} /></label>
-              <label>Phase (degrees)<input type="number" step="0.001"
-                value={channel.phase_degrees}
-                onChange={(event) => update({ phase_degrees: Number(event.target.value) })} /></label>
+              <NumberField label={`RMS (${unit})`} min="0" step="0.001"
+                value={channel.rms} onValue={(value) => update({ rms: value })} />
+              <NumberField label="Phase (degrees)" min="0" max="359.999"
+                step="0.001" value={wrapDegrees(channel.phase_degrees)}
+                onValue={(value) => update({ phase_degrees: wrapDegrees(value) })} />
+              <NumberField label={`DC offset (${unit})`} step="0.001"
+                value={channel.dc} onValue={(value) => update({ dc: value })} />
+              <NumberField label={`Noise RMS (${unit})`} min="0" step="0.001"
+                value={channel.noise_rms}
+                onValue={(value) => update({ noise_rms: value })} />
             </fieldset>
           })}
         </div>
-        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC peaks before they are sent to PL. The generator signal frequency is configured under Configuration → Meter.</p>
+        <div className="simulator-channel-grid">
+          {simulator.harmonics.map((harmonic, index) => {
+            const update = (changes: Partial<typeof harmonic>) => onSimulatorChange({
+              ...simulator,
+              harmonics: simulator.harmonics.map((candidate, position) =>
+                position === index ? { ...candidate, ...changes } : candidate),
+            })
+            return <fieldset key={index}>
+              <legend>Harmonic slot {index + 1}
+                <button type="button" onClick={() => onSimulatorChange({
+                  ...simulator,
+                  harmonics: simulator.harmonics.filter((_, position) => position !== index),
+                })}>Remove</button>
+              </legend>
+              <NumberField label="Order (2..63)" min="2" max="63" step="1"
+                value={harmonic.order}
+                onValue={(value) => update({ order: Math.round(value) })} />
+              <NumberField label="Amplitude (% of fundamental)" min="0" max="99.9"
+                step="0.1" value={harmonic.percent}
+                onValue={(value) => update({ percent: value })} />
+              <NumberField label="Extra phase (degrees)" min="0" max="359.999"
+                step="0.001" value={wrapDegrees(harmonic.phase_degrees)}
+                onValue={(value) => update({ phase_degrees: wrapDegrees(value) })} />
+              <label className="simulator-checkbox">
+                Lanes
+                <select value={harmonic.channels}
+                  onChange={(event) => update({
+                    channels: event.target.value as typeof harmonic.channels,
+                  })}>
+                  <option value="voltage">Voltage</option>
+                  <option value="current">Current</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
+            </fieldset>
+          })}
+          {simulator.harmonics.length < 4 && <fieldset>
+            <legend>Harmonics</legend>
+            <button type="button" onClick={() => onSimulatorChange({
+              ...simulator,
+              harmonics: [...simulator.harmonics,
+                { order: 3, percent: 5, phase_degrees: 0, channels: 'voltage' as const }],
+            })}>Add harmonic slot</button>
+          </fieldset>}
+        </div>
+        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC counts before they are sent to PL: RMS to a sine peak, DC as a constant offset, and noise RMS to a uniform white fluctuation so readings jitter like a real grid input. Harmonic slots ride on top: each adds order&times;frequency at a percentage of every receiving lane's fundamental, with the lane's phase offset scaled by the order (so a 3rd harmonic on a balanced set is zero-sequence, as on a real grid). The signal frequency here is the generated waveform; the declared nominal grid frequency stays under Configuration → Meter. Preserve phase keeps the waveform and packet framing continuous across a reconfiguration. Phase angles use the 0&ndash;359.999&deg; convention; out-of-range or negative entries wrap onto it. NOTE the rotation direction: standard ABC rotation is A=0&deg;, B=240&deg;, C=120&deg; (phase B lags A) &mdash; entering the ascending 0/120/240 produces REVERSE (ACB) rotation, which the unbalance readings will flag with a collapsed positive sequence.</p>
         <div className="frequency-actions"><button type="submit">Apply and save</button>
           <span>{simulatorStatus}</span></div>
       </form>}
@@ -815,6 +924,243 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
  * manual trigger lives on the Waveforms page next to the history it
  * produces; this grid is the detail behind that page's one-line health flag.
  */
+/**
+ * Live single-cycle diagnostic readout (SCYC records, metrology M3/M4),
+ * shown beside the simulator controls so a phase/amplitude edit and its
+ * measured effect sit on one screen. Values convert from the record's
+ * micro-units and picowatts to engineering units.
+ */
+function SingleCycleReadout({ onUnauthorized }: {
+  onUnauthorized: () => void
+}) {
+  const [status, setStatus] = useState<SingleCycleStatus>()
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await api.meterSingleCycle())
+      setError('')
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to read single-cycle diagnostics')
+    }
+  }, [onUnauthorized])
+
+  useEffect(() => {
+    let active = true
+    const refresh = async () => {
+      if (active) await load()
+    }
+    void refresh()
+    const timer = window.setInterval(refresh, 1000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [load])
+
+  const lanes = ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va']
+  const laneUnit = (index: number) => (index < 4 ? 'A' : 'V')
+  const pairs = ['Vab', 'Vbc', 'Vca']
+  const phases = ['PA', 'PB', 'PC']
+  const snapshot = status?.has_snapshot ? status : undefined
+
+  return <div className="simulator-source-panel">
+    <label>
+      Single-cycle readout
+      <span className="simulator-note">
+        {status
+          ? snapshot
+            ? `cycle #${status.cycle_sequence} — ${status.sample_count} samples, ` +
+              `${(status.frequency_millihz / 1000).toFixed(3)} Hz, status 0x${status.status.toString(16)}`
+            : 'no snapshot (cycle timing unlocked or capture stopped)'
+          : 'loading…'}
+      </span>
+    </label>
+    {error && <span className="simulator-note">{error}</span>}
+    {snapshot && <div className="simulator-summary">
+      {snapshot.rms_micro_units.map((value, index) =>
+        <span key={lanes[index]}>
+          {lanes[index]}: {(value / 1e6).toFixed(3)} {laneUnit(index)}
+        </span>)}
+      {snapshot.vll_rms_micro_units.map((value, index) =>
+        <span key={pairs[index]}>
+          {pairs[index]}: {(value / 1e6).toFixed(2)} V
+        </span>)}
+      {snapshot.active_power_picowatts.map((value, index) =>
+        <span key={phases[index]}>
+          {phases[index]}: {(value / 1e12).toFixed(2)} W
+        </span>)}
+      {snapshot.phasor_valid
+        ? snapshot.fundamental_rms_micro_units.map((value, index) =>
+          <span key={`fund-${lanes[index]}`}>
+            {lanes[index]} fund: {(value / 1e6).toFixed(3)} {laneUnit(index)}
+          </span>)
+        : <span>fundamental: invalid (no frequency reference)</span>}
+    </div>}
+  </div>
+}
+
+/**
+ * Urms(1/2) readout and the simulator's event trigger, side by side. This
+ * pairing IS the power-quality test: arm a sag here and the half-cycle RMS
+ * beside it moves within one half cycle, with the resulting event edge and
+ * its exact duration shown underneath.
+ */
+function PowerQualityPanel({ onUnauthorized }: {
+  onUnauthorized: () => void
+}) {
+  const [status, setStatus] = useState<PowerQualityStatus>()
+  const [sequencer, setSequencer] = useState<AdcSimulatorEvent>()
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [channels, setChannels] = useState('voltage')
+  const [scalePercent, setScalePercent] = useState(70)
+  const [durationHalfCycles, setDurationHalfCycles] = useState(20)
+  const [periodHalfCycles, setPeriodHalfCycles] = useState(200)
+  const [repeat, setRepeat] = useState(false)
+
+  const handle = useCallback((reason: unknown, fallback: string) => {
+    if (reason instanceof ApiError && reason.status === 401) {
+      onUnauthorized()
+      return
+    }
+    setError(reason instanceof Error ? reason.message : fallback)
+  }, [onUnauthorized])
+
+  const load = useCallback(async () => {
+    try {
+      const [quality, event] = await Promise.all([
+        api.meterPowerQuality(), api.adcSimulatorEvent(),
+      ])
+      setStatus(quality)
+      setSequencer(event)
+      setError('')
+    } catch (reason) {
+      handle(reason, 'Unable to read power-quality state')
+    }
+  }, [handle])
+
+  useEffect(() => {
+    let active = true
+    const refresh = async () => { if (active) await load() }
+    void refresh()
+    const timer = window.setInterval(refresh, 1000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [load])
+
+  async function command(action: AdcSimulatorEventCommand['action']) {
+    setMessage(action === 'arm' ? 'Arming…' : 'Sending…')
+    try {
+      const next = await api.commandAdcSimulatorEvent(action === 'arm'
+        ? {
+          action, channels, scale_percent: scalePercent,
+          duration_half_cycles: durationHalfCycles,
+          period_half_cycles: periodHalfCycles, repeat,
+        }
+        : { action })
+      setSequencer(next)
+      setMessage(action === 'arm'
+        ? 'Armed — the burst starts at the next half-cycle boundary.'
+        : 'Done.')
+      setError('')
+    } catch (reason) {
+      setMessage('')
+      handle(reason, 'Unable to drive the event sequencer')
+    }
+  }
+
+  const latest = status?.has_latest ? status.latest : undefined
+  const event = status?.has_event ? status.event : undefined
+  const state = sequencer?.running ? 'running'
+    : sequencer?.holding ? 'holding'
+    : sequencer?.armed ? 'armed' : 'idle'
+
+  return <div className="simulator-source-panel">
+    <label>
+      Power quality — Urms(1/2)
+      <span className="simulator-note">
+        {status
+          ? latest
+            ? `${formatCount(status.records)} records, ` +
+              `${formatCount(status.events)} event(s)` +
+              (latest.armed
+                ? ` — detection armed at ${latest.reference_volts.toFixed(1)} V`
+                : ' — detection DISARMED (set a reference voltage in settings)')
+            : 'no record yet (capture stopped or the sliding tier is priming)'
+          : 'loading…'}
+      </span>
+    </label>
+    {error && <span className="simulator-note">{error}</span>}
+    {latest && <div className="simulator-summary">
+      {latest.phases.map((phase) =>
+        <span key={phase.phase}>
+          U{phase.phase}: {phase.urms_half.toFixed(2)} V
+          {' '}(min {phase.urms_half_minimum.toFixed(2)},
+          {' '}max {phase.urms_half_maximum.toFixed(2)})
+        </span>)}
+      {latest.phases.map((phase) =>
+        <span key={`i-${phase.phase}`}>
+          I{phase.phase}: {phase.irms_half.toFixed(3)} A
+        </span>)}
+    </div>}
+    {event && <div className="simulator-summary">
+      <span>Last event: {event.event_type}</span>
+      <span>Kind: {event.kind === 'event_end' ? 'ended' : 'in progress'}</span>
+      <span>Phases: {event.affected_phases.join(', ') || 'none'}</span>
+      <span>Duration: {event.duration_ms.toFixed(1)} ms
+        {' '}({formatCount(event.duration_samples)} samples)</span>
+      <span>Residual/peak: {event.phases
+        .map((phase) => event.event_type === 'swell'
+          ? phase.urms_half_maximum.toFixed(2)
+          : phase.urms_half_minimum.toFixed(2))
+        .join(' / ')} V</span>
+    </div>}
+    <label>
+      Amplitude event
+      <span className="simulator-note">
+        {sequencer
+          ? `${state}, ${formatCount(sequencer.completed)} burst(s) completed` +
+            (sequencer.running
+              ? `, ${sequencer.remaining_half_cycles} half cycle(s) left`
+              : '') +
+            (sequencer.simulator_active ? '' : ' — simulator is not the active source')
+          : 'loading…'}
+      </span>
+    </label>
+    <div className="simulator-global-grid">
+      <label>Channels<select value={channels}
+        onChange={(event_) => setChannels(event_.target.value)}>
+        <option value="voltage">All voltages</option>
+        <option value="va">Va only</option>
+        <option value="vb">Vb only</option>
+        <option value="vc">Vc only</option>
+        <option value="va,vb">Va and Vb</option>
+        <option value="all">All channels</option>
+      </select></label>
+      <NumberField label="Amplitude (% of nominal)" min="0" max="400" step="0.1"
+        value={scalePercent} onValue={setScalePercent} />
+      <NumberField label="Duration (half cycles)" min="1" max="65535" step="1"
+        value={durationHalfCycles} onValue={setDurationHalfCycles} />
+      <NumberField label="Repeat period (half cycles)" min="0" max="65535"
+        step="1" value={periodHalfCycles} onValue={setPeriodHalfCycles} />
+      <label className="simulator-checkbox">
+        <input type="checkbox" checked={repeat}
+          onChange={(event_) => setRepeat(event_.target.checked)} />
+        Repeat until cancelled
+      </label>
+    </div>
+    <div className="simulator-source-panel">
+      <button type="button" onClick={() => void command('arm')}>Arm burst</button>
+      <button type="button" onClick={() => void command('cancel')}>Cancel</button>
+      <button type="button" onClick={() => void command('clear')}>
+        Clear counter
+      </button>
+      <span>{message}</span>
+    </div>
+  </div>
+}
+
 function DeveloperWaveformStatus({ onUnauthorized }: {
   onUnauthorized: () => void
 }) {
@@ -1045,7 +1391,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           setSimulator({
             ...configuration,
             frequency_hz: activeSettings.settings.adc.simulator.frequency_hz,
+            preserve_phase: activeSettings.settings.adc.simulator.preserve_phase,
             channels: activeSettings.settings.adc.simulator.channels,
+            harmonics: activeSettings.settings.adc.simulator.harmonics,
           })
           setFrequencyConfiguration(activeSettings.settings.metering.frequency)
           setNominalFrequency(activeSettings.settings.metering.nominal_frequency_hz)
@@ -1128,7 +1476,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       await saveSettings((settings) => {
         settings.adc.simulator = {
           frequency_hz: simulator.frequency_hz,
+          preserve_phase: simulator.preserve_phase,
           channels: simulator.channels,
+          harmonics: simulator.harmonics,
         }
       })
       setSimulatorStatus('Applied and saved.')
@@ -1343,7 +1693,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             </section>
           </>
         : <AggregatePending />
-      : <section className="channel-grid">
+      : <><section className="channel-grid">
           <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
           {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel}
             values={history.map((record) => record.channels[channel.index]?.rms ?? 0)}
@@ -1351,7 +1701,27 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             footer={channel.valid
               ? <><span>mean {channel.mean_micro_units} µ</span><span>{channel.rms_count} count</span></>
               : <><span>not implemented</span><span>invalid</span></>} />)}
-        </section>}
+        </section>
+        {(readings?.attributes?.length ?? 0) > 0 &&
+          <section className="telemetry-panel">
+            <header className="temperature-panel-header">
+              <div><p className="eyebrow">Derived quantities</p><h2>Line-line, power, phasors, and unbalance</h2></div>
+              <span>10/12-cycle finalized tier</span>
+            </header>
+            <div className="metric-grid developer-metrics">
+              {readings!.attributes!.map((attribute) => (
+                <article className="metric" key={attribute.key}>
+                  <span>{attribute.key}</span>
+                  <strong>{attribute.valid
+                    ? attribute.unit === 'PF'
+                      ? attribute.value.toFixed(4)
+                      : attribute.value.toFixed(attribute.unit === 'W' || attribute.unit === 'VA' || attribute.unit === 'var' ? 2 : 3)
+                    : '—'}{attribute.unit !== 'PF' && <small> {attribute.unit}</small>}</strong>
+                </article>
+              ))}
+            </div>
+          </section>}
+        </>}
     </>}
   </main>
 }
