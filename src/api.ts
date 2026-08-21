@@ -204,6 +204,11 @@ export interface MeterTenMinutePending {
 
 export type MeterTenMinute = MeterTenMinuteResult | MeterTenMinutePending
 
+/** M14 uses the same public finalized-interval shape as the ten-minute tier. */
+export type MeterTwoHourResult = MeterTenMinuteResult
+export type MeterTwoHourPending = MeterTenMinutePending
+export type MeterTwoHour = MeterTwoHourResult | MeterTwoHourPending
+
 export interface FrequencyReading {
   enabled: boolean
   valid: boolean
@@ -854,6 +859,7 @@ export const api = {
   meterReadings: () => request<MeterReadings>('/api/v1/meter/readings'),
   meterAggregate: () => request<MeterAggregate>('/api/v1/meter/aggregate'),
   meterTenMinute: () => request<MeterTenMinute>('/api/v1/meter/minutes-10'),
+  meterTwoHour: () => request<MeterTwoHour>('/api/v1/meter/hours-2'),
   frequencyConfiguration: () =>
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency'),
   updateFrequencyConfiguration: (configuration: FrequencyConfiguration) =>
