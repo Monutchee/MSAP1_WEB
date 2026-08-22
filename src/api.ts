@@ -196,6 +196,19 @@ export interface MeterTenMinuteResult {
   age_ms: number
   channels: MeterAggregateChannel[]
   attributes: MeterReadingAttribute[]
+  /** True only for the operational, still-open interval preview. */
+  open_interval: boolean
+  /** Open previews are useful for visibility but are not normative results. */
+  non_normative: boolean
+  source_interval_count: number
+  first_source_sequence: number
+  last_source_sequence: number
+  expected_end_sample_index?: number
+  overshoot_samples?: number
+  elapsed_milliseconds: number
+  time_aligned: boolean
+  contaminated: boolean
+  boundary_valid: boolean
 }
 
 export interface MeterTenMinutePending {
@@ -860,6 +873,8 @@ export const api = {
   meterAggregate: () => request<MeterAggregate>('/api/v1/meter/aggregate'),
   meterTenMinute: () => request<MeterTenMinute>('/api/v1/meter/minutes-10'),
   meterTwoHour: () => request<MeterTwoHour>('/api/v1/meter/hours-2'),
+  meterTenMinuteLive: () => request<MeterTenMinute>('/api/v1/meter/minutes-10/live'),
+  meterTwoHourLive: () => request<MeterTwoHour>('/api/v1/meter/hours-2/live'),
   frequencyConfiguration: () =>
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency'),
   updateFrequencyConfiguration: (configuration: FrequencyConfiguration) =>
