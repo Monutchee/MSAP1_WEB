@@ -177,6 +177,51 @@ export interface MeterAggregatePending {
  */
 export type MeterAggregate = MeterAggregateResult | MeterAggregatePending
 
+/**
+ * A finalized, clock-aligned ten-minute aggregate produced in programmable
+ * logic. Frequency is intentionally absent: its standardized product uses an
+ * independent 10-second interval rather than this aggregation tier.
+ */
+export interface MeterTenMinuteResult {
+  available: true
+  sequence: number
+  configuration_generation: number
+  sample_rate_hz: number
+  sample_count: number
+  first_sample_index: number
+  cycle_count: number
+  nominal_frequency_hz: number
+  arithmetic_error: boolean
+  time_quality: 'unsynchronized' | 'synchronized' | 'holdover'
+  age_ms: number
+  channels: MeterAggregateChannel[]
+  attributes: MeterReadingAttribute[]
+  /** True only for the operational, still-open interval preview. */
+  open_interval: boolean
+  /** Open previews are useful for visibility but are not normative results. */
+  non_normative: boolean
+  source_interval_count: number
+  first_source_sequence: number
+  last_source_sequence: number
+  expected_end_sample_index?: number
+  overshoot_samples?: number
+  elapsed_milliseconds: number
+  time_aligned: boolean
+  contaminated: boolean
+  boundary_valid: boolean
+}
+
+export interface MeterTenMinutePending {
+  available: false
+}
+
+export type MeterTenMinute = MeterTenMinuteResult | MeterTenMinutePending
+
+/** M14 uses the same public finalized-interval shape as the ten-minute tier. */
+export type MeterTwoHourResult = MeterTenMinuteResult
+export type MeterTwoHourPending = MeterTenMinutePending
+export type MeterTwoHour = MeterTwoHourResult | MeterTwoHourPending
+
 export interface FrequencyReading {
   enabled: boolean
   valid: boolean
@@ -826,6 +871,10 @@ export const api = {
   about: () => request<SystemAbout>('/api/v1/about'),
   meterReadings: () => request<MeterReadings>('/api/v1/meter/readings'),
   meterAggregate: () => request<MeterAggregate>('/api/v1/meter/aggregate'),
+  meterTenMinute: () => request<MeterTenMinute>('/api/v1/meter/minutes-10'),
+  meterTwoHour: () => request<MeterTwoHour>('/api/v1/meter/hours-2'),
+  meterTenMinuteLive: () => request<MeterTenMinute>('/api/v1/meter/minutes-10/live'),
+  meterTwoHourLive: () => request<MeterTwoHour>('/api/v1/meter/hours-2/live'),
   frequencyConfiguration: () =>
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency'),
   updateFrequencyConfiguration: (configuration: FrequencyConfiguration) =>
