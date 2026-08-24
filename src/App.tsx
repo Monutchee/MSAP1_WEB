@@ -81,8 +81,13 @@ function Sparkline({ values, healthy }: { values: number[]; healthy: boolean }) 
   </svg>
 }
 
-function StatusPill({ ok, children }: { ok: boolean; children: string }) {
-  return <span className={`status-pill ${ok ? 'ok' : 'bad'}`}><i />{children}</span>
+function StatusPill({ ok, neutral = false, children }: {
+  ok: boolean
+  neutral?: boolean
+  children: string
+}) {
+  const state = neutral ? 'neutral' : ok ? 'ok' : 'bad'
+  return <span className={`status-pill ${state}`}><i />{children}</span>
 }
 
 function Login({ onLogin }: { onLogin: (session: Session) => void }) {
@@ -457,6 +462,7 @@ function AboutPage({ onUnauthorized }: { onUnauthorized: () => void }) {
 
 /** Per-component pipeline pills, moved off the dashboard to keep it lean. */
 function PipelineHealthPanel({ health }: { health: SystemHealth | undefined }) {
+  const aggregation = health?.aggregation
   return <section className="health-panel">
     <div><p className="eyebrow">Pipeline health</p><h2>Meter components</h2></div>
     <div className="health-details">
@@ -473,12 +479,22 @@ function PipelineHealthPanel({ health }: { health: SystemHealth | undefined }) {
         <StatusPill ok={!(health?.acquisition.health_probe_pending ?? true)}>
           ADC health audit
         </StatusPill>
+        {aggregation?.available
+          ? <StatusPill ok={aggregation.healthy}>
+              {`RPU aggregation (${aggregation.authoritative ? 'authoritative' : 'shadow'})`}
+            </StatusPill>
+          : <StatusPill ok={false} neutral>RPU aggregation unavailable</StatusPill>}
         <StatusPill ok={health?.frequency_arithmetic_ok ?? false}>Frequency arithmetic</StatusPill>
         <StatusPill ok={health?.nginx_running ?? false}>nginx</StatusPill>
       </div>
       {(health?.adc.degraded_reasons?.length ?? 0) > 0 &&
         <ul className="health-reasons" aria-label="ADC degradation reasons">
           {health?.adc.degraded_reasons?.map((reason) =>
+            <li key={reason.code}><code>{reason.code}</code>{reason.message}</li>)}
+        </ul>}
+      {(aggregation?.degraded_reasons?.length ?? 0) > 0 &&
+        <ul className="health-reasons" aria-label="RPU aggregation degradation reasons">
+          {aggregation?.degraded_reasons?.map((reason) =>
             <li key={reason.code}><code>{reason.code}</code>{reason.message}</li>)}
         </ul>}
     </div>

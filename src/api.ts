@@ -57,10 +57,47 @@ export interface AdcHealth {
   degraded_reasons: HealthReason[]
 }
 
+/** Cached R5C1 aggregation-offload health, independent from R5C0 ADC health. */
+export interface AggregationHealth {
+  available: boolean
+  healthy: boolean
+  authoritative: boolean
+  transport_available: boolean
+  transport_initialized: boolean
+  input_healthy: boolean
+  engine_ready: boolean
+  output_ready: boolean
+  output_active: boolean
+  probe_pending: boolean
+  probe_failures: number
+  cache_age_ms: number
+  rpmsg_device: string
+  health_flags: number
+  frames_received: number
+  frames_valid: number
+  frames_invalid: number
+  crc_errors: number
+  format_errors: number
+  sequence_gaps: number
+  ring_overflows: number
+  fifo_errors: number
+  length_errors: number
+  records_queued: number
+  records_emitted: number
+  output_errors: number
+  output_drops: number
+  basic_completed: number
+  aggregate_completed: number
+  ten_minute_completed: number
+  two_hour_completed: number
+  degraded_reasons: HealthReason[]
+}
+
 export interface SystemHealth {
   healthy: boolean
   acquisition: AcquisitionHealth
   adc: AdcHealth
+  aggregation: AggregationHealth
   frequency_arithmetic_ok: boolean
   backend_running: boolean
   nginx_running: boolean
