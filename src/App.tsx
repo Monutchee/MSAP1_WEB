@@ -238,6 +238,29 @@ function AggregateProvenance({ aggregate }: { aggregate: MeterAggregateResult })
 }
 
 /**
+ * Identity and sample-range provenance for the authoritative Basic result.
+ * Keeping this beside the aggregate provenance makes it possible to correlate
+ * a displayed 10/12-cycle block with R5C1 input and acquisition diagnostics.
+ */
+function BasicProvenance({ readings }: { readings: MeterReadings | undefined }) {
+  const timing = readings?.timing
+  if (!readings || !timing) return null
+
+  const lastSample = timing.sample_count > 0
+    ? timing.first_sample_index + timing.sample_count - 1
+    : timing.first_sample_index
+
+  return <section className="aggregate-provenance">
+    <span>Window <strong>{timing.cycle_count} cycles</strong> ({timing.nominal_frequency_hz} Hz nominal)</span>
+    <span>Basic <strong>#{timing.block_sequence}</strong></span>
+    <span>Meter record <strong>#{readings.sequence}</strong></span>
+    <span>Samples <strong>{formatCount(timing.first_sample_index)}..{formatCount(lastSample)}</strong></span>
+    <StatusPill ok={timing.time_quality === 'synchronized'}>
+      {`Time ${timing.time_quality}`}</StatusPill>
+  </section>
+}
+
+/**
  * Not an error: the first aggregate simply needs 15 consecutive eligible basic
  * measurement blocks, which is roughly three seconds of acquisition.
  */
@@ -2097,7 +2120,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
                 : isTwoHourTier
                   ? 'The programmable-logic result requires 12 complete, consecutive ten-minute intervals, so the first production result takes two hours.'
                   : 'The programmable-logic result closes on a clock-aligned ten-minute boundary. After acquisition starts, the first complete result can take up to ten minutes.'} />
-      : <><section className="channel-grid">
+      : <><BasicProvenance readings={readings} />
+        <section className="channel-grid">
           <FrequencyCard readings={readings} history={history} healthy={health?.frequency_arithmetic_ok ?? false} />
           {displayed.map((channel) => <ReadingCard key={channel.index} channel={channel}
             values={history.map((record) => record.channels[channel.index]?.rms ?? 0)}
