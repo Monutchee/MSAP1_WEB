@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from '
 import {
   api, AdcSimulatorConfiguration, AdcSimulatorEvent, AdcSimulatorEventCommand,
   AdcSource, ApiError, DeveloperAbout, SingleCycleStatus, PowerQualityStatus,
+  HarmonicSpectrum,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
   MeterAggregate, MeterAggregateResult, MeterReadingAttribute,
   MeterTenMinute, MeterTenMinuteResult,
@@ -887,7 +888,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   onSimulatorSubmit: (event: FormEvent) => void
 }) {
   const [activeTab, setActiveTab] =
-    useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'waveform' | 'about' | 'logs'>('overview')
+    useState<'overview' | 'tweak' | 'simulator' | 'harmonics' | 'recorder' | 'waveform' | 'about' | 'logs'>('overview')
   return <section className="developer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
@@ -903,6 +904,9 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       <button className={activeTab === 'simulator' ? 'active' : ''} type="button"
         aria-current={activeTab === 'simulator' ? 'page' : undefined}
         onClick={() => setActiveTab('simulator')}>ADC Simulator</button>
+      <button className={activeTab === 'harmonics' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'harmonics' ? 'page' : undefined}
+        onClick={() => setActiveTab('harmonics')}>Harmonics</button>
       <button className={activeTab === 'recorder' ? 'active' : ''} type="button"
         aria-current={activeTab === 'recorder' ? 'page' : undefined}
         onClick={() => setActiveTab('recorder')}>Data recorder</button>
@@ -920,6 +924,8 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       ? <DeveloperOverview onUnauthorized={onUnauthorized} health={health} readings={readings} />
       : activeTab === 'tweak'
         ? <DeveloperTweak onUnauthorized={onUnauthorized} />
+      : activeTab === 'harmonics'
+        ? <HarmonicSpectrumPanel onUnauthorized={onUnauthorized} />
       : activeTab === 'simulator' ? <>
       <section className="section-heading configuration-heading">
         <div><p className="eyebrow">ADC input</p><h2>Raw sample simulator</h2></div>
@@ -996,9 +1002,10 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
                   harmonics: simulator.harmonics.filter((_, position) => position !== index),
                 })}>Remove</button>
               </legend>
-              <NumberField label="Order (2..63)" min="2" max="63" step="1"
+              <NumberField label="Frequency ratio (>1, <128)" min="1.000015"
+                max="127.999985" step="0.0001"
                 value={harmonic.order}
-                onValue={(value) => update({ order: Math.round(value) })} />
+                onValue={(value) => update({ order: value })} />
               <NumberField label="Amplitude (% of fundamental)" min="0" max="99.9"
                 step="0.1" value={harmonic.percent}
                 onValue={(value) => update({ percent: value })} />
@@ -1027,7 +1034,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
             })}>Add harmonic slot</button>
           </fieldset>}
         </div>
-        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC counts before they are sent to PL: RMS to a sine peak, DC as a constant offset, and noise RMS to a uniform white fluctuation so readings jitter like a real grid input. Harmonic slots ride on top: each adds order&times;frequency at a percentage of every receiving lane's fundamental, with the lane's phase offset scaled by the order (so a 3rd harmonic on a balanced set is zero-sequence, as on a real grid). The signal frequency here is the generated waveform; the declared nominal grid frequency stays under Configuration → Meter. Preserve phase keeps the waveform and packet framing continuous across a reconfiguration. Phase angles use the 0&ndash;359.999&deg; convention; out-of-range or negative entries wrap onto it. NOTE the rotation direction: standard ABC rotation is A=0&deg;, B=240&deg;, C=120&deg; (phase B lags A) &mdash; entering the ascending 0/120/240 produces REVERSE (ACB) rotation, which the unbalance readings will flag with a collapsed positive sequence.</p>
+        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC counts before they are sent to PL: RMS to a sine peak, DC as a constant offset, and noise RMS to a uniform white fluctuation so readings jitter like a real grid input. Tone slots ride on top: integer ratios inject harmonics and fractional ratios inject interharmonics, each at a percentage of every receiving lane's fundamental. The lane's phase offset is scaled by the ratio (so a 3rd harmonic on a balanced set is zero-sequence, as on a real grid). The signal frequency here is the generated waveform; the declared nominal grid frequency stays under Configuration → Meter. Preserve phase keeps the waveform and packet framing continuous across a reconfiguration. Phase angles use the 0&ndash;359.999&deg; convention; out-of-range or negative entries wrap onto it. NOTE the rotation direction: standard ABC rotation is A=0&deg;, B=240&deg;, C=120&deg; (phase B lags A) &mdash; entering the ascending 0/120/240 produces REVERSE (ACB) rotation, which the unbalance readings will flag with a collapsed positive sequence.</p>
         <div className="frequency-actions"><button type="submit">Apply and save</button>
           <span>{simulatorStatus}</span></div>
       </form>}
@@ -1040,6 +1047,92 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
         ? <DeveloperAboutPage onUnauthorized={onUnauthorized} />
         : <DeveloperLogs onUnauthorized={onUnauthorized} />}
   </section>
+}
+
+/** Latest-only M16 spectrum. The API withholds partial channel/chunk families. */
+function HarmonicSpectrumPanel({ onUnauthorized }: {
+  onUnauthorized: () => void
+}) {
+  const [spectrum, setSpectrum] = useState<HarmonicSpectrum>()
+  const [selectedChannel, setSelectedChannel] = useState(6)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      setSpectrum(await api.meterHarmonics())
+      setError('')
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setError(reason instanceof Error ? reason.message : 'Unable to read harmonics')
+    }
+  }, [onUnauthorized])
+
+  useEffect(() => {
+    let active = true
+    const refresh = async () => { if (active) await load() }
+    void refresh()
+    const timer = window.setInterval(refresh, 2000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [load])
+
+  const channel = spectrum?.channels.find((candidate) =>
+    candidate.channel === selectedChannel)
+  const orders = channel?.orders.filter((point) =>
+    point.order <= (spectrum?.qualified_max_order ?? 0)) ?? []
+  const maximum = Math.max(1, ...orders
+    .filter((point) => point.magnitude_valid)
+    .map((point) => point.magnitude))
+
+  return <>
+    <section className="section-heading configuration-heading">
+      <div><p className="eyebrow">Metrology M16</p><h2>Harmonic subgroup spectrum</h2>
+        <p>Orders 1–127, one atomic 10/12-cycle family across seven channels.</p></div>
+      <span>{spectrum?.available ? `Family ${formatCount(spectrum.sequence)}` : 'Waiting for a complete family'}</span>
+    </section>
+    {error && <div className="error-banner"><strong>Harmonics unavailable</strong>
+      <span>{error}</span></div>}
+    <div className="harmonic-summary">
+      <StatusPill ok={spectrum?.grid_locked ?? false}>Grid lock</StatusPill>
+      <StatusPill ok={spectrum?.conditioner_valid ?? false}>Conditioner</StatusPill>
+      <StatusPill ok={spectrum?.fft_valid ?? false}>FFT</StatusPill>
+      <span>Chunks {formatCount(spectrum?.records)}</span>
+      <span>Families {formatCount(spectrum?.families)}</span>
+      <span>Incomplete {formatCount(spectrum?.incomplete_families)}</span>
+      {spectrum?.available && <>
+        <span>{(spectrum.measured_frequency_millihz / 1000).toFixed(3)} Hz</span>
+        <span>{spectrum.cycle_count} cycles / {formatCount(spectrum.sample_count)} samples</span>
+        <span>Qualified through order {spectrum.qualified_max_order}</span>
+      </>}
+    </div>
+    {!spectrum?.available
+      ? <div className="waveform-config-placeholder"><strong>No complete spectrum yet</strong>
+        <span>The previous spectrum remains hidden until all 42 records for one family agree.</span></div>
+      : <div className="harmonic-panel">
+        <label>Channel<select value={selectedChannel}
+          onChange={(event) => setSelectedChannel(Number(event.target.value))}>
+          {spectrum.channels.map((candidate) => <option key={candidate.channel}
+            value={candidate.channel}>CH{candidate.channel} {candidate.name}</option>)}
+        </select></label>
+        <div className="harmonic-table" role="table" aria-label={`${channel?.name ?? ''} harmonic spectrum`}>
+          <div className="harmonic-row harmonic-header" role="row">
+            <span>Order</span><span>Magnitude</span><span>Spectrum</span><span>Angle</span>
+          </div>
+          {orders.map((point) => <div className="harmonic-row" role="row" key={point.order}>
+            <strong>{point.order}</strong>
+            <span>{point.magnitude_valid
+              ? `${point.magnitude.toPrecision(6)} ${channel?.unit ?? ''}`
+              : 'Unavailable'}</span>
+            <i><b style={{ width: point.magnitude_valid
+              ? `${Math.max(.25, point.magnitude / maximum * 100)}%` : '0%' }} /></i>
+            <span>{point.angle_valid ? `${point.angle_degrees.toFixed(3)}°` : '—'}</span>
+          </div>)}
+        </div>
+        <p className="simulator-note">Magnitudes are three-bin IEC-style subgroups. Angles use Va as the global reference: angle(Xh) − h·angle(Va1), wrapped to 0–360°. Raw FFT bins are diagnostic-only and are not exposed here.</p>
+      </div>}
+  </>
 }
 
 /**

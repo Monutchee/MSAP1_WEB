@@ -304,7 +304,7 @@ export interface AdcSimulatorChannel {
 }
 
 export interface AdcSimulatorHarmonic {
-  /** Harmonic order, 2..63. */
+  /** Frequency ratio, >1 and <128; fractional values are interharmonics. */
   order: number
   /** Amplitude, percent of each receiving lane's fundamental (0..99.9). */
   percent: number
@@ -319,7 +319,7 @@ export interface AdcSimulatorConfiguration {
   /** Keep waveform phase/framing across the configuration commit. */
   preserve_phase: boolean
   channels: AdcSimulatorChannel[]
-  /** Up to four global harmonic slots; empty keeps a pure tone. */
+  /** Up to four global harmonic/interharmonic slots; empty keeps a pure tone. */
   harmonics: AdcSimulatorHarmonic[]
   active_source: 'physical' | 'simulator'
   configuration_generation: number
@@ -404,6 +404,57 @@ export interface PowerQualityStatus {
   has_event: boolean
   latest: PowerQualityRecord
   event: PowerQualityRecord
+}
+
+/** One order in the M16 IEC-style subgroup spectrum. */
+export interface HarmonicOrder {
+  order: number
+  magnitude_micro_units: number
+  /** Engineering units: amperes for current channels, volts for voltage. */
+  magnitude: number
+  magnitude_valid: boolean
+  angle_millidegrees: number
+  /** Relative to order * Va fundamental angle, wrapped onto [0, 360). */
+  angle_degrees: number
+  angle_valid: boolean
+}
+
+export interface HarmonicChannel {
+  channel: number
+  name: string
+  unit: 'A' | 'V'
+  orders: HarmonicOrder[]
+}
+
+/** GET /api/v1/meter/harmonics — latest complete 42-record M16 family. */
+export interface HarmonicSpectrum {
+  running: boolean
+  available: boolean
+  records: number
+  families: number
+  incomplete_families: number
+  sequence: number
+  configuration_generation: number
+  sample_rate_hz: number
+  sample_count: number
+  first_sample: number
+  measured_frequency_millihz: number
+  qualified_max_order: number
+  nominal_frequency_hz: number
+  cycle_count: number
+  filter_profile_id: number
+  valid_mask: number
+  status: number
+  emit_drops: number
+  result_drops: number
+  arithmetic_error: boolean
+  grid_locked: boolean
+  conditioner_valid: boolean
+  fft_valid: boolean
+  full_range: boolean
+  first_after_discontinuity: boolean
+  rate_limited: boolean
+  channels: HarmonicChannel[]
 }
 
 /**
@@ -931,6 +982,8 @@ export const api = {
     request<SingleCycleStatus>('/api/v1/meter/single-cycle'),
   meterPowerQuality: () =>
     request<PowerQualityStatus>('/api/v1/meter/power-quality'),
+  meterHarmonics: () =>
+    request<HarmonicSpectrum>('/api/v1/meter/harmonics'),
   adcSimulatorEvent: () =>
     request<AdcSimulatorEvent>('/api/v1/adc/simulator/event'),
   commandAdcSimulatorEvent: (command: AdcSimulatorEventCommand) =>
