@@ -78,6 +78,7 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 .status-pill i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 12px currentColor; }
 .status-pill.ok { color: var(--green); }
 .status-pill.bad { color: var(--red); }
+.status-pill.neutral { color: var(--muted); }
 .error-banner { display: flex; gap: 1rem; margin-bottom: 1.5rem; padding: .9rem 1rem; border: 1px solid rgba(255,111,106,.3); border-radius: 10px; color: #ffd1cf; background: rgba(255,111,106,.08); font-size: .82rem; }
 .error-banner span { color: #ba8988; }
 .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--panel); }
