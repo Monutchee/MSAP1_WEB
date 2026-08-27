@@ -137,6 +137,16 @@ function summaryOrderStep(range: HarmonicOrderRange) {
     Math.max(1, rangeOrderCount(range) - 1)
 }
 
+function combinedChannelSpacing(orderStep: number, channelCount: number) {
+  if (channelCount <= 1) return 0
+  // Keep each order's channels visually bound as one cluster. The capped
+  // cluster width leaves most of the order step empty at closer zoom levels,
+  // while the proportional limit prevents adjacent clusters touching in the
+  // all-orders overview.
+  const clusterWidth = Math.min(8, orderStep * 0.45)
+  return clusterWidth / (channelCount - 1)
+}
+
 function summaryOrderX(order: number, range: HarmonicOrderRange) {
   if (range.first === range.last) return SUMMARY_WIDTH / 2
   return SUMMARY_X_PADDING + ((order - range.first) / (range.last - range.first)) *
@@ -467,12 +477,12 @@ function HarmonicOverview({ columns, channelByIndex, ordersByChannel, qualifiedM
             {series.flatMap(({ column, channel, values }, channelIndex) =>
               values.map(({ order, point, percentage, value }) => {
                 if (!point || value === undefined || value <= 0 || peak <= 0) return null
-                const channelSpacing = Math.max(1.5, (orderStep - 0.8) / columns.length)
+                const channelSpacing = combinedChannelSpacing(orderStep, columns.length)
                 const offset = (channelIndex - (columns.length - 1) / 2) * channelSpacing
                 const height = Math.max(1.5, (value / peak) * SUMMARY_COMBINED_HEIGHT)
                 return <HarmonicStem x={summaryOrderX(order, orderRange) + offset}
                   baseline={SUMMARY_COMBINED_BASELINE} height={height}
-                  hitWidth={channelSpacing} channelIndex={channelIndex} combined
+                  hitWidth={Math.max(1.5, channelSpacing)} channelIndex={channelIndex} combined
                   detail={detailFor(channelIndex, column, channel, point, percentage)}
                   highlighted={tooltip?.order === order}
                   dimmed={tooltip !== undefined && tooltip.order !== order}
