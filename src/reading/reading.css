@@ -148,7 +148,7 @@
 .harmonic-overview {
   margin-bottom: 1rem;
   padding: 1.1rem 1.2rem 1rem;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--line);
   border-radius: 14px;
   background:
@@ -197,6 +197,30 @@
 .harmonic-overview-peak strong {
   color: var(--green);
   font: .82rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.harmonic-plot-shell {
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr);
+  gap: .65rem;
+  min-width: 0;
+}
+
+.harmonic-y-axis-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 4rem;
+  color: #8ba0a6;
+  font: .59rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.harmonic-y-axis-label span {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
 }
 
 .harmonic-skyline-list {
@@ -262,6 +286,18 @@
   stroke-width: 3.5;
   stroke-linecap: round;
   opacity: .9;
+  pointer-events: none;
+  transition: opacity .12s ease, filter .12s ease;
+}
+
+.harmonic-skyline-stem.combined {
+  stroke-width: 1.8;
+}
+
+.harmonic-skyline-stem-hit {
+  fill: transparent;
+  pointer-events: all;
+  cursor: crosshair;
 }
 
 .harmonic-overview .channel-0 { --channel-color: #54e2a4; --channel-glow: rgba(84, 226, 164, .45); }
@@ -277,6 +313,134 @@
   font: .58rem ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 
+.harmonic-combined-view {
+  position: relative;
+  min-width: 0;
+}
+
+.harmonic-combined-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .55rem 1.25rem;
+  margin-bottom: .55rem;
+  padding-left: .4rem;
+}
+
+.harmonic-combined-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: .38rem;
+  color: #dbe7e8;
+  font-size: .68rem;
+}
+
+.harmonic-combined-legend i,
+.harmonic-tooltip-heading i {
+  width: .52rem;
+  height: .52rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--channel-color);
+  box-shadow: 0 0 10px var(--channel-glow);
+}
+
+.harmonic-combined-legend strong {
+  font-size: .7rem;
+}
+
+.harmonic-combined-legend small {
+  color: var(--muted);
+  font: .59rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.harmonic-combined-chart {
+  display: block;
+  width: 100%;
+  height: 10rem;
+  overflow: visible;
+}
+
+.harmonic-combined-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: -.15rem;
+  color: #6e8288;
+  font: .58rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.harmonic-chart-tooltip {
+  position: fixed;
+  z-index: 100;
+  width: min(16rem, calc(100vw - 1.5rem));
+  padding: .8rem .9rem;
+  border: 1px solid rgba(84, 226, 164, .3);
+  border-radius: 10px;
+  color: #e2eded;
+  background: rgba(7, 17, 22, .97);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, .42);
+  transform: translate(-50%, calc(-100% - .75rem));
+  pointer-events: none;
+}
+
+.harmonic-chart-tooltip.below {
+  transform: translate(-50%, .75rem);
+}
+
+.harmonic-tooltip-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  padding-bottom: .55rem;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+
+.harmonic-tooltip-heading > span {
+  display: flex;
+  align-items: center;
+  gap: .42rem;
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.harmonic-tooltip-heading strong {
+  color: var(--green);
+  font: .75rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.harmonic-chart-tooltip dl {
+  display: grid;
+  gap: .42rem;
+  margin: .6rem 0 0;
+}
+
+.harmonic-chart-tooltip dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.harmonic-chart-tooltip dt {
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.harmonic-chart-tooltip dd {
+  margin: 0;
+  color: #e2eded;
+  font: .68rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+  text-align: right;
+}
+
+.harmonic-chart-tooltip dd span,
+.harmonic-chart-tooltip dd em {
+  color: var(--muted);
+  font-size: .6rem;
+  font-style: normal;
+}
+
 .harmonic-overview-empty {
   position: absolute;
   right: 0;
@@ -286,6 +450,11 @@
   color: var(--muted);
   text-align: center;
   font-size: .72rem;
+}
+
+.harmonic-overview-empty.combined {
+  left: 0;
+  bottom: 4.5rem;
 }
 
 .harmonic-table-frame {
@@ -473,5 +642,18 @@
 
   .harmonic-overview-empty {
     left: 0;
+  }
+
+  .harmonic-plot-shell {
+    grid-template-columns: 1rem minmax(0, 1fr);
+    gap: .4rem;
+  }
+
+  .harmonic-combined-legend {
+    gap: .4rem .8rem;
+  }
+
+  .harmonic-combined-legend small {
+    display: none;
   }
 }

@@ -39,9 +39,12 @@ not degrade system health.
 The viewer-facing **Reading → Harmonics** tab reads the latest complete M16
 family from `GET /api/v1/meter/harmonics`. Its Voltage selection presents Va,
 Vb, and Vc together for orders 1–127; Current presents Ia, Ib, Ic, and In. Each
-cell contains subgroup magnitude and Va-referenced angle. The page never mixes
-partial families: it continues to hide the table until all 42 channel/chunk
-records agree. The embedded conditioner selects an exact `L/25` conversion
+cell contains subgroup magnitude and Va-referenced angle. The spectrum overview
+can show one channel per lane or group all selected channels at each harmonic
+order. Its Y-axis title follows the magnitude/percentage selection, and hovering
+a bar reports that order's magnitude, percentage of H1, and available relative
+angle. The page never mixes partial families: it continues to hide the table
+until all 42 channel/chunk records agree. The embedded conditioner selects an exact `L/25` conversion
 profile for every
 supported 1, 2, 4, 8, 16, 32, 64, or 128 kSPS capture rate and always supplies
 4,096 samples to the XFFT. While a new profile is applying, the page keeps the
