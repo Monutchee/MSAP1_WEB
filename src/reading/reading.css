@@ -199,6 +199,115 @@
   font: .82rem ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 
+.harmonic-chart-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 1rem;
+  padding: .72rem;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 10px;
+  background: rgba(7, 17, 22, .5);
+}
+
+.harmonic-range-control,
+.harmonic-zoom-control,
+.harmonic-table-range-control {
+  display: grid;
+  gap: .42rem;
+}
+
+.harmonic-chart-control-label {
+  color: #83979d;
+  font-size: .6rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.harmonic-range-shortcuts,
+.harmonic-zoom-buttons {
+  display: flex;
+  align-items: center;
+  gap: .28rem;
+}
+
+.harmonic-range-shortcuts button,
+.harmonic-zoom-buttons button {
+  min-height: 2rem;
+  padding: .4rem .65rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #aabbbf;
+  background: #0a151a;
+  font-size: .66rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: border-color .12s ease, color .12s ease, background .12s ease;
+}
+
+.harmonic-range-shortcuts button:hover,
+.harmonic-zoom-buttons button:hover:not(:disabled) {
+  border-color: rgba(84, 226, 164, .45);
+  color: #e2eded;
+  background: rgba(84, 226, 164, .07);
+}
+
+.harmonic-range-shortcuts button:focus-visible,
+.harmonic-zoom-buttons button:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.harmonic-range-shortcuts button.active {
+  border-color: var(--green);
+  color: #071512;
+  background: var(--green);
+}
+
+.harmonic-zoom-control {
+  grid-template-columns: auto auto;
+  align-items: end;
+  column-gap: .75rem;
+}
+
+.harmonic-zoom-control .harmonic-chart-control-label {
+  grid-column: 1 / -1;
+}
+
+.harmonic-zoom-buttons button span {
+  display: inline-block;
+  margin-right: .22rem;
+  color: var(--green);
+  font-size: .85rem;
+  line-height: .5;
+}
+
+.harmonic-zoom-buttons button:disabled {
+  color: #52666c;
+  cursor: not-allowed;
+  opacity: .58;
+}
+
+.harmonic-zoom-buttons button:disabled span {
+  color: #52666c;
+}
+
+.harmonic-zoom-control output {
+  display: grid;
+  gap: .08rem;
+  min-width: 5.8rem;
+  color: var(--green);
+  font: .68rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+  text-align: right;
+}
+
+.harmonic-zoom-control output small {
+  color: var(--muted);
+  font-size: .56rem;
+}
+
 .harmonic-plot-shell {
   display: grid;
   grid-template-columns: 1.25rem minmax(0, 1fr);
@@ -288,6 +397,15 @@
   opacity: .9;
   pointer-events: none;
   transition: opacity .12s ease, filter .12s ease;
+}
+
+.harmonic-skyline-stem.dimmed {
+  opacity: .12;
+}
+
+.harmonic-skyline-stem.highlighted {
+  opacity: 1;
+  filter: drop-shadow(0 0 4px var(--channel-glow));
 }
 
 .harmonic-skyline-stem.combined {
@@ -457,6 +575,36 @@
   bottom: 4.5rem;
 }
 
+.harmonic-table-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.35rem 0 .65rem;
+  padding: 0 .15rem;
+}
+
+.harmonic-table-toolbar .eyebrow {
+  margin: 0 0 .2rem;
+  font-size: .6rem;
+}
+
+.harmonic-table-toolbar h3 {
+  margin: 0;
+  color: #e2eded;
+  font-size: .95rem;
+}
+
+.harmonic-table-toolbar > div:first-child > p:last-child {
+  margin: .25rem 0 0;
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.harmonic-table-range-control {
+  justify-items: end;
+}
+
 .harmonic-table-frame {
   max-height: min(65vh, 760px);
   overflow: auto;
@@ -622,6 +770,34 @@
 
   .harmonic-overview-peak {
     text-align: left;
+  }
+
+  .harmonic-chart-toolbar,
+  .harmonic-table-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .harmonic-range-shortcuts {
+    max-width: 100%;
+    padding-bottom: .2rem;
+    overflow-x: auto;
+  }
+
+  .harmonic-zoom-control {
+    grid-template-columns: 1fr auto;
+  }
+
+  .harmonic-zoom-buttons {
+    align-items: stretch;
+  }
+
+  .harmonic-zoom-buttons button {
+    flex: 1;
+  }
+
+  .harmonic-table-range-control {
+    justify-items: stretch;
   }
 
   .harmonic-skyline-row {

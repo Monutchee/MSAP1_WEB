@@ -13,6 +13,11 @@ type HarmonicGroup = 'voltage' | 'current'
 type HarmonicDisplay = 'magnitude' | 'percentage'
 type HarmonicChartView = 'lanes' | 'combined'
 
+interface HarmonicOrderRange {
+  first: number
+  last: number
+}
+
 interface ChannelColumn {
   channel: number
   label: string
@@ -33,11 +38,24 @@ const CHANNEL_GROUPS: Record<HarmonicGroup, ChannelColumn[]> = {
 }
 
 const ALL_HARMONIC_ORDERS = Array.from({ length: 127 }, (_, index) => index + 1)
-const SUMMARY_HARMONIC_ORDERS = ALL_HARMONIC_ORDERS.slice(1)
-const SUMMARY_AXIS_ORDERS = [2, 25, 50, 75, 100, 127]
+const FIRST_SUMMARY_ORDER = 2
+const LAST_SUMMARY_ORDER = 127
+const FULL_SUMMARY_RANGE: HarmonicOrderRange = {
+  first: FIRST_SUMMARY_ORDER,
+  last: LAST_SUMMARY_ORDER,
+}
+const HARMONIC_RANGE_SHORTCUTS: Array<HarmonicOrderRange & { label: string }> = [
+  { label: 'All', ...FULL_SUMMARY_RANGE },
+  { label: 'H2–H32', first: 2, last: 32 },
+  { label: 'H33–H64', first: 33, last: 64 },
+  { label: 'H65–H96', first: 65, last: 96 },
+  { label: 'H97–H127', first: 97, last: 127 },
+]
+const HARMONIC_ZOOM_ORDER_COUNTS = [16, 32, 64, 126]
+const MAX_HARMONIC_ZOOM_ORDER_COUNT =
+  HARMONIC_ZOOM_ORDER_COUNTS[HARMONIC_ZOOM_ORDER_COUNTS.length - 1]
 const SUMMARY_WIDTH = 1000
 const SUMMARY_X_PADDING = 7
-const SUMMARY_ORDER_STEP = (SUMMARY_WIDTH - SUMMARY_X_PADDING * 2) / 125
 const SUMMARY_BASELINE = 60
 const SUMMARY_HEIGHT = 52
 const SUMMARY_COMBINED_BASELINE = 146
@@ -106,9 +124,55 @@ function formatDisplayedValue(value: number, unit: string, display: HarmonicDisp
     : `${formatPercentage(value)} % H1`
 }
 
-function summaryOrderX(order: number) {
-  return SUMMARY_X_PADDING + ((order - 2) / 125) *
+function rangeOrderCount(range: HarmonicOrderRange) {
+  return range.last - range.first + 1
+}
+
+function ordersInRange(range: HarmonicOrderRange) {
+  return Array.from({ length: rangeOrderCount(range) }, (_, index) => range.first + index)
+}
+
+function summaryOrderStep(range: HarmonicOrderRange) {
+  return (SUMMARY_WIDTH - SUMMARY_X_PADDING * 2) /
+    Math.max(1, rangeOrderCount(range) - 1)
+}
+
+function summaryOrderX(order: number, range: HarmonicOrderRange) {
+  if (range.first === range.last) return SUMMARY_WIDTH / 2
+  return SUMMARY_X_PADDING + ((order - range.first) / (range.last - range.first)) *
     (SUMMARY_WIDTH - SUMMARY_X_PADDING * 2)
+}
+
+function summaryAxisOrders(range: HarmonicOrderRange) {
+  if (range.first === FIRST_SUMMARY_ORDER && range.last === LAST_SUMMARY_ORDER) {
+    return [2, 25, 50, 75, 100, 127]
+  }
+
+  const tickCount = Math.min(6, rangeOrderCount(range))
+  return Array.from({ length: tickCount }, (_, index) => Math.round(
+    range.first + ((range.last - range.first) * index) / Math.max(1, tickCount - 1),
+  )).filter((order, index, orders) => index === 0 || order !== orders[index - 1])
+}
+
+function centeredRange(range: HarmonicOrderRange, orderCount: number): HarmonicOrderRange {
+  const boundedCount = Math.min(
+    LAST_SUMMARY_ORDER - FIRST_SUMMARY_ORDER + 1,
+    Math.max(1, orderCount),
+  )
+  const center = (range.first + range.last) / 2
+  let first = Math.round(center - (boundedCount - 1) / 2)
+  first = Math.max(FIRST_SUMMARY_ORDER,
+    Math.min(first, LAST_SUMMARY_ORDER - boundedCount + 1))
+  return { first, last: first + boundedCount - 1 }
+}
+
+function zoomedRange(range: HarmonicOrderRange, direction: 'in' | 'out') {
+  const orderCount = rangeOrderCount(range)
+  const targetCount = direction === 'in'
+    ? [...HARMONIC_ZOOM_ORDER_COUNTS].reverse().find((count) => count < orderCount)
+    : HARMONIC_ZOOM_ORDER_COUNTS.find((count) =>
+      count > orderCount && !(orderCount > 16 && orderCount <= 32 && count === 32))
+  return targetCount === undefined ? range : centeredRange(range, targetCount)
 }
 
 function harmonicTooltipText(detail: HarmonicTooltipDetail) {
@@ -144,7 +208,7 @@ function HarmonicTooltip({ tooltip }: { tooltip: HarmonicTooltipState | undefine
 }
 
 function HarmonicStem({ x, baseline, height, hitWidth, channelIndex, detail, combined,
-  onShow, onHide }: {
+  highlighted, dimmed, onShow, onHide }: {
   x: number
   baseline: number
   height: number
@@ -152,13 +216,17 @@ function HarmonicStem({ x, baseline, height, hitWidth, channelIndex, detail, com
   channelIndex: number
   detail: HarmonicTooltipDetail
   combined?: boolean
+  highlighted: boolean
+  dimmed: boolean
   onShow: (event: ReactPointerEvent<SVGRectElement>, detail: HarmonicTooltipDetail) => void
   onHide: () => void
 }) {
   const y = baseline - height
   const label = harmonicTooltipText(detail)
   return <g>
-    <line className={`harmonic-skyline-stem channel-${channelIndex}${combined ? ' combined' : ''}`}
+    <line className={`harmonic-skyline-stem channel-${channelIndex}` +
+      `${combined ? ' combined' : ''}${highlighted ? ' highlighted' : ''}` +
+      `${dimmed ? ' dimmed' : ''}`}
       x1={x} x2={x} y1={baseline} y2={y} vectorEffect="non-scaling-stroke"
       aria-hidden="true" />
     <rect className="harmonic-skyline-stem-hit" x={x - hitWidth / 2} y="0"
@@ -177,6 +245,27 @@ function HarmonicStatus({ ok, pending = false, children }: {
 }) {
   const state = pending ? 'neutral' : ok ? 'ok' : 'bad'
   return <span className={`status-pill ${state}`}><i />{children}</span>
+}
+
+function HarmonicRangeShortcuts({ range, onChange, includeFundamental = false }: {
+  range: HarmonicOrderRange
+  onChange: (range: HarmonicOrderRange) => void
+  includeFundamental?: boolean
+}) {
+  return <div className="harmonic-range-shortcuts" role="group"
+    aria-label="Harmonic order range shortcuts">
+    {HARMONIC_RANGE_SHORTCUTS.map((shortcut) => {
+      const active = range.first === shortcut.first && range.last === shortcut.last
+      const label = includeFundamental && shortcut.first === 2 && shortcut.last === 32
+        ? 'H1–H32'
+        : shortcut.label
+      return <button type="button" className={active ? 'active' : ''}
+        aria-pressed={active} onClick={() => onChange({
+          first: shortcut.first,
+          last: shortcut.last,
+        })} key={shortcut.label}>{label}</button>
+    })}
+  </div>
 }
 
 function HarmonicCell({ point, fundamental, channel, qualified, display }: {
@@ -208,7 +297,7 @@ function HarmonicCell({ point, fundamental, channel, qualified, display }: {
 }
 
 function HarmonicOverview({ columns, channelByIndex, ordersByChannel, qualifiedMaxOrder,
-  display, group, view }: {
+  display, group, view, orderRange, onOrderRangeChange }: {
   columns: ChannelColumn[]
   channelByIndex: Map<number, HarmonicChannel>
   ordersByChannel: Map<number, Map<number, HarmonicOrder>>
@@ -216,13 +305,21 @@ function HarmonicOverview({ columns, channelByIndex, ordersByChannel, qualifiedM
   display: HarmonicDisplay
   group: HarmonicGroup
   view: HarmonicChartView
+  orderRange: HarmonicOrderRange
+  onOrderRangeChange: (range: HarmonicOrderRange) => void
 }) {
   const [tooltip, setTooltip] = useState<HarmonicTooltipState>()
+  const summaryOrders = ordersInRange(orderRange)
+  const axisOrders = summaryAxisOrders(orderRange)
+  const orderStep = summaryOrderStep(orderRange)
+  const visibleOrderCount = rangeOrderCount(orderRange)
+  const canZoomIn = visibleOrderCount > HARMONIC_ZOOM_ORDER_COUNTS[0]
+  const canZoomOut = visibleOrderCount < MAX_HARMONIC_ZOOM_ORDER_COUNT
   const series = columns.map((column) => {
     const channel = channelByIndex.get(column.channel)
     const orders = ordersByChannel.get(column.channel)
     const fundamental = orders?.get(1)
-    const values = SUMMARY_HARMONIC_ORDERS.map((order) => {
+    const values = summaryOrders.map((order) => {
       const point = orders?.get(order)
       return {
         order,
@@ -243,7 +340,7 @@ function HarmonicOverview({ columns, channelByIndex, ordersByChannel, qualifiedM
     ? `Magnitude (${group === 'voltage' ? 'V' : 'A'} RMS)`
     : 'Percentage of H1 (%)'
 
-  useEffect(() => setTooltip(undefined), [columns, display, view])
+  useEffect(() => setTooltip(undefined), [columns, display, orderRange, view])
 
   const showTooltip = (event: ReactPointerEvent<SVGRectElement>,
     detail: HarmonicTooltipDetail) => {
@@ -276,7 +373,7 @@ function HarmonicOverview({ columns, channelByIndex, ordersByChannel, qualifiedM
     <div className="harmonic-overview-heading">
       <div>
         <p className="eyebrow">Spectrum overview</p>
-        <h3 id="harmonic-overview-title">Orders 2–127 at a glance</h3>
+        <h3 id="harmonic-overview-title">Orders {orderRange.first}–{orderRange.last}</h3>
         <p>{view === 'lanes'
           ? 'Each lane is one selected channel. All lanes share the same vertical scale.'
           : 'Channels are grouped at each harmonic order on one shared scale.'}</p>
@@ -284,6 +381,32 @@ function HarmonicOverview({ columns, channelByIndex, ordersByChannel, qualifiedM
       <div className="harmonic-overview-peak">
         <span>Largest displayed harmonic</span>
         <strong>{peak > 0 ? formatDisplayedValue(peak, unit, display) : '—'}</strong>
+      </div>
+    </div>
+
+    <div className="harmonic-chart-toolbar">
+      <div className="harmonic-range-control">
+        <span className="harmonic-chart-control-label">Order range</span>
+        <HarmonicRangeShortcuts range={orderRange} onChange={onOrderRangeChange} />
+      </div>
+      <div className="harmonic-zoom-control">
+        <span className="harmonic-chart-control-label">Zoom</span>
+        <div className="harmonic-zoom-buttons">
+          <button type="button" disabled={!canZoomOut}
+            aria-label="Zoom out to show more harmonic orders"
+            title="Zoom out to show more harmonic orders"
+            onClick={() => onOrderRangeChange(zoomedRange(orderRange, 'out'))}>
+            <span aria-hidden="true">−</span> Zoom out
+          </button>
+          <button type="button" disabled={!canZoomIn}
+            aria-label="Zoom in to show fewer harmonic orders"
+            title="Zoom in to show fewer harmonic orders"
+            onClick={() => onOrderRangeChange(zoomedRange(orderRange, 'in'))}>
+            <span aria-hidden="true">+</span> Zoom in
+          </button>
+        </div>
+        <output aria-live="polite">H{orderRange.first}–H{orderRange.last}
+          <small>{visibleOrderCount} orders</small></output>
       </div>
     </div>
 
@@ -303,22 +426,24 @@ function HarmonicOverview({ columns, channelByIndex, ordersByChannel, qualifiedM
                 <small>H1 reference <strong>{reference}</strong></small>
               </header>
               <svg viewBox={`0 0 ${SUMMARY_WIDTH} 64`} preserveAspectRatio="none" role="img"
-                aria-label={`${column.label} harmonic orders 2 through 127; ${yAxisLabel}`}>
+                aria-label={`${column.label} harmonic orders ${orderRange.first} through ${orderRange.last}; ${yAxisLabel}`}>
                 {[8, 34, SUMMARY_BASELINE].map((y) => <line className="harmonic-skyline-grid"
                   x1="0" x2={SUMMARY_WIDTH} y1={y} y2={y} key={y} />)}
                 {values.map(({ order, point, percentage, value }) => {
                   if (!point || value === undefined || value <= 0 || peak <= 0) return null
                   const height = Math.max(1.5, (value / peak) * SUMMARY_HEIGHT)
-                  return <HarmonicStem x={summaryOrderX(order)} baseline={SUMMARY_BASELINE}
-                    height={height} hitWidth={SUMMARY_ORDER_STEP} channelIndex={channelIndex}
+                  return <HarmonicStem x={summaryOrderX(order, orderRange)} baseline={SUMMARY_BASELINE}
+                    height={height} hitWidth={orderStep} channelIndex={channelIndex}
                     detail={detailFor(channelIndex, column, channel, point, percentage)}
+                    highlighted={tooltip?.order === order}
+                    dimmed={tooltip !== undefined && tooltip.order !== order}
                     onShow={showTooltip} onHide={() => setTooltip(undefined)} key={order} />
                 })}
               </svg>
             </article>
           })}
           <div className="harmonic-skyline-axis" aria-hidden="true">
-            {SUMMARY_AXIS_ORDERS.map((order) => <span key={order}>H{order}</span>)}
+            {axisOrders.map((order) => <span key={order}>H{order}</span>)}
           </div>
           {peak === 0 && <p className="harmonic-overview-empty">No valid harmonics above H1 are available.</p>}
         </div>
@@ -335,27 +460,29 @@ function HarmonicOverview({ columns, channelByIndex, ordersByChannel, qualifiedM
           <svg className="harmonic-combined-chart"
             viewBox={`0 0 ${SUMMARY_WIDTH} ${SUMMARY_COMBINED_VIEWBOX_HEIGHT}`}
             preserveAspectRatio="none" role="img"
-            aria-label={`Combined ${group} harmonic orders 2 through 127; ${yAxisLabel}`}>
+            aria-label={`Combined ${group} harmonic orders ${orderRange.first} through ${orderRange.last}; ${yAxisLabel}`}>
             {[14, 80, SUMMARY_COMBINED_BASELINE].map((y) =>
               <line className="harmonic-skyline-grid" x1="0" x2={SUMMARY_WIDTH}
                 y1={y} y2={y} key={y} />)}
             {series.flatMap(({ column, channel, values }, channelIndex) =>
               values.map(({ order, point, percentage, value }) => {
                 if (!point || value === undefined || value <= 0 || peak <= 0) return null
-                const channelSpacing = (SUMMARY_ORDER_STEP - 0.8) / columns.length
+                const channelSpacing = Math.max(1.5, (orderStep - 0.8) / columns.length)
                 const offset = (channelIndex - (columns.length - 1) / 2) * channelSpacing
                 const height = Math.max(1.5, (value / peak) * SUMMARY_COMBINED_HEIGHT)
-                return <HarmonicStem x={summaryOrderX(order) + offset}
+                return <HarmonicStem x={summaryOrderX(order, orderRange) + offset}
                   baseline={SUMMARY_COMBINED_BASELINE} height={height}
                   hitWidth={channelSpacing} channelIndex={channelIndex} combined
                   detail={detailFor(channelIndex, column, channel, point, percentage)}
+                  highlighted={tooltip?.order === order}
+                  dimmed={tooltip !== undefined && tooltip.order !== order}
                   onShow={showTooltip} onHide={() => setTooltip(undefined)}
                   key={`${column.channel}-${order}`} />
               }),
             )}
           </svg>
           <div className="harmonic-combined-axis" aria-hidden="true">
-            {SUMMARY_AXIS_ORDERS.map((order) => <span key={order}>H{order}</span>)}
+            {axisOrders.map((order) => <span key={order}>H{order}</span>)}
           </div>
           {peak === 0 && <p className="harmonic-overview-empty combined">No valid harmonics above H1 are available.</p>}
         </div>}
@@ -377,6 +504,7 @@ export function ReadingPage({ readings, onUnauthorized }: {
   const [period, setPeriod] = useState<Exclude<HarmonicPeriod, 'basic'>>('cycles_150_180')
   const [display, setDisplay] = useState<HarmonicDisplay>('magnitude')
   const [chartView, setChartView] = useState<HarmonicChartView>('lanes')
+  const [orderRange, setOrderRange] = useState<HarmonicOrderRange>(FULL_SUMMARY_RANGE)
   const [spectrum, setSpectrum] = useState<HarmonicSpectrum>()
   const [error, setError] = useState('')
 
@@ -422,6 +550,9 @@ export function ReadingPage({ readings, onUnauthorized }: {
   ), [spectrum])
   const anglesAvailable = spectrum?.available === true && channels.some((column) =>
     channelByIndex.get(column.channel)?.orders.some((order) => order.angle_valid))
+  const tableFirstOrder = orderRange.first === FIRST_SUMMARY_ORDER ? 1 : orderRange.first
+  const tableOrders = ALL_HARMONIC_ORDERS.filter((order) =>
+    order >= tableFirstOrder && order <= orderRange.last)
 
   return <section className="reading-page">
     <header className="reading-heading">
@@ -518,10 +649,24 @@ export function ReadingPage({ readings, onUnauthorized }: {
         : <>
           <HarmonicOverview columns={channels} channelByIndex={channelByIndex}
             ordersByChannel={ordersByChannel} qualifiedMaxOrder={spectrum.qualified_max_order}
-            display={display} group={group} view={chartView} />
+            display={display} group={group} view={chartView} orderRange={orderRange}
+            onOrderRangeChange={setOrderRange} />
+          <div className="harmonic-table-toolbar">
+            <div>
+              <p className="eyebrow">Harmonic data</p>
+              <h3>Orders {tableFirstOrder}–{orderRange.last}</h3>
+              <p>The table follows the chart range; H1 remains in the first band as its reference.</p>
+            </div>
+            <div className="harmonic-table-range-control">
+              <span className="harmonic-chart-control-label">32-order bands</span>
+              <HarmonicRangeShortcuts range={orderRange} onChange={setOrderRange}
+                includeFundamental />
+            </div>
+          </div>
           <div className="harmonic-table-frame">
             <table className="harmonic-matrix">
-              <caption>{group === 'voltage' ? 'Voltage' : 'Current'} harmonic orders 1 through 127</caption>
+              <caption>{group === 'voltage' ? 'Voltage' : 'Current'} harmonic orders
+                {' '}{tableFirstOrder} through {orderRange.last}</caption>
               <thead><tr>
                 <th scope="col">Order</th>
                 {channels.map((column) => <th scope="col" key={column.channel}>
@@ -531,7 +676,7 @@ export function ReadingPage({ readings, onUnauthorized }: {
                 </th>)}
               </tr></thead>
               <tbody>
-                {ALL_HARMONIC_ORDERS.map((order) => <tr key={order}>
+                {tableOrders.map((order) => <tr key={order}>
                   <th scope="row">{order}</th>
                   {channels.map((column) => <HarmonicCell key={column.channel}
                     channel={channelByIndex.get(column.channel)}
