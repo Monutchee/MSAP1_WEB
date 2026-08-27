@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  api, ApiError, HarmonicChannel, HarmonicOrder, HarmonicSpectrum,
+  api, ApiError, HarmonicChannel, HarmonicOrder, HarmonicPeriod,
+  HarmonicSpectrum,
   MeterReadings,
 } from '../api'
 import './reading.css'
@@ -28,6 +29,12 @@ const CHANNEL_GROUPS: Record<HarmonicGroup, ChannelColumn[]> = {
 
 const ALL_HARMONIC_ORDERS = Array.from({ length: 127 }, (_, index) => index + 1)
 
+const PERIOD_LABELS: Record<Exclude<HarmonicPeriod, 'basic'>, string> = {
+  cycles_150_180: '3 seconds (150/180 cycles)',
+  minutes_10: '10 minutes',
+  hours_2: '2 hours',
+}
+
 function formatCount(value: number | undefined) {
   return value === undefined ? '—' : new Intl.NumberFormat('en-US').format(value)
 }
@@ -45,10 +52,11 @@ function HarmonicStatus({ ok, pending = false, children }: {
   return <span className={`status-pill ${state}`}><i />{children}</span>
 }
 
-function HarmonicCell({ point, channel, qualified }: {
+function HarmonicCell({ point, channel, qualified, showAngle }: {
   point: HarmonicOrder | undefined
   channel: HarmonicChannel | undefined
   qualified: boolean
+  showAngle: boolean
 }) {
   if (!qualified) {
     return <td className="harmonic-value unavailable"><strong>—</strong>
@@ -62,7 +70,9 @@ function HarmonicCell({ point, channel, qualified }: {
 
   return <td className="harmonic-value">
     <strong>{formatMagnitude(point.magnitude)} <span>{channel?.unit ?? ''}</span></strong>
-    <small>{point.angle_valid ? `${point.angle_degrees.toFixed(3)}°` : 'Angle unavailable'}</small>
+    {showAngle && <small>{point.angle_valid
+      ? `${point.angle_degrees.toFixed(3)}°`
+      : 'Angle unavailable'}</small>}
   </td>
 }
 
@@ -76,12 +86,13 @@ export function ReadingPage({ readings, onUnauthorized }: {
   onUnauthorized: () => void
 }) {
   const [group, setGroup] = useState<HarmonicGroup>('voltage')
+  const [period, setPeriod] = useState<Exclude<HarmonicPeriod, 'basic'>>('cycles_150_180')
   const [spectrum, setSpectrum] = useState<HarmonicSpectrum>()
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
     try {
-      setSpectrum(await api.meterHarmonics())
+      setSpectrum(await api.meterHarmonics(period))
       setError('')
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 401) {
@@ -90,7 +101,7 @@ export function ReadingPage({ readings, onUnauthorized }: {
       }
       setError(reason instanceof Error ? reason.message : 'Unable to read harmonics')
     }
-  }, [onUnauthorized])
+  }, [onUnauthorized, period])
 
   useEffect(() => {
     let active = true
@@ -136,7 +147,7 @@ export function ReadingPage({ readings, onUnauthorized }: {
         <div>
           <p className="eyebrow">Metrology M16</p>
           <h2 id="harmonic-spectrum-title">Harmonic subgroup spectrum</h2>
-          <p>Orders 1–127 from one atomic 10/12-cycle family across all seven channels.</p>
+          <p>Orders 1–127 from one atomic, magnitude-only interval family across all seven channels.</p>
         </div>
         <div className="harmonic-controls">
           <label htmlFor="harmonic-group">Measurement</label>
@@ -144,6 +155,16 @@ export function ReadingPage({ readings, onUnauthorized }: {
             onChange={(event) => setGroup(event.target.value as HarmonicGroup)}>
             <option value="voltage">Voltage</option>
             <option value="current">Current</option>
+          </select>
+          <label htmlFor="harmonic-period">Period</label>
+          <select id="harmonic-period" value={period}
+            onChange={(event) => {
+              setSpectrum(undefined)
+              setPeriod(event.target.value as Exclude<HarmonicPeriod, 'basic'>)
+            }}>
+            <option value="cycles_150_180">3 seconds (150/180 cycles)</option>
+            <option value="minutes_10">10 minutes</option>
+            <option value="hours_2">2 hours</option>
           </select>
           <span>{spectrum?.available
             ? `Family ${formatCount(spectrum.sequence)}`
@@ -155,15 +176,18 @@ export function ReadingPage({ readings, onUnauthorized }: {
         <span>{error}</span></div>}
 
       <div className="harmonic-summary" aria-label="Harmonic pipeline status">
-        <HarmonicStatus ok={spectrum?.grid_locked ?? false} pending={!spectrum}>Grid lock</HarmonicStatus>
-        <HarmonicStatus ok={spectrum?.conditioner_valid ?? false} pending={!spectrum}>Conditioner</HarmonicStatus>
-        <HarmonicStatus ok={spectrum?.fft_valid ?? false} pending={!spectrum}>FFT</HarmonicStatus>
+		<HarmonicStatus ok={spectrum?.interval_valid ?? false} pending={!spectrum}>Interval valid</HarmonicStatus>
+		<HarmonicStatus ok={spectrum?.time_aligned ?? false} pending={!spectrum}>Time aligned</HarmonicStatus>
+		<HarmonicStatus ok={!(spectrum?.contaminated ?? true)} pending={!spectrum}>Uncontaminated</HarmonicStatus>
         <span>Chunks {formatCount(spectrum?.records)}</span>
         <span>Families {formatCount(spectrum?.families)}</span>
         <span>Incomplete {formatCount(spectrum?.incomplete_families)}</span>
         {spectrum?.available && <>
-          <span>{(spectrum.measured_frequency_millihz / 1000).toFixed(3)} Hz</span>
-          <span>{spectrum.cycle_count} cycles / {formatCount(spectrum.sample_count)} samples</span>
+		  <span>{PERIOD_LABELS[period]}</span>
+		  <span>{formatCount(spectrum.contributors)} source {spectrum.contributors === 1 ? 'family' : 'families'}</span>
+		  <span>{formatCount(spectrum.sample_count)} samples</span>
+		  <span>Source sequence {formatCount(spectrum.first_source_sequence)}–{formatCount(spectrum.last_source_sequence)}</span>
+		  {spectrum.overshoot_samples > 0 && <span>Boundary overshoot {formatCount(spectrum.overshoot_samples)} samples</span>}
           <span>Qualified through order {spectrum.qualified_max_order}</span>
         </>}
       </div>
@@ -171,11 +195,11 @@ export function ReadingPage({ readings, onUnauthorized }: {
       {!spectrum?.available
         ? <div className="harmonic-empty">
           <strong>No complete spectrum yet</strong>
-          <span>The adaptive L/25 conditioner supports every selectable rate from 1 to 128 kSPS.
+		  <span>The {PERIOD_LABELS[period]} harmonic interval has not completed yet. The adaptive L/25 conditioner supports every selectable rate from 1 to 128 kSPS.
             {readings && <> The current capture is {formatCount(readings.sample_rate_hz)} samples/s with
               {' '}{formatCount(readings.block_sample_count)}-frame basic blocks.</>}
             {' '}The previous spectrum remains hidden until grid lock is valid and all 42 records for one
-            family agree.</span>
+			family agree. A newly started 10-minute or 2-hour selection remains unavailable until its first complete aligned interval closes.</span>
         </div>
         : <div className="harmonic-table-frame">
           <table className="harmonic-matrix">
@@ -183,7 +207,7 @@ export function ReadingPage({ readings, onUnauthorized }: {
             <thead><tr>
               <th scope="col">Order</th>
               {channels.map((column) => <th scope="col" key={column.channel}>
-                <strong>{column.label}</strong><small>Magnitude · angle</small>
+				<strong>{column.label}</strong><small>Magnitude</small>
               </th>)}
             </tr></thead>
             <tbody>
@@ -192,14 +216,15 @@ export function ReadingPage({ readings, onUnauthorized }: {
                 {channels.map((column) => <HarmonicCell key={column.channel}
                   channel={channelByIndex.get(column.channel)}
                   point={ordersByChannel.get(column.channel)?.get(order)}
-                  qualified={order <= spectrum.qualified_max_order} />)}
+				  qualified={order <= spectrum.qualified_max_order}
+				  showAngle={spectrum.period === 'basic'} />)}
               </tr>)}
             </tbody>
           </table>
         </div>}
 
-      <p className="harmonic-note">Magnitudes are three-bin IEC-style subgroups. Angles are relative to
-        the Va fundamental: angle(Xh) − h·angle(Va1), wrapped to 0–360°. Raw FFT bins remain diagnostic-only.</p>
+	  <p className="harmonic-note">Magnitudes are RMS aggregation of three-bin IEC-style subgroup magnitudes.
+		Phase angles are intentionally unavailable after interval aggregation; raw FFT bins and base-family angles remain diagnostic-only.</p>
     </section>
   </section>
 }

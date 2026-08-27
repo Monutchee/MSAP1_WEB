@@ -426,6 +426,12 @@ export interface HarmonicChannel {
   orders: HarmonicOrder[]
 }
 
+export type HarmonicPeriod =
+  | 'cycles_150_180'
+  | 'minutes_10'
+  | 'hours_2'
+  | 'basic'
+
 /** GET /api/v1/meter/harmonics — latest complete 42-record M16 family. */
 export interface HarmonicSpectrum {
   running: boolean
@@ -433,6 +439,7 @@ export interface HarmonicSpectrum {
   records: number
   families: number
   incomplete_families: number
+  period: HarmonicPeriod
   sequence: number
   configuration_generation: number
   sample_rate_hz: number
@@ -447,6 +454,14 @@ export interface HarmonicSpectrum {
   status: number
   emit_drops: number
   result_drops: number
+  target_sample: number
+  contributors: number
+  overshoot_samples: number
+  first_source_sequence: number
+  last_source_sequence: number
+  time_aligned: boolean
+  contaminated: boolean
+  interval_valid: boolean
   arithmetic_error: boolean
   grid_locked: boolean
   conditioner_valid: boolean
@@ -687,6 +702,9 @@ export interface DatabaseSettings {
   cycles_150_180: DatasetStorageSettings
   minutes_10: DatasetStorageSettings
   hours_2: DatasetStorageSettings
+  harmonic_cycles_150_180: DatasetStorageSettings
+  harmonic_minutes_10: DatasetStorageSettings
+  harmonic_hours_2: DatasetStorageSettings
 }
 
 export interface DatabaseConsumerCursor {
@@ -729,7 +747,9 @@ export interface DatabaseStatus {
 }
 
 export type HistorianDataset =
-  'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2'
+  | 'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2'
+  | 'harmonic_cycles_150_180' | 'harmonic_minutes_10'
+  | 'harmonic_hours_2'
 
 export type DatabaseMaintenanceRequest =
   | { action: 'clear_datasets'; datasets: HistorianDataset[]; confirmed: true }
@@ -982,8 +1002,8 @@ export const api = {
     request<SingleCycleStatus>('/api/v1/meter/single-cycle'),
   meterPowerQuality: () =>
     request<PowerQualityStatus>('/api/v1/meter/power-quality'),
-  meterHarmonics: () =>
-    request<HarmonicSpectrum>('/api/v1/meter/harmonics'),
+  meterHarmonics: (period: HarmonicPeriod = 'cycles_150_180') =>
+    request<HarmonicSpectrum>(`/api/v1/meter/harmonics?period=${encodeURIComponent(period)}`),
   adcSimulatorEvent: () =>
     request<AdcSimulatorEvent>('/api/v1/adc/simulator/event'),
   commandAdcSimulatorEvent: (command: AdcSimulatorEventCommand) =>
