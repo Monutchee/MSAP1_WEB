@@ -27,8 +27,6 @@ const CHANNEL_GROUPS: Record<HarmonicGroup, ChannelColumn[]> = {
 }
 
 const ALL_HARMONIC_ORDERS = Array.from({ length: 127 }, (_, index) => index + 1)
-const CONDITIONER_SAMPLE_RATE_HZ = 32_000
-const CONDITIONER_BLOCK_FRAMES = 6_400
 
 function formatCount(value: number | undefined) {
   return value === undefined ? '—' : new Intl.NumberFormat('en-US').format(value)
@@ -122,12 +120,6 @@ export function ReadingPage({ readings, onUnauthorized }: {
     ]) ?? [],
   ), [spectrum])
 
-  const incompatibleRate = spectrum !== undefined
-    && !spectrum.available
-    && readings !== undefined
-    && (readings.sample_rate_hz !== CONDITIONER_SAMPLE_RATE_HZ
-      || readings.block_sample_count !== CONDITIONER_BLOCK_FRAMES)
-
   return <section className="reading-page">
     <header className="reading-heading">
       <p className="eyebrow">Readings</p>
@@ -177,15 +169,13 @@ export function ReadingPage({ readings, onUnauthorized }: {
       </div>
 
       {!spectrum?.available
-        ? <div className={`harmonic-empty ${incompatibleRate ? 'warning' : ''}`}>
-          <strong>{incompatibleRate ? 'Conditioner profile mismatch' : 'No complete spectrum yet'}</strong>
-          {incompatibleRate
-            ? <span>The deployed M16 conditioner accepts {formatCount(CONDITIONER_SAMPLE_RATE_HZ)} samples/s
-              with {formatCount(CONDITIONER_BLOCK_FRAMES)}-frame basic blocks. This target is producing
-              {' '}{formatCount(readings?.sample_rate_hz)} samples/s with
-              {' '}{formatCount(readings?.block_sample_count)}-frame blocks, so FFT input is intentionally
-              suppressed. An administrator can select 32 kSPS under Developer → Tweak to verify this profile.</span>
-            : <span>The previous spectrum remains hidden until all 42 records for one family agree.</span>}
+        ? <div className="harmonic-empty">
+          <strong>No complete spectrum yet</strong>
+          <span>The adaptive L/25 conditioner supports every selectable rate from 1 to 128 kSPS.
+            {readings && <> The current capture is {formatCount(readings.sample_rate_hz)} samples/s with
+              {' '}{formatCount(readings.block_sample_count)}-frame basic blocks.</>}
+            {' '}The previous spectrum remains hidden until grid lock is valid and all 42 records for one
+            family agree.</span>
         </div>
         : <div className="harmonic-table-frame">
           <table className="harmonic-matrix">

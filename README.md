@@ -41,10 +41,11 @@ family from `GET /api/v1/meter/harmonics`. Its Voltage selection presents Va,
 Vb, and Vc together for orders 1–127; Current presents Ia, Ib, Ic, and In. Each
 cell contains subgroup magnitude and Va-referenced angle. The page never mixes
 partial families: it continues to hide the table until all 42 channel/chunk
-records agree. If live basic readings do not match the qualified 32 kSPS,
-6,400-frame conditioner profile, the page reports that profile mismatch rather
-than presenting the idle conditioner and FFT indicators as an unexplained
-failure.
+records agree. The embedded conditioner selects an exact `L/25` conversion
+profile for every
+supported 1, 2, 4, 8, 16, 32, 64, or 128 kSPS capture rate and always supplies
+4,096 samples to the XFFT. While a new profile is applying, the page keeps the
+previous family hidden until grid lock and all 42 replacement records agree.
 
 The aggregate grid frequency is **informative only**. Per
 IEC 61000-4-30:2025 the standardized frequency product is defined over its own
