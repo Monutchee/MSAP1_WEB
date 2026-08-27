@@ -2,7 +2,6 @@ import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from '
 import {
   api, AdcSimulatorConfiguration, AdcSimulatorEvent, AdcSimulatorEventCommand,
   AdcSource, ApiError, DeveloperAbout, SingleCycleStatus, PowerQualityStatus,
-  HarmonicSpectrum,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
   MeterAggregate, MeterAggregateResult, MeterReadingAttribute,
   MeterTenMinute, MeterTenMinuteResult,
@@ -14,6 +13,7 @@ import { WaveformExplorer } from './waveform/WaveformExplorer'
 import { DeveloperDatabasePage } from './developer/DeveloperDatabasePage'
 import { DeveloperDataRecorderPage } from './developer/DeveloperDataRecorderPage'
 import { HistoryPage } from './history/HistoryPage'
+import { ReadingPage } from './reading/ReadingPage'
 import { ModbusConfiguration } from './configuration/ModbusConfiguration'
 import { MqttConfiguration } from './configuration/MqttConfiguration'
 
@@ -888,7 +888,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   onSimulatorSubmit: (event: FormEvent) => void
 }) {
   const [activeTab, setActiveTab] =
-    useState<'overview' | 'tweak' | 'simulator' | 'harmonics' | 'recorder' | 'waveform' | 'about' | 'logs'>('overview')
+    useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'waveform' | 'about' | 'logs'>('overview')
   return <section className="developer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
@@ -904,9 +904,6 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       <button className={activeTab === 'simulator' ? 'active' : ''} type="button"
         aria-current={activeTab === 'simulator' ? 'page' : undefined}
         onClick={() => setActiveTab('simulator')}>ADC Simulator</button>
-      <button className={activeTab === 'harmonics' ? 'active' : ''} type="button"
-        aria-current={activeTab === 'harmonics' ? 'page' : undefined}
-        onClick={() => setActiveTab('harmonics')}>Harmonics</button>
       <button className={activeTab === 'recorder' ? 'active' : ''} type="button"
         aria-current={activeTab === 'recorder' ? 'page' : undefined}
         onClick={() => setActiveTab('recorder')}>Data recorder</button>
@@ -924,8 +921,6 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       ? <DeveloperOverview onUnauthorized={onUnauthorized} health={health} readings={readings} />
       : activeTab === 'tweak'
         ? <DeveloperTweak onUnauthorized={onUnauthorized} />
-      : activeTab === 'harmonics'
-        ? <HarmonicSpectrumPanel onUnauthorized={onUnauthorized} />
       : activeTab === 'simulator' ? <>
       <section className="section-heading configuration-heading">
         <div><p className="eyebrow">ADC input</p><h2>Raw sample simulator</h2></div>
@@ -1047,92 +1042,6 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
         ? <DeveloperAboutPage onUnauthorized={onUnauthorized} />
         : <DeveloperLogs onUnauthorized={onUnauthorized} />}
   </section>
-}
-
-/** Latest-only M16 spectrum. The API withholds partial channel/chunk families. */
-function HarmonicSpectrumPanel({ onUnauthorized }: {
-  onUnauthorized: () => void
-}) {
-  const [spectrum, setSpectrum] = useState<HarmonicSpectrum>()
-  const [selectedChannel, setSelectedChannel] = useState(6)
-  const [error, setError] = useState('')
-
-  const load = useCallback(async () => {
-    try {
-      setSpectrum(await api.meterHarmonics())
-      setError('')
-    } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 401) {
-        onUnauthorized()
-        return
-      }
-      setError(reason instanceof Error ? reason.message : 'Unable to read harmonics')
-    }
-  }, [onUnauthorized])
-
-  useEffect(() => {
-    let active = true
-    const refresh = async () => { if (active) await load() }
-    void refresh()
-    const timer = window.setInterval(refresh, 2000)
-    return () => { active = false; window.clearInterval(timer) }
-  }, [load])
-
-  const channel = spectrum?.channels.find((candidate) =>
-    candidate.channel === selectedChannel)
-  const orders = channel?.orders.filter((point) =>
-    point.order <= (spectrum?.qualified_max_order ?? 0)) ?? []
-  const maximum = Math.max(1, ...orders
-    .filter((point) => point.magnitude_valid)
-    .map((point) => point.magnitude))
-
-  return <>
-    <section className="section-heading configuration-heading">
-      <div><p className="eyebrow">Metrology M16</p><h2>Harmonic subgroup spectrum</h2>
-        <p>Orders 1–127, one atomic 10/12-cycle family across seven channels.</p></div>
-      <span>{spectrum?.available ? `Family ${formatCount(spectrum.sequence)}` : 'Waiting for a complete family'}</span>
-    </section>
-    {error && <div className="error-banner"><strong>Harmonics unavailable</strong>
-      <span>{error}</span></div>}
-    <div className="harmonic-summary">
-      <StatusPill ok={spectrum?.grid_locked ?? false}>Grid lock</StatusPill>
-      <StatusPill ok={spectrum?.conditioner_valid ?? false}>Conditioner</StatusPill>
-      <StatusPill ok={spectrum?.fft_valid ?? false}>FFT</StatusPill>
-      <span>Chunks {formatCount(spectrum?.records)}</span>
-      <span>Families {formatCount(spectrum?.families)}</span>
-      <span>Incomplete {formatCount(spectrum?.incomplete_families)}</span>
-      {spectrum?.available && <>
-        <span>{(spectrum.measured_frequency_millihz / 1000).toFixed(3)} Hz</span>
-        <span>{spectrum.cycle_count} cycles / {formatCount(spectrum.sample_count)} samples</span>
-        <span>Qualified through order {spectrum.qualified_max_order}</span>
-      </>}
-    </div>
-    {!spectrum?.available
-      ? <div className="waveform-config-placeholder"><strong>No complete spectrum yet</strong>
-        <span>The previous spectrum remains hidden until all 42 records for one family agree.</span></div>
-      : <div className="harmonic-panel">
-        <label>Channel<select value={selectedChannel}
-          onChange={(event) => setSelectedChannel(Number(event.target.value))}>
-          {spectrum.channels.map((candidate) => <option key={candidate.channel}
-            value={candidate.channel}>CH{candidate.channel} {candidate.name}</option>)}
-        </select></label>
-        <div className="harmonic-table" role="table" aria-label={`${channel?.name ?? ''} harmonic spectrum`}>
-          <div className="harmonic-row harmonic-header" role="row">
-            <span>Order</span><span>Magnitude</span><span>Spectrum</span><span>Angle</span>
-          </div>
-          {orders.map((point) => <div className="harmonic-row" role="row" key={point.order}>
-            <strong>{point.order}</strong>
-            <span>{point.magnitude_valid
-              ? `${point.magnitude.toPrecision(6)} ${channel?.unit ?? ''}`
-              : 'Unavailable'}</span>
-            <i><b style={{ width: point.magnitude_valid
-              ? `${Math.max(.25, point.magnitude / maximum * 100)}%` : '0%' }} /></i>
-            <span>{point.angle_valid ? `${point.angle_degrees.toFixed(3)}°` : '—'}</span>
-          </div>)}
-        </div>
-        <p className="simulator-note">Magnitudes are three-bin IEC-style subgroups. Angles use Va as the global reference: angle(Xh) − h·angle(Va1), wrapped to 0–360°. Raw FFT bins are diagnostic-only and are not exposed here.</p>
-      </div>}
-  </>
 }
 
 /**
@@ -1558,7 +1467,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   onUnauthorized: () => void
 }) {
   const [activeView, setActiveView] =
-    useState<'dashboard' | 'history' | 'waveforms' | 'configuration' | 'about' | 'developer'>('dashboard')
+    useState<'dashboard' | 'reading' | 'history' | 'waveforms' | 'configuration' | 'about' | 'developer'>('dashboard')
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
@@ -2057,6 +1966,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       <button type="button" className={activeView === 'dashboard' ? 'active' : ''}
         aria-current={activeView === 'dashboard' ? 'page' : undefined}
         onClick={() => setActiveView('dashboard')}>Dashboard</button>
+      <button type="button" className={activeView === 'reading' ? 'active' : ''}
+        aria-current={activeView === 'reading' ? 'page' : undefined}
+        onClick={() => setActiveView('reading')}>Reading</button>
       <button type="button" className={activeView === 'history' ? 'active' : ''}
         aria-current={activeView === 'history' ? 'page' : undefined}
         onClick={() => setActiveView('history')}>History</button>
@@ -2086,6 +1998,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           onSimulatorSubmit={saveSimulator} />
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
+      : activeView === 'reading'
+        ? <ReadingPage readings={readings} onUnauthorized={onUnauthorized} />
       : activeView === 'history'
         ? <HistoryPage onUnauthorized={onUnauthorized} />
       : activeView === 'waveforms'

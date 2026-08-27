@@ -36,6 +36,16 @@ dashboard then shows a plain waiting state explaining that 15 consecutive
 eligible basic blocks are needed. This is not an acquisition failure and does
 not degrade system health.
 
+The viewer-facing **Reading → Harmonics** tab reads the latest complete M16
+family from `GET /api/v1/meter/harmonics`. Its Voltage selection presents Va,
+Vb, and Vc together for orders 1–127; Current presents Ia, Ib, Ic, and In. Each
+cell contains subgroup magnitude and Va-referenced angle. The page never mixes
+partial families: it continues to hide the table until all 42 channel/chunk
+records agree. If live basic readings do not match the qualified 32 kSPS,
+6,400-frame conditioner profile, the page reports that profile mismatch rather
+than presenting the idle conditioner and FFT indicators as an unexplained
+failure.
+
 The aggregate grid frequency is **informative only**. Per
 IEC 61000-4-30:2025 the standardized frequency product is defined over its own
 10 s interval, which is not this tier, so the aggregate frequency card is
