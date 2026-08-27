@@ -43,6 +43,370 @@
   margin: 1.8rem 0 1.2rem;
 }
 
+.reading-interval-select {
+  min-width: 16rem;
+  color: var(--muted);
+  font-size: .68rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.reading-interval-select select {
+  min-width: 16rem;
+  padding: .62rem .75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: none;
+  color: #ecf5f5;
+  background: #0a151a;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.reading-interval-select select:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(84, 226, 164, .1);
+}
+
+.reading-derived-panel {
+  margin-bottom: 1rem;
+}
+
+.phasor-warning {
+  margin-bottom: 1rem;
+}
+
+.phasor-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: .85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.phasor-toolbar > div {
+  display: grid;
+  gap: .42rem;
+}
+
+.phasor-toolbar > span {
+  color: var(--muted);
+  font: .68rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.phasor-scope-toggle {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(6.5rem, 1fr));
+  min-width: 22rem;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #0a151a;
+}
+
+.phasor-scope-toggle button {
+  padding: .48rem .7rem;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-size: .7rem;
+  font-weight: 700;
+}
+
+.phasor-scope-toggle button:hover {
+  color: #dbe7e8;
+}
+
+.phasor-scope-toggle button:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+
+.phasor-scope-toggle button.active {
+  color: #071512;
+  background: var(--green);
+}
+
+.phasor-workspace {
+  display: grid;
+  grid-template-columns: minmax(22rem, .82fr) minmax(30rem, 1.18fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.phasor-readout-panel,
+.phasor-diagram-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+}
+
+.phasor-readout-panel > header,
+.phasor-diagram-panel > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.15rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.phasor-readout-panel > header .eyebrow,
+.phasor-diagram-panel > header .eyebrow {
+  margin: 0 0 .25rem;
+  font-size: .6rem;
+}
+
+.phasor-readout-panel h3,
+.phasor-diagram-panel h3 {
+  margin: 0;
+  color: #e2eded;
+  font-size: .96rem;
+}
+
+.phasor-diagram-panel > header > span {
+  color: var(--green);
+  font: .64rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+  white-space: nowrap;
+}
+
+.phasor-readout-list {
+  display: grid;
+}
+
+.phasor-readout-list article {
+  --phase-color: var(--green);
+  display: grid;
+  grid-template-columns: minmax(8rem, .65fr) minmax(14rem, 1fr);
+  align-items: center;
+  gap: 1rem;
+  padding: .9rem 1.15rem;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+}
+
+.phasor-readout-list article:last-child {
+  border-bottom: 0;
+}
+
+.phasor-readout-list article.phase-a,
+.phasor-vector.phase-a { --phase-color: #54e2a4; }
+.phasor-readout-list article.phase-b,
+.phasor-vector.phase-b { --phase-color: #57b8d9; }
+.phasor-readout-list article.phase-c,
+.phasor-vector.phase-c { --phase-color: #ffbd5c; }
+
+.phasor-readout-list article > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+}
+
+.phasor-readout-list article > div:first-child > i {
+  width: .65rem;
+  height: .65rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--phase-color);
+  box-shadow: 0 0 12px var(--phase-color);
+}
+
+.phasor-readout-list article.current > div:first-child > i {
+  border: 2px solid var(--phase-color);
+  background: transparent;
+}
+
+.phasor-readout-list article > div:first-child > span {
+  display: grid;
+  gap: .12rem;
+}
+
+.phasor-readout-list article > div:first-child strong {
+  color: #e2eded;
+  font-size: .82rem;
+}
+
+.phasor-readout-list article > div:first-child small {
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.phasor-readout-list dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .75rem;
+  margin: 0;
+}
+
+.phasor-readout-list dl > div {
+  min-width: 0;
+}
+
+.phasor-readout-list dt {
+  margin-bottom: .25rem;
+  color: var(--muted);
+  font-size: .56rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.phasor-readout-list dd {
+  margin: 0;
+  color: #e2eded;
+  font: .75rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+  white-space: nowrap;
+}
+
+.phasor-readout-list dd span,
+.phasor-readout-list dd em {
+  color: var(--muted);
+  font-size: .58rem;
+  font-style: normal;
+}
+
+.phasor-readout-note {
+  margin: 0;
+  padding: .9rem 1.15rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .64rem;
+  line-height: 1.5;
+}
+
+.phasor-diagram-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 31rem;
+  padding: 1rem;
+  background:
+    radial-gradient(circle at center, rgba(84, 226, 164, .045), transparent 65%),
+    #0c181e;
+}
+
+.phasor-diagram-frame svg {
+  display: block;
+  width: min(100%, 31rem);
+  height: auto;
+  overflow: visible;
+}
+
+.phasor-grid-ring,
+.phasor-grid-spoke {
+  fill: none;
+  stroke: rgba(178, 204, 208, .13);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.phasor-grid-ring.outer {
+  stroke: rgba(178, 204, 208, .28);
+}
+
+.phasor-grid-ring.nominal {
+  stroke: rgba(84, 226, 164, .32);
+  stroke-dasharray: 5 5;
+}
+
+.phasor-axis-label {
+  fill: #758a90;
+  font: 11px ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.phasor-vector {
+  --phase-color: var(--green);
+  color: var(--phase-color);
+}
+
+.phasor-vector line {
+  stroke: currentColor;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 4px currentColor);
+}
+
+.phasor-vector.current line {
+  stroke-width: 2.2;
+  stroke-dasharray: 7 5;
+}
+
+.phasor-vector polygon {
+  fill: currentColor;
+}
+
+.phasor-vector.current polygon {
+  fill: #0c181e;
+  stroke: currentColor;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.phasor-vector text {
+  fill: currentColor;
+  font: 700 12px ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.phasor-origin {
+  fill: #e2eded;
+  stroke: #081116;
+  stroke-width: 2;
+}
+
+.phasor-diagram-empty {
+  position: absolute;
+  display: grid;
+  gap: .3rem;
+  padding: .75rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(8, 17, 22, .92);
+  text-align: center;
+}
+
+.phasor-diagram-empty strong {
+  color: #dbe7e8;
+  font-size: .75rem;
+}
+
+.phasor-diagram-empty span {
+  color: var(--muted);
+  font-size: .62rem;
+}
+
+.phasor-diagram-panel > footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: .55rem 1.2rem;
+  padding: .75rem 1rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .59rem;
+}
+
+.phasor-diagram-panel > footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: .38rem;
+}
+
+.phasor-diagram-panel > footer i {
+  width: 1.2rem;
+  height: 0;
+  border-top: 2px solid var(--green);
+}
+
+.phasor-diagram-panel > footer i.current {
+  border-top-style: dashed;
+}
+
 .harmonic-controls {
   display: grid;
   grid-template-columns: auto minmax(9rem, auto);
@@ -737,6 +1101,16 @@
   line-height: 1.55;
 }
 
+@media (max-width: 1050px) {
+  .phasor-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .phasor-diagram-frame {
+    min-height: 28rem;
+  }
+}
+
 @media (max-width: 760px) {
   .reading-heading {
     padding-top: 3rem;
@@ -745,6 +1119,50 @@
   .reading-section-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .reading-subtabs {
+    overflow-x: auto;
+  }
+
+  .reading-subtabs button {
+    flex: 0 0 auto;
+  }
+
+  .reading-interval-select,
+  .reading-interval-select select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .phasor-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .phasor-scope-toggle {
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .phasor-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .phasor-readout-panel > header,
+  .phasor-diagram-panel > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .phasor-readout-list article {
+    grid-template-columns: 1fr;
+  }
+
+  .phasor-diagram-frame {
+    min-height: auto;
+    padding: .75rem;
   }
 
   .harmonic-controls {

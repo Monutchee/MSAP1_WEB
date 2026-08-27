@@ -4,14 +4,52 @@ import {
 } from 'react'
 import {
   api, ApiError, HarmonicChannel, HarmonicOrder, HarmonicPeriod,
-  HarmonicSpectrum,
-  MeterReadings,
+  HarmonicSpectrum, MeterAggregate, MeterReadingAttribute, MeterTenMinute,
+  MeterTwoHour, MeterReadings,
 } from '../api'
 import './reading.css'
 
+type ReadingSubtab = 'overview' | 'phasor' | 'harmonics'
+type ReadingInterval = 'basic' | 'aggregate' | 'min10' | 'hour2'
+type PhasorScope = 'voltage' | 'current' | 'all'
 type HarmonicGroup = 'voltage' | 'current'
 type HarmonicDisplay = 'magnitude' | 'percentage'
 type HarmonicChartView = 'lanes' | 'combined'
+
+interface IntervalChannel {
+  index: number
+  unit: string
+  valid: boolean
+  rms: number
+}
+
+interface ReadingIntervalSnapshot {
+  available: boolean
+  attributesSupported: boolean
+  attributes: MeterReadingAttribute[]
+  channels: IntervalChannel[]
+  sequence: number | undefined
+  timeQuality: 'unsynchronized' | 'synchronized' | 'holdover' | undefined
+}
+
+type PhasorPhase = 'a' | 'b' | 'c'
+
+interface PhasorDefinition {
+  label: string
+  description: string
+  group: Exclude<PhasorScope, 'all'>
+  phase: PhasorPhase
+  channel: number
+  angleKey: string
+}
+
+interface PhasorReading extends PhasorDefinition {
+  unit: string
+  magnitude: number
+  magnitudeValid: boolean
+  angle: number
+  angleValid: boolean
+}
 
 interface HarmonicOrderRange {
   first: number
@@ -36,6 +74,28 @@ const CHANNEL_GROUPS: Record<HarmonicGroup, ChannelColumn[]> = {
     { channel: 3, label: 'In' },
   ],
 }
+
+const READING_INTERVAL_LABELS: Record<ReadingInterval, string> = {
+  basic: '10/12-cycle finalized',
+  aggregate: '150/180-cycle aggregate',
+  min10: '10-minute finalized',
+  hour2: '2-hour finalized',
+}
+
+const PHASOR_DEFINITIONS: PhasorDefinition[] = [
+  { label: 'Va', description: 'Voltage A', group: 'voltage', phase: 'a', channel: 6,
+    angleKey: 'phase.angle.voltage.a' },
+  { label: 'Vb', description: 'Voltage B', group: 'voltage', phase: 'b', channel: 5,
+    angleKey: 'phase.angle.voltage.b' },
+  { label: 'Vc', description: 'Voltage C', group: 'voltage', phase: 'c', channel: 4,
+    angleKey: 'phase.angle.voltage.c' },
+  { label: 'Ia', description: 'Current A', group: 'current', phase: 'a', channel: 0,
+    angleKey: 'phase.angle.current.a' },
+  { label: 'Ib', description: 'Current B', group: 'current', phase: 'b', channel: 1,
+    angleKey: 'phase.angle.current.b' },
+  { label: 'Ic', description: 'Current C', group: 'current', phase: 'c', channel: 2,
+    angleKey: 'phase.angle.current.c' },
+]
 
 const ALL_HARMONIC_ORDERS = Array.from({ length: 127 }, (_, index) => index + 1)
 const FIRST_SUMMARY_ORDER = 2
@@ -501,43 +561,388 @@ function HarmonicOverview({ columns, channelByIndex, ordersByChannel, qualifiedM
   </section>
 }
 
+function ReadingIntervalSelect({ id, value, onChange }: {
+  id: string
+  value: ReadingInterval
+  onChange: (interval: ReadingInterval) => void
+}) {
+  return <label className="reading-interval-select" htmlFor={id}>
+    Measurement interval
+    <select id={id} value={value}
+      onChange={(event) => onChange(event.target.value as ReadingInterval)}>
+      <option value="basic">10/12 cycles</option>
+      <option value="aggregate">150/180 cycles</option>
+      <option value="min10">10 minutes</option>
+      <option value="hour2">2 hours</option>
+    </select>
+  </label>
+}
+
+function formatDerivedAttribute(attribute: MeterReadingAttribute) {
+  if (!attribute.valid) return '—'
+  if (attribute.unit === 'PF') return attribute.value.toFixed(4)
+  if (attribute.unit === 'W' || attribute.unit === 'VA' || attribute.unit === 'var') {
+    return attribute.value.toFixed(2)
+  }
+  return attribute.value.toFixed(3)
+}
+
+function DerivedAttributesPanel({ attributes, interval, sequence }: {
+  attributes: MeterReadingAttribute[]
+  interval: string
+  sequence: number | undefined
+}) {
+  return <section className="telemetry-panel reading-derived-panel">
+    <header className="temperature-panel-header">
+      <div><p className="eyebrow">Derived quantities</p>
+        <h2>Line-line, power, phasors, and unbalance</h2></div>
+      <span>{interval}{sequence === undefined ? '' : ` · record ${formatCount(sequence)}`}</span>
+    </header>
+    <div className="metric-grid developer-metrics">
+      {attributes.map((attribute) => <article className="metric" key={attribute.key}>
+        <span>{attribute.key}</span>
+        <strong>{formatDerivedAttribute(attribute)}
+          {attribute.valid && attribute.unit !== 'PF' && <small> {attribute.unit}</small>}
+        </strong>
+      </article>)}
+    </div>
+  </section>
+}
+
+function ReadingOverview({ interval, snapshot, intervalError, onIntervalChange }: {
+  interval: ReadingInterval
+  snapshot: ReadingIntervalSnapshot
+  intervalError: string
+  onIntervalChange: (interval: ReadingInterval) => void
+}) {
+  return <section className="reading-section" aria-labelledby="reading-overview-title">
+    <div className="reading-section-heading">
+      <div>
+        <p className="eyebrow">Reading overview</p>
+        <h2 id="reading-overview-title">Derived electrical quantities</h2>
+        <p>Inspect one coherent finalized interval without mixing measurement tiers.</p>
+      </div>
+      <ReadingIntervalSelect id="reading-overview-interval" value={interval}
+        onChange={onIntervalChange} />
+    </div>
+
+    {intervalError && <div className="error-banner"><strong>Interval unavailable</strong>
+      <span>{intervalError}</span></div>}
+    {!snapshot.available
+      ? <div className="harmonic-empty">
+        <strong>Waiting for {READING_INTERVAL_LABELS[interval]} data</strong>
+        <span>The newest complete interval will appear here when the metrology pipeline publishes it.</span>
+      </div>
+      : !snapshot.attributesSupported
+        ? <div className="harmonic-empty warning">
+          <strong>Derived quantities are not published at 150/180 cycles</strong>
+          <span>This endpoint currently carries RMS channels only. Power, phase angles, sequence,
+            and unbalance remain unavailable at this tier rather than being reconstructed in the browser.</span>
+        </div>
+        : snapshot.attributes.length === 0
+          ? <div className="harmonic-empty warning">
+            <strong>No derived attributes in this record</strong>
+            <span>The interval is available, but its derived-quantity catalog is empty.</span>
+          </div>
+          : <DerivedAttributesPanel attributes={snapshot.attributes}
+            interval={`${READING_INTERVAL_LABELS[interval]}` +
+              `${snapshot.timeQuality ? ` · ${snapshot.timeQuality}` : ''}`}
+            sequence={snapshot.sequence} />}
+  </section>
+}
+
+function normalizeAngle(angle: number) {
+  return ((angle % 360) + 360) % 360
+}
+
+function phasorReadings(snapshot: ReadingIntervalSnapshot): PhasorReading[] {
+  const channels = new Map(snapshot.channels.map((channel) => [channel.index, channel]))
+  const attributes = new Map(snapshot.attributes.map((attribute) => [attribute.key, attribute]))
+  return PHASOR_DEFINITIONS.map((definition) => {
+    const channel = channels.get(definition.channel)
+    const angle = attributes.get(definition.angleKey)
+    return {
+      ...definition,
+      unit: channel?.unit ?? (definition.group === 'voltage' ? 'V' : 'A'),
+      magnitude: channel?.rms ?? 0,
+      magnitudeValid: channel?.valid ?? false,
+      angle: angle?.value ?? 0,
+      angleValid: angle?.valid ?? false,
+    }
+  })
+}
+
+function PhasorDiagram({ readings, nominalVoltage }: {
+  readings: PhasorReading[]
+  nominalVoltage: number
+}) {
+  const center = 220
+  const outerRadius = 180
+  const valid = readings.filter((reading) =>
+    reading.magnitudeValid && reading.angleValid && reading.magnitude >= 0)
+  const maximumVoltage = Math.max(0, ...valid
+    .filter((reading) => reading.group === 'voltage')
+    .map((reading) => reading.magnitude))
+  const maximumCurrent = Math.max(0, ...valid
+    .filter((reading) => reading.group === 'current')
+    .map((reading) => reading.magnitude))
+  const includesVoltage = readings.some((reading) => reading.group === 'voltage')
+  const includesCurrent = readings.some((reading) => reading.group === 'current')
+  const spokes = Array.from({ length: 12 }, (_, index) => index * 30)
+  const voltageScaleMaximum = Math.max(nominalVoltage * 1.2, maximumVoltage * 1.05)
+  const nominalRadius = outerRadius * nominalVoltage / voltageScaleMaximum
+
+  const radiusFor = (reading: PhasorReading) => {
+    if (reading.group === 'voltage') {
+      return outerRadius * reading.magnitude / voltageScaleMaximum
+    }
+    if (maximumCurrent <= 0) return 0
+    return (reading.magnitude / maximumCurrent) *
+      (includesVoltage && includesCurrent ? outerRadius * 0.72 : outerRadius)
+  }
+
+  return <section className="phasor-diagram-panel" aria-labelledby="phasor-diagram-title">
+    <header>
+      <div><p className="eyebrow">Vector view</p>
+        <h3 id="phasor-diagram-title">Fundamental phasor diagram</h3></div>
+      <span>{includesVoltage
+        ? `${formatMagnitude(nominalVoltage)} V L-N nominal`
+        : 'Current normalized to Imax'}</span>
+    </header>
+    <div className="phasor-diagram-frame">
+      <svg viewBox="0 0 440 440" role="img"
+        aria-labelledby="phasor-diagram-svg-title phasor-diagram-svg-description">
+        <title id="phasor-diagram-svg-title">Fundamental voltage and current phasors</title>
+        <desc id="phasor-diagram-svg-description">Zero degrees points right and positive angles
+          rotate counter-clockwise. Voltage magnitude uses the configured nominal voltage.</desc>
+        <circle className="phasor-grid-ring outer" cx={center} cy={center} r={outerRadius} />
+        {[outerRadius / 3, outerRadius * 2 / 3].map((radius) => <circle
+          className="phasor-grid-ring"
+          cx={center} cy={center} r={radius} key={radius} />)}
+        {includesVoltage && <circle className="phasor-grid-ring nominal"
+          cx={center} cy={center} r={nominalRadius} />}
+        {spokes.map((angle) => {
+          const radians = angle * Math.PI / 180
+          return <line className="phasor-grid-spoke" x1={center} y1={center}
+            x2={center + Math.cos(radians) * outerRadius}
+            y2={center - Math.sin(radians) * outerRadius} key={angle} />
+        })}
+        <text className="phasor-axis-label" x="412" y="224" textAnchor="end">0°</text>
+        <text className="phasor-axis-label" x="220" y="18" textAnchor="middle">90°</text>
+        <text className="phasor-axis-label" x="27" y="224">180°</text>
+        <text className="phasor-axis-label" x="220" y="432" textAnchor="middle">270°</text>
+        {valid.map((reading) => {
+          const radians = normalizeAngle(reading.angle) * Math.PI / 180
+          const unitX = Math.cos(radians)
+          const unitY = -Math.sin(radians)
+          const radius = radiusFor(reading)
+          const x = center + unitX * radius
+          const y = center + unitY * radius
+          const perpendicularX = -unitY
+          const perpendicularY = unitX
+          const arrowBaseX = x - unitX * 12
+          const arrowBaseY = y - unitY * 12
+          const arrow = `${x},${y} ` +
+            `${arrowBaseX + perpendicularX * 5},${arrowBaseY + perpendicularY * 5} ` +
+            `${arrowBaseX - perpendicularX * 5},${arrowBaseY - perpendicularY * 5}`
+          const labelX = x + unitX * 14
+          const labelY = y + unitY * 14
+          const anchor = unitX > 0.25 ? 'start' : unitX < -0.25 ? 'end' : 'middle'
+          return <g className={`phasor-vector ${reading.group} phase-${reading.phase}`}
+            key={reading.label}>
+            <title>{reading.label}: {formatMagnitude(reading.magnitude)} {reading.unit} RMS,
+              {' '}{normalizeAngle(reading.angle).toFixed(3)} degrees</title>
+            <line x1={center} y1={center} x2={x} y2={y} />
+            <polygon points={arrow} />
+            <text x={labelX} y={labelY} textAnchor={anchor}>{reading.label}</text>
+          </g>
+        })}
+        <circle className="phasor-origin" cx={center} cy={center} r="4" />
+      </svg>
+      {valid.length === 0 && <div className="phasor-diagram-empty">
+        <strong>No valid phase angles</strong>
+        <span>The selected interval does not provide drawable phasors.</span>
+      </div>}
+    </div>
+    <footer>
+      {includesVoltage && <span><i className="voltage" />Voltage: solid, nominal-voltage scale</span>}
+      {includesCurrent && <span><i className="current" />Current: dashed, normalized to Imax</span>}
+      <span>0° right · positive counter-clockwise</span>
+    </footer>
+  </section>
+}
+
+function PhasorAngleView({ interval, snapshot, intervalError, nominalVoltage, scope,
+  onIntervalChange, onScopeChange }: {
+  interval: ReadingInterval
+  snapshot: ReadingIntervalSnapshot
+  intervalError: string
+  nominalVoltage: number
+  scope: PhasorScope
+  onIntervalChange: (interval: ReadingInterval) => void
+  onScopeChange: (scope: PhasorScope) => void
+}) {
+  const allReadings = phasorReadings(snapshot)
+  const displayed = allReadings.filter((reading) =>
+    scope === 'all' || reading.group === scope)
+
+  return <section className="reading-section" aria-labelledby="phasor-angle-title">
+    <div className="reading-section-heading">
+      <div>
+        <p className="eyebrow">Fundamental vectors</p>
+        <h2 id="phasor-angle-title">Phasor magnitude and angle</h2>
+        <p>Compare phase relationships from one coherent finalized interval.</p>
+      </div>
+      <ReadingIntervalSelect id="phasor-interval" value={interval}
+        onChange={onIntervalChange} />
+    </div>
+
+    {intervalError && <div className="error-banner"><strong>Interval unavailable</strong>
+      <span>{intervalError}</span></div>}
+    {!snapshot.available
+      ? <div className="harmonic-empty">
+        <strong>Waiting for {READING_INTERVAL_LABELS[interval]} phasors</strong>
+        <span>The diagram appears when the selected finalized interval is available.</span>
+      </div>
+      : <>
+        {!snapshot.attributesSupported && <div className="harmonic-empty warning phasor-warning">
+          <strong>Angles are unavailable at 150/180 cycles</strong>
+          <span>RMS magnitudes are shown below, but the aggregate endpoint does not publish phase-angle
+            attributes. The browser will not infer them.</span>
+        </div>}
+        <div className="phasor-toolbar">
+          <div>
+            <span className="harmonic-control-label" id="phasor-scope-label">Displayed vectors</span>
+            <div className="phasor-scope-toggle" role="group" aria-labelledby="phasor-scope-label">
+              {(['voltage', 'current', 'all'] as PhasorScope[]).map((option) =>
+                <button type="button" className={scope === option ? 'active' : ''}
+                  aria-pressed={scope === option} onClick={() => onScopeChange(option)} key={option}>
+                  {option === 'voltage' ? 'Voltage' : option === 'current' ? 'Current' : 'All'}
+                </button>)}
+            </div>
+          </div>
+          <span>{READING_INTERVAL_LABELS[interval]}
+            {snapshot.timeQuality ? ` · ${snapshot.timeQuality}` : ''}
+            {snapshot.sequence === undefined ? '' : ` · record ${formatCount(snapshot.sequence)}`}</span>
+        </div>
+        <div className="phasor-workspace">
+          <section className="phasor-readout-panel" aria-label="Phasor values">
+            <header><p className="eyebrow">Phasor values</p><h3>Magnitude and phase angle</h3></header>
+            <div className="phasor-readout-list">
+              {displayed.map((reading) => <article
+                className={`${reading.group} phase-${reading.phase}`} key={reading.label}>
+                <div><i /><span><strong>{reading.label}</strong><small>{reading.description}</small></span></div>
+                <dl>
+                  <div><dt>Magnitude</dt><dd>{reading.magnitudeValid
+                    ? <>{formatMagnitude(reading.magnitude)} <span>{reading.unit} RMS</span></>
+                    : <em>Unavailable</em>}</dd></div>
+                  <div><dt>Angle</dt><dd>{reading.angleValid
+                    ? <>{normalizeAngle(reading.angle).toFixed(3)}<span>°</span></>
+                    : <em>Unavailable</em>}</dd></div>
+                </dl>
+              </article>)}
+            </div>
+            <p className="phasor-readout-note">Neutral current is omitted because the metrology catalog
+              currently publishes phase angles for Ia, Ib, and Ic only.</p>
+          </section>
+          <PhasorDiagram readings={displayed} nominalVoltage={nominalVoltage} />
+        </div>
+      </>}
+  </section>
+}
+
 /**
  * Viewer-facing metrology results. Harmonic families are atomic: a previous
  * family is never mixed with a partial replacement while the API assembles
  * its seven channels and six chunks per channel.
  */
-export function ReadingPage({ readings, onUnauthorized }: {
+export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: {
   readings: MeterReadings | undefined
   onUnauthorized: () => void
+  systemNominalVoltage: number
 }) {
+  const [activeSubtab, setActiveSubtab] = useState<ReadingSubtab>('overview')
+  const [readingInterval, setReadingInterval] = useState<ReadingInterval>('basic')
+  const [phasorScope, setPhasorScope] = useState<PhasorScope>('voltage')
+  const [aggregate, setAggregate] = useState<MeterAggregate>()
+  const [tenMinute, setTenMinute] = useState<MeterTenMinute>()
+  const [twoHour, setTwoHour] = useState<MeterTwoHour>()
+  const [intervalError, setIntervalError] = useState('')
   const [group, setGroup] = useState<HarmonicGroup>('voltage')
   const [period, setPeriod] = useState<Exclude<HarmonicPeriod, 'basic'>>('cycles_150_180')
   const [display, setDisplay] = useState<HarmonicDisplay>('magnitude')
   const [chartView, setChartView] = useState<HarmonicChartView>('lanes')
   const [orderRange, setOrderRange] = useState<HarmonicOrderRange>(FULL_SUMMARY_RANGE)
   const [spectrum, setSpectrum] = useState<HarmonicSpectrum>()
-  const [error, setError] = useState('')
-
-  const load = useCallback(async () => {
-    try {
-      setSpectrum(await api.meterHarmonics(period))
-      setError('')
-    } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 401) {
-        onUnauthorized()
-        return
-      }
-      setError(reason instanceof Error ? reason.message : 'Unable to read harmonics')
-    }
-  }, [onUnauthorized, period])
+  const [harmonicError, setHarmonicError] = useState('')
 
   useEffect(() => {
+    if (activeSubtab === 'harmonics' || readingInterval === 'basic') {
+      setIntervalError('')
+      return
+    }
+
     let active = true
     let pending = false
     const refresh = async () => {
       if (!active || pending) return
       pending = true
-      await load()
+      try {
+        if (readingInterval === 'aggregate') {
+          const next = await api.meterAggregate()
+          if (active) setAggregate(next)
+        } else if (readingInterval === 'min10') {
+          const next = await api.meterTenMinute()
+          if (active) setTenMinute(next)
+        } else {
+          const next = await api.meterTwoHour()
+          if (active) setTwoHour(next)
+        }
+        if (active) setIntervalError('')
+      } catch (reason) {
+        if (!active) return
+        if (reason instanceof ApiError && reason.status === 401) {
+          onUnauthorized()
+          return
+        }
+        setIntervalError(reason instanceof Error
+          ? reason.message
+          : `Unable to read ${READING_INTERVAL_LABELS[readingInterval]} data`)
+      } finally {
+        pending = false
+      }
+    }
+    void refresh()
+    const pollMilliseconds = readingInterval === 'aggregate' ? 1000
+      : readingInterval === 'min10' ? 5000 : 10000
+    const timer = window.setInterval(refresh, pollMilliseconds)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [activeSubtab, onUnauthorized, readingInterval])
+
+  const loadHarmonics = useCallback(async () => {
+    try {
+      setSpectrum(await api.meterHarmonics(period))
+      setHarmonicError('')
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) {
+        onUnauthorized()
+        return
+      }
+      setHarmonicError(reason instanceof Error ? reason.message : 'Unable to read harmonics')
+    }
+  }, [onUnauthorized, period])
+
+  useEffect(() => {
+    if (activeSubtab !== 'harmonics') return
+    let active = true
+    let pending = false
+    const refresh = async () => {
+      if (!active || pending) return
+      pending = true
+      await loadHarmonics()
       pending = false
     }
     void refresh()
@@ -546,7 +951,7 @@ export function ReadingPage({ readings, onUnauthorized }: {
       active = false
       window.clearInterval(timer)
     }
-  }, [load])
+  }, [activeSubtab, loadHarmonics])
 
   const channels = CHANNEL_GROUPS[group]
   const channelByIndex = useMemo(() => new Map(
@@ -563,6 +968,44 @@ export function ReadingPage({ readings, onUnauthorized }: {
   const tableFirstOrder = orderRange.first === FIRST_SUMMARY_ORDER ? 1 : orderRange.first
   const tableOrders = ALL_HARMONIC_ORDERS.filter((order) =>
     order >= tableFirstOrder && order <= orderRange.last)
+  const aggregateResult = aggregate?.available ? aggregate : undefined
+  const tenMinuteResult = tenMinute?.available ? tenMinute : undefined
+  const twoHourResult = twoHour?.available ? twoHour : undefined
+  const intervalSnapshot: ReadingIntervalSnapshot = readingInterval === 'basic'
+    ? {
+      available: readings !== undefined,
+      attributesSupported: true,
+      attributes: readings?.attributes ?? [],
+      channels: readings?.channels ?? [],
+      sequence: readings?.sequence,
+      timeQuality: readings?.timing?.time_quality,
+    }
+    : readingInterval === 'aggregate'
+      ? {
+        available: aggregateResult !== undefined,
+        attributesSupported: false,
+        attributes: [],
+        channels: aggregateResult?.channels ?? [],
+        sequence: aggregateResult?.sequence,
+        timeQuality: aggregateResult?.time_quality,
+      }
+      : readingInterval === 'min10'
+        ? {
+          available: tenMinuteResult !== undefined,
+          attributesSupported: true,
+          attributes: tenMinuteResult?.attributes ?? [],
+          channels: tenMinuteResult?.channels ?? [],
+          sequence: tenMinuteResult?.sequence,
+          timeQuality: tenMinuteResult?.time_quality,
+        }
+        : {
+          available: twoHourResult !== undefined,
+          attributesSupported: true,
+          attributes: twoHourResult?.attributes ?? [],
+          channels: twoHourResult?.channels ?? [],
+          sequence: twoHourResult?.sequence,
+          timeQuality: twoHourResult?.time_quality,
+        }
 
   return <section className="reading-page">
     <header className="reading-heading">
@@ -572,10 +1015,26 @@ export function ReadingPage({ readings, onUnauthorized }: {
     </header>
 
     <nav className="reading-subtabs" aria-label="Reading sections">
-      <button className="active" type="button" aria-current="page">Harmonics</button>
+      <button className={activeSubtab === 'overview' ? 'active' : ''} type="button"
+        aria-current={activeSubtab === 'overview' ? 'page' : undefined}
+        onClick={() => setActiveSubtab('overview')}>Overview</button>
+      <button className={activeSubtab === 'phasor' ? 'active' : ''} type="button"
+        aria-current={activeSubtab === 'phasor' ? 'page' : undefined}
+        onClick={() => setActiveSubtab('phasor')}>Phasor Angle</button>
+      <button className={activeSubtab === 'harmonics' ? 'active' : ''} type="button"
+        aria-current={activeSubtab === 'harmonics' ? 'page' : undefined}
+        onClick={() => setActiveSubtab('harmonics')}>Harmonics</button>
     </nav>
 
-    <section className="reading-section" aria-labelledby="harmonic-spectrum-title">
+    {activeSubtab === 'overview'
+      ? <ReadingOverview interval={readingInterval} snapshot={intervalSnapshot}
+          intervalError={intervalError} onIntervalChange={setReadingInterval} />
+      : activeSubtab === 'phasor'
+        ? <PhasorAngleView interval={readingInterval} snapshot={intervalSnapshot}
+            intervalError={intervalError} nominalVoltage={Math.max(1, systemNominalVoltage)}
+            scope={phasorScope} onIntervalChange={setReadingInterval}
+            onScopeChange={setPhasorScope} />
+        : <section className="reading-section" aria-labelledby="harmonic-spectrum-title">
       <div className="reading-section-heading">
         <div>
           <p className="eyebrow">Metrology M16</p>
@@ -627,8 +1086,8 @@ export function ReadingPage({ readings, onUnauthorized }: {
         </div>
       </div>
 
-      {error && <div className="error-banner"><strong>Harmonics unavailable</strong>
-        <span>{error}</span></div>}
+      {harmonicError && <div className="error-banner"><strong>Harmonics unavailable</strong>
+        <span>{harmonicError}</span></div>}
 
       <div className="harmonic-summary" aria-label="Harmonic pipeline status">
 		<HarmonicStatus ok={spectrum?.interval_valid ?? false} pending={!spectrum}>Interval valid</HarmonicStatus>
@@ -703,6 +1162,6 @@ export function ReadingPage({ readings, onUnauthorized }: {
       <p className="harmonic-note">Magnitudes are RMS aggregation of three-bin IEC-style subgroup magnitudes.
         Percentage is derived independently for each channel as Hn / H1 × 100. Relative angles appear only
         when metrology supplies a valid angle; the browser does not infer phase for magnitude-only intervals.</p>
-    </section>
+    </section>}
   </section>
 }

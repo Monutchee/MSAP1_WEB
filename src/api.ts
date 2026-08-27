@@ -654,6 +654,9 @@ export interface ProductSettings {
     // Declared nominal grid frequency (50 or 60), selecting the
     // IEC 61000-4-30 basic block: 50 Hz -> 10 cycles, 60 Hz -> 12 cycles.
     nominal_frequency_hz: number
+    // Declared line-to-neutral system voltage used as the voltage-phasor
+    // radial reference. It does not rescale measured values.
+    system_nominal_voltage_v: number
     rms: RmsSettings
     frequency: FrequencyConfiguration
     // IEC 61000-4-30 Urms(1/2) event detection. reference_volts = 0 is

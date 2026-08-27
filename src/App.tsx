@@ -3,7 +3,7 @@ import {
   api, AdcSimulatorConfiguration, AdcSimulatorEvent, AdcSimulatorEventCommand,
   AdcSource, ApiError, DeveloperAbout, SingleCycleStatus, PowerQualityStatus,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
-  MeterAggregate, MeterAggregateResult, MeterReadingAttribute,
+  MeterAggregate, MeterAggregateResult,
   MeterTenMinute, MeterTenMinuteResult,
   MeterTwoHour, MeterTwoHourResult,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
@@ -322,31 +322,6 @@ function LongIntervalPending({ title, detail }: { title: string; detail: string 
   return <section className="aggregate-pending">
     <strong>{title}</strong>
     <span>{detail} Acquisition is not degraded while this is shown.</span>
-  </section>
-}
-
-function DerivedAttributesPanel({ attributes, interval }: {
-  attributes: MeterReadingAttribute[]
-  interval: string
-}) {
-  if (attributes.length === 0) return null
-  return <section className="telemetry-panel">
-    <header className="temperature-panel-header">
-      <div><p className="eyebrow">Derived quantities</p><h2>Line-line, power, phasors, and unbalance</h2></div>
-      <span>{interval}</span>
-    </header>
-    <div className="metric-grid developer-metrics">
-      {attributes.map((attribute) => (
-        <article className="metric" key={attribute.key}>
-          <span>{attribute.key}</span>
-          <strong>{attribute.valid
-            ? attribute.unit === 'PF'
-              ? attribute.value.toFixed(4)
-              : attribute.value.toFixed(attribute.unit === 'W' || attribute.unit === 'VA' || attribute.unit === 'var' ? 2 : 3)
-            : '—'}{attribute.unit !== 'PF' && <small> {attribute.unit}</small>}</strong>
-        </article>
-      ))}
-    </div>
   </section>
 }
 
@@ -1360,6 +1335,7 @@ function WaveformConfiguration() {
 
 function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
   nominalFrequency, onNominalFrequencyChange,
+  systemNominalVoltage, onSystemNominalVoltageChange,
   simulator, onSimulatorChange, onUnauthorized }: {
   configuration: FrequencyConfiguration | undefined
   configurationStatus: string
@@ -1367,6 +1343,8 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onSubmit: (event: FormEvent) => void
   nominalFrequency: number | undefined
   onNominalFrequencyChange: (nominalFrequency: number) => void
+  systemNominalVoltage: number | undefined
+  onSystemNominalVoltageChange: (systemNominalVoltage: number) => void
   simulator: AdcSimulatorConfiguration | undefined
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onUnauthorized: () => void
@@ -1418,6 +1396,10 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         <option value={60}>60 Hz</option>
       </select>
         <small>Basic measurement block: {(nominalFrequency ?? 60) === 50 ? 10 : 12} cycles</small></label>
+      <label>System nominal voltage (V L-N)<input type="number" min="1" max="1000000"
+        step="0.001" required value={systemNominalVoltage ?? 120}
+        onChange={(event) => onSystemNominalVoltageChange(Number(event.target.value))} />
+        <small>Voltage reference for the phasor diagram; measurements are unchanged</small></label>
       {simulator && <label>Signal frequency (Hz)<input type="number" min="0.001" max="1000" step="0.001"
         value={simulator.frequency_hz}
         onChange={(event) => onSimulatorChange({
@@ -1492,6 +1474,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [frequencyConfiguration, setFrequencyConfiguration] =
     useState<FrequencyConfiguration>()
   const [nominalFrequency, setNominalFrequency] = useState<number>()
+  const [systemNominalVoltage, setSystemNominalVoltage] = useState<number>()
   const [configurationStatus, setConfigurationStatus] = useState('')
   const [adcSource, setAdcSource] = useState<AdcSource>()
   const [simulator, setSimulator] = useState<AdcSimulatorConfiguration>()
@@ -1534,6 +1517,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           })
           setFrequencyConfiguration(activeSettings.settings.metering.frequency)
           setNominalFrequency(activeSettings.settings.metering.nominal_frequency_hz)
+          setSystemNominalVoltage(
+            activeSettings.settings.metering.system_nominal_voltage_v ?? 120)
         }
       })
       .catch((reason) => { if (active) handleError(reason) })
@@ -1578,6 +1563,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         // zero-crossing configuration but is edited by the same form.
         if (nominalFrequency !== undefined) {
           settings.metering.nominal_frequency_hz = nominalFrequency
+        }
+        if (systemNominalVoltage !== undefined) {
+          settings.metering.system_nominal_voltage_v = systemNominalVoltage
         }
         // The simulator signal frequency is edited on the Meter form but
         // persists through the same adc.simulator path the simulator pane
@@ -1999,7 +1987,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
       : activeView === 'reading'
-        ? <ReadingPage readings={readings} onUnauthorized={onUnauthorized} />
+        ? <ReadingPage readings={readings} onUnauthorized={onUnauthorized}
+            systemNominalVoltage={systemNominalVoltage ?? 120} />
       : activeView === 'history'
         ? <HistoryPage onUnauthorized={onUnauthorized} />
       : activeView === 'waveforms'
@@ -2012,6 +2001,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             onSubmit={saveFrequencyConfiguration}
             nominalFrequency={nominalFrequency}
             onNominalFrequencyChange={setNominalFrequency}
+            systemNominalVoltage={systemNominalVoltage}
+            onSystemNominalVoltageChange={setSystemNominalVoltage}
             simulator={simulator}
             onSimulatorChange={setSimulator}
             onUnauthorized={onUnauthorized} />
@@ -2109,12 +2100,6 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
                       : <><span>no {isTwoHourTier ? 'two-hour' : 'ten-minute'} value</span><span>invalid</span></>} />
                 })}
               </section>
-              <DerivedAttributesPanel attributes={longIntervalResult.attributes}
-                interval={isLiveTier
-                  ? `${isTwoHourTier ? 'Two-hour' : 'Ten-minute'} live partial (non-normative)`
-                  : isTwoHourTier
-                    ? 'Two-hour finalized tier (12 × 10-minute)'
-                    : 'Clock-aligned ten-minute finalized tier'} />
             </>
           : <LongIntervalPending
               title={isLiveTier
@@ -2137,8 +2122,6 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
               ? <><span>mean {channel.mean_micro_units} µ</span><span>{channel.rms_count} count</span></>
               : <><span>not implemented</span><span>invalid</span></>} />)}
         </section>
-        <DerivedAttributesPanel attributes={readings?.attributes ?? []}
-          interval="10/12-cycle finalized tier" />
         </>}
     </>}
   </main>
