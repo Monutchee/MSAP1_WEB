@@ -1,6 +1,7 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import {
   api, AdcSimulatorConfiguration, AdcSimulatorEvent, AdcSimulatorEventCommand,
+  AdcSimulatorHarmonic,
   AdcSource, ApiError, DeveloperAbout, SingleCycleStatus, PowerQualityStatus,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
   MeterAggregate, MeterAggregateResult,
@@ -845,7 +846,122 @@ function NumberField({ label, value, onValue, min, max, step }: {
       setDraft(event.target.value)
       const parsed = Number(event.target.value)
       if (event.target.value !== '' && Number.isFinite(parsed)) onValue(parsed)
-    }} /></label>
+  }} /></label>
+}
+
+const HARMONIC_RATIO_QUANTUM = 1 / 65536
+// The old number input used 1.000015 as its HTML step base, producing values
+// such as 5.000015 when the operator selected H5. Snap that decimal artefact,
+// but preserve a genuine one-Q16-LSB interharmonic (5.000015258789...).
+const HARMONIC_INTEGER_SNAP = HARMONIC_RATIO_QUANTUM - 0.00000015
+const SIMULATOR_CHANNEL_NAMES = ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va'] as const
+
+function isIntegerHarmonic(order: number): boolean {
+  return Math.abs(order - Math.round(order)) < HARMONIC_INTEGER_SNAP
+}
+
+/** Mirror the RPU's Q16.16 wire representation and remove UI step artefacts. */
+function normalizeToneRatio(order: number): number {
+  if (isIntegerHarmonic(order)) return Math.round(order)
+  const quantized = Math.round(order * 65536) / 65536
+  return quantized
+}
+
+function toneTargets(channels: AdcSimulatorHarmonic['channels']): string {
+  if (channels === 'voltage') return 'Va, Vb, Vc'
+  if (channels === 'current') return 'Ia, Ib, Ic, In'
+  return 'all voltage and current lanes'
+}
+
+function SimulatorToneCard({ harmonic, index, baseFrequencyHz, sampleRateHz,
+  channels, onChange, onRemove }: {
+  harmonic: AdcSimulatorHarmonic
+  index: number
+  baseFrequencyHz: number
+  sampleRateHz: number
+  channels: AdcSimulatorConfiguration['channels']
+  onChange: (changes: Partial<AdcSimulatorHarmonic>) => void
+  onRemove: () => void
+}) {
+  const mode = isIntegerHarmonic(harmonic.order) ? 'harmonic' : 'interharmonic'
+  const ratio = normalizeToneRatio(harmonic.order)
+  const harmonicOrder = Math.min(127, Math.max(2, Math.round(ratio)))
+  const toneFrequencyHz = ratio * baseFrequencyHz
+  const nyquistHz = sampleRateHz / 2
+  const ratioValid = ratio > 1 && ratio < 128
+  const belowNyquist = toneFrequencyHz * 2 < sampleRateHz
+  const laneIncluded = (channel: number) => harmonic.channels === 'all' ||
+    (harmonic.channels === 'current' && channel < 4) ||
+    (harmonic.channels === 'voltage' && channel >= 4 && channel < 7)
+  const expected = channels
+    .filter((channel) => channel.channel < 7 && laneIncluded(channel.channel))
+    .map((channel) => {
+      const name = SIMULATOR_CHANNEL_NAMES[channel.channel]
+      const unit = channel.channel < 4 ? 'A' : 'V'
+      return `${name} ${(channel.rms * harmonic.percent / 100).toFixed(3)} ${unit}`
+    })
+  const switchMode = (next: 'harmonic' | 'interharmonic') => {
+    if (next === mode) return
+    onChange({ order: next === 'harmonic'
+      ? harmonicOrder
+      : Math.min(127.5, harmonicOrder + 0.5) })
+  }
+  const maximumToneHz = Math.min(baseFrequencyHz * 128, nyquistHz)
+
+  return <article className={`simulator-tone-card ${!ratioValid || !belowNyquist ? 'invalid' : ''}`}>
+    <header>
+      <div><span>Slot {index + 1}</span>
+        <strong>{mode === 'harmonic' ? `H${harmonicOrder}` : 'Interharmonic'}</strong></div>
+      <div className="simulator-tone-kind" role="group" aria-label={`Slot ${index + 1} tone type`}>
+        <button type="button" className={mode === 'harmonic' ? 'active' : ''}
+          onClick={() => switchMode('harmonic')}>Harmonic</button>
+        <button type="button" className={mode === 'interharmonic' ? 'active' : ''}
+          onClick={() => switchMode('interharmonic')}>Interharmonic</button>
+      </div>
+      <button className="simulator-tone-remove" type="button" onClick={onRemove}
+        aria-label={`Remove tone slot ${index + 1}`}>Remove</button>
+    </header>
+    <div className="simulator-tone-fields">
+      {mode === 'harmonic'
+        ? <NumberField label="Harmonic order" min="2" max="127" step="1"
+            value={harmonicOrder}
+            onValue={(value) => onChange({ order: Math.round(value) })} />
+        : <NumberField label="Tone frequency (Hz)"
+            min={(baseFrequencyHz + 0.001).toFixed(3)}
+            max={Math.max(baseFrequencyHz + 0.001, maximumToneHz - 0.001).toFixed(3)}
+            step="0.001" value={toneFrequencyHz}
+            onValue={(value) => onChange({ order: value / baseFrequencyHz })} />}
+      <NumberField label="Level (% of H1)" min="0" max="99.9"
+        step="0.1" value={harmonic.percent}
+        onValue={(value) => onChange({ percent: value })} />
+      <NumberField label="Additional phase (degrees)" min="0" max="359.999"
+        step="0.001" value={wrapDegrees(harmonic.phase_degrees)}
+        onValue={(value) => onChange({ phase_degrees: wrapDegrees(value) })} />
+      <label>Apply to<select value={harmonic.channels}
+        onChange={(event) => onChange({
+          channels: event.target.value as AdcSimulatorHarmonic['channels'],
+        })}>
+        <option value="voltage">Voltage · Va Vb Vc</option>
+        <option value="current">Current · Ia Ib Ic In</option>
+        <option value="all">All measurement lanes</option>
+      </select></label>
+    </div>
+    <div className="simulator-tone-preview">
+      <span><small>Generated tone</small><strong>{toneFrequencyHz.toFixed(3)} Hz</strong>
+        <em>{mode === 'harmonic' ? `${harmonicOrder} × ${baseFrequencyHz.toFixed(3)} Hz` : `ratio ${ratio.toFixed(6)}`}</em></span>
+      <span><small>Targets</small><strong>{toneTargets(harmonic.channels)}</strong>
+        <em>{expected.join(' · ') || 'No receiving lanes'}</em></span>
+      <span><small>Sample-rate check</small>
+        <strong className={belowNyquist ? 'good' : 'bad'}>
+          {belowNyquist ? 'Inside Nyquist band' : 'Tone is not representable'}</strong>
+        <em>{sampleRateHz.toLocaleString()} SPS · Nyquist {nyquistHz.toLocaleString()} Hz</em></span>
+    </div>
+    {!ratioValid && <p className="simulator-tone-error">The frequency ratio must be above 1 and below 128.</p>}
+    {ratioValid && !belowNyquist && <p className="simulator-tone-error">
+      Lower the tone frequency or select a higher ADC sample rate before applying this profile.</p>}
+    {harmonic.percent === 0 && <p className="simulator-tone-hint">
+      A 0% level is valid but produces no visible spectral component.</p>}
+  </article>
 }
 
 function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
@@ -860,10 +976,19 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   simulatorStatus: string
   onSourceChange: (source: AdcSource['source']) => void
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
-  onSimulatorSubmit: (event: FormEvent) => void
+  onSimulatorSubmit: (activate: boolean) => void
 }) {
   const [activeTab, setActiveTab] =
     useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'waveform' | 'about' | 'logs'>('overview')
+  const sampleRateHz = health?.adc.sample_rate_hz || readings?.sample_rate_hz || 128000
+  const simulatorSelected = adcSource?.source === 'simulator'
+  const tonesValid = simulator !== undefined && simulator.frequency_hz > 0 &&
+    simulator.frequency_hz <= 1000 && simulator.harmonics.every((harmonic) => {
+      const ratio = normalizeToneRatio(harmonic.order)
+      return ratio > 1 && ratio < 128 && harmonic.percent >= 0 &&
+        harmonic.percent <= 99.9 &&
+        ratio * simulator.frequency_hz * 2 < sampleRateHz
+    })
   return <section className="developer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
@@ -914,11 +1039,22 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       </div>
       <SingleCycleReadout onUnauthorized={onUnauthorized} />
       <PowerQualityPanel onUnauthorized={onUnauthorized} />
-      {simulator && <form className="simulator-form" onSubmit={onSimulatorSubmit}>
+      {simulator && <form className="simulator-form" onSubmit={(event) => {
+        event.preventDefault()
+        onSimulatorSubmit(true)
+      }}>
         <div className="simulator-summary">
+          <StatusPill ok={simulatorSelected && simulator.healthy} neutral={!simulatorSelected}>
+            {simulatorSelected ? 'PL simulator active' : 'Profile staged · physical ADC active'}</StatusPill>
+          <span>Generation: 0x{simulator.active_generation.toString(16).padStart(8, '0')}</span>
           <span>Frames: {formatCount(simulator.generated_frames)}</span>
           <span>Saturation: {formatCount(simulator.saturation_count)}</span>
           <span>Missed ticks: {formatCount(simulator.missed_sample_count)}</span>
+          <span>{sampleRateHz.toLocaleString()} SPS</span>
+        </div>
+        <div className="simulator-form-heading">
+          <div><p className="eyebrow">Base waveform</p><h3>Signal and continuity</h3></div>
+          <span>H1 establishes every tone's level and phase reference.</span>
         </div>
         <div className="simulator-global-grid">
           <NumberField label="Signal frequency (Hz)" min="0.001" max="1000"
@@ -933,6 +1069,10 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
               })} />
             Preserve phase across apply
           </label>
+        </div>
+        <div className="simulator-form-heading compact">
+          <div><p className="eyebrow">Fundamentals</p><h3>Measurement lanes</h3></div>
+          <span>RMS, phase, offset, and noise before spectral tones are added.</span>
         </div>
         <div className="simulator-channel-grid">
           {simulator.channels.filter((channel) => channel.channel < 7).map((channel) => {
@@ -958,54 +1098,47 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
             </fieldset>
           })}
         </div>
-        <div className="simulator-channel-grid">
+        <section className="simulator-tone-section">
+          <div className="simulator-form-heading compact">
+            <div><p className="eyebrow">Spectrum injection</p><h3>Harmonics and interharmonics</h3></div>
+            <span>{simulator.harmonics.length}/4 slots configured</span>
+          </div>
+          {!simulatorSelected && <div className="simulator-staged-note">
+            <strong>The physical ADC is active.</strong>
+            <span>These tones are saved as a profile but cannot appear in readings until you switch to the PL simulator. Use “Save and use PL simulator” below to do both atomically.</span>
+          </div>}
+          <div className="simulator-tone-list">
           {simulator.harmonics.map((harmonic, index) => {
             const update = (changes: Partial<typeof harmonic>) => onSimulatorChange({
               ...simulator,
               harmonics: simulator.harmonics.map((candidate, position) =>
                 position === index ? { ...candidate, ...changes } : candidate),
             })
-            return <fieldset key={index}>
-              <legend>Harmonic slot {index + 1}
-                <button type="button" onClick={() => onSimulatorChange({
+            return <SimulatorToneCard key={index} harmonic={harmonic} index={index}
+              baseFrequencyHz={simulator.frequency_hz} sampleRateHz={sampleRateHz}
+              channels={simulator.channels} onChange={update}
+              onRemove={() => onSimulatorChange({
                   ...simulator,
                   harmonics: simulator.harmonics.filter((_, position) => position !== index),
-                })}>Remove</button>
-              </legend>
-              <NumberField label="Frequency ratio (>1, <128)" min="1.000015"
-                max="127.999985" step="0.0001"
-                value={harmonic.order}
-                onValue={(value) => update({ order: value })} />
-              <NumberField label="Amplitude (% of fundamental)" min="0" max="99.9"
-                step="0.1" value={harmonic.percent}
-                onValue={(value) => update({ percent: value })} />
-              <NumberField label="Extra phase (degrees)" min="0" max="359.999"
-                step="0.001" value={wrapDegrees(harmonic.phase_degrees)}
-                onValue={(value) => update({ phase_degrees: wrapDegrees(value) })} />
-              <label className="simulator-checkbox">
-                Lanes
-                <select value={harmonic.channels}
-                  onChange={(event) => update({
-                    channels: event.target.value as typeof harmonic.channels,
-                  })}>
-                  <option value="voltage">Voltage</option>
-                  <option value="current">Current</option>
-                  <option value="all">All</option>
-                </select>
-              </label>
-            </fieldset>
+                })} />
           })}
-          {simulator.harmonics.length < 4 && <fieldset>
-            <legend>Harmonics</legend>
-            <button type="button" onClick={() => onSimulatorChange({
+          </div>
+          {simulator.harmonics.length < 4 && <button className="simulator-tone-add"
+            type="button" onClick={() => onSimulatorChange({
               ...simulator,
               harmonics: [...simulator.harmonics,
                 { order: 3, percent: 5, phase_degrees: 0, channels: 'voltage' as const }],
-            })}>Add harmonic slot</button>
-          </fieldset>}
-        </div>
-        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC counts before they are sent to PL: RMS to a sine peak, DC as a constant offset, and noise RMS to a uniform white fluctuation so readings jitter like a real grid input. Tone slots ride on top: integer ratios inject harmonics and fractional ratios inject interharmonics, each at a percentage of every receiving lane's fundamental. The lane's phase offset is scaled by the ratio (so a 3rd harmonic on a balanced set is zero-sequence, as on a real grid). The signal frequency here is the generated waveform; the declared nominal grid frequency stays under Configuration → Meter. Preserve phase keeps the waveform and packet framing continuous across a reconfiguration. Phase angles use the 0&ndash;359.999&deg; convention; out-of-range or negative entries wrap onto it. NOTE the rotation direction: standard ABC rotation is A=0&deg;, B=240&deg;, C=120&deg; (phase B lags A) &mdash; entering the ascending 0/120/240 produces REVERSE (ACB) rotation, which the unbalance readings will flag with a collapsed positive sequence.</p>
-        <div className="frequency-actions"><button type="submit">Apply and save</button>
+            })}><span>+</span><strong>Add spectral tone</strong>
+              <small>Choose an integer harmonic order or an interharmonic frequency</small></button>}
+        </section>
+        <details className="simulator-explainer"><summary>Signal-model details</summary>
+          <p>CH7 remains zero and invalid. RMS values become signed 24-bit ADC sine peaks; DC is a constant offset and noise is uniform white fluctuation. Each spectral tone is a percentage of its receiving lane's fundamental. Lane phase is scaled by the frequency ratio, so a balanced third harmonic is naturally zero-sequence. Standard ABC rotation is A=0&deg;, B=240&deg;, C=120&deg;; 0/120/240 selects reverse ACB rotation. Preserve phase keeps waveform and packet framing continuous across a reconfiguration.</p>
+        </details>
+        <div className="frequency-actions simulator-actions">
+          {!simulatorSelected && <button className="secondary" type="button"
+            disabled={!tonesValid} onClick={() => onSimulatorSubmit(false)}>Save profile only</button>}
+          <button type="submit" disabled={!tonesValid}>
+            {simulatorSelected ? 'Apply to running simulator' : 'Save and use PL simulator'}</button>
           <span>{simulatorStatus}</span></div>
       </form>}
     </>
@@ -1593,22 +1726,39 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     }
   }
 
-  async function saveSimulator(event: FormEvent) {
-    event.preventDefault()
+  async function saveSimulator(activate: boolean) {
     if (!simulator) return
     setSimulatorStatus('Saving…')
     try {
+      const normalized = {
+        ...simulator,
+        harmonics: simulator.harmonics.map((harmonic) => ({
+          ...harmonic,
+          order: normalizeToneRatio(harmonic.order),
+          phase_degrees: wrapDegrees(harmonic.phase_degrees),
+        })),
+      }
       await saveSettings((settings) => {
+        if (activate) settings.adc.source = 'simulator'
         settings.adc.simulator = {
-          frequency_hz: simulator.frequency_hz,
-          preserve_phase: simulator.preserve_phase,
-          channels: simulator.channels,
-          harmonics: simulator.harmonics,
+          frequency_hz: normalized.frequency_hz,
+          preserve_phase: normalized.preserve_phase,
+          channels: normalized.channels,
+          harmonics: normalized.harmonics,
         }
       })
-      setSimulatorStatus('Applied and saved.')
+      setSimulator(normalized)
+      if (activate) {
+        setAdcSource((current) => current ? { ...current, source: 'simulator' } : current)
+        setSourceStatus('PL simulator selected.')
+      }
+      setSimulatorStatus(activate
+        ? 'Profile applied; waiting for the next harmonic family.'
+        : 'Profile saved. Physical ADC remains active.')
     } catch (reason) {
-      setSimulatorStatus('')
+      setSimulatorStatus(reason instanceof Error
+        ? `Apply failed: ${reason.message}`
+        : 'Apply failed.')
       handleError(reason)
     }
   }
