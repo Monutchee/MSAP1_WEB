@@ -125,7 +125,17 @@ export interface MeterBlockTiming {
   cycle_locked: boolean
   free_run_fallback: boolean
   time_quality: 'unsynchronized' | 'synchronized' | 'holdover'
+  utc_start_nanoseconds?: number
+  utc_uncertainty_nanoseconds?: number
 }
+
+export type MeterReadingQuality =
+  | 'valid'
+  | 'unavailable'
+  | 'invalid'
+  | 'out_of_range'
+  | 'timed_out'
+  | 'arithmetic_error'
 
 export interface MeterReadings {
   sequence: number
@@ -143,6 +153,8 @@ export interface MeterReadings {
   /** Catalog attributes beyond per-channel RMS (VLL, power, PF, ...):
    *  base engineering units; optional so stale documents render. */
   attributes?: MeterReadingAttribute[]
+  /** True only after all derived siblings belong to `sequence`. */
+  record_complete: boolean
   // Present on every basic record since the MTR1-v3 format; kept
   // optional so a stale document renders gracefully.
   timing?: MeterBlockTiming
@@ -153,6 +165,8 @@ export interface MeterReadingAttribute {
   unit: string
   valid: boolean
   value: number
+  quality: MeterReadingQuality
+  source_sequence: number
 }
 
 /**
@@ -203,6 +217,9 @@ export interface MeterAggregateResult {
   /** Catalog attributes from the aggregate POWER/PHASOR/UNBAL record family. */
   attributes: MeterReadingAttribute[]
   frequency: MeterAggregateFrequency
+  record_complete: boolean
+  utc_start_nanoseconds?: number
+  utc_uncertainty_nanoseconds?: number
 }
 
 /**
@@ -252,6 +269,9 @@ export interface MeterTenMinuteResult {
   time_aligned: boolean
   contaminated: boolean
   boundary_valid: boolean
+  record_complete: boolean
+  utc_start_nanoseconds?: number
+  utc_uncertainty_nanoseconds?: number
 }
 
 export interface MeterTenMinutePending {
