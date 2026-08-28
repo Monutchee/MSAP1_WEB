@@ -38,12 +38,49 @@ dashboard then shows a plain waiting state explaining that 15 consecutive
 eligible basic blocks are needed. This is not an acquisition failure and does
 not degrade system health.
 
-The viewer-facing **Reading → Overview** and **Reading → Phasor Angle** tabs use
-the same finalized interval selector. Basic, 150/180-cycle, clock-aligned
-10-minute, and 2-hour results all render their backend-provided derived
-attributes; the browser never reconstructs power, sequence components, or
-phase angles from RMS magnitudes. Ten-minute and 2-hour selections remain in a
-waiting state until their first finalized interval exists.
+The viewer-facing Reading workspace is organized as **Overview**, **Power**,
+**Phasor & Unbalance**, **Sequence**, and **Harmonics**. Overview is an operator
+summary of line-line voltage, authoritative total power, operating mode, and
+unbalance; raw dotted attribute names are reserved for collapsed Advanced
+tables. The first four tabs share one finalized interval context bar for Basic,
+150/180-cycle, clock-aligned 10-minute, and 2-hour records. The browser commits
+a record only when `record_complete` is true and every attribute
+`source_sequence` matches the top-level sequence. A brief incomplete sibling
+update retains the last complete record from the same configuration generation;
+a generation change clears it immediately. Every visible card, matrix, and
+chart therefore changes from one interval view model. The Reading workspace
+does not request the 10-minute or two-hour `/live` preview routes and never
+substitutes browser request time for unavailable measurement UTC.
+
+**Reading → Power** defaults to the backend's authoritative Total scope and
+offers labeled A/B/C/Total controls, summary cards, a phase matrix,
+power-factor context, and a signed equal-scale SVG P–Q₁ operating point.
+Positive P means import, negative P export, positive Q₁ inductive/lagging, and
+negative Q₁ capacitive/leading. The dashed apparent-power envelope is backend
+S; the separately displayed `sqrt(P² + Q₁²)` resultant need not match it in
+distorted or unbalanced conditions. Totals are never reconstructed from phase
+values. The current backend does not supply THD, fundamental P₁/S₁, or
+algorithm profile/version, so those items remain explicitly unavailable and no
+distortion component or fundamental triangle is invented.
+
+**Reading → Phasor & Unbalance** retains the fundamental phasor diagram and
+adds friendly unbalance summaries plus a collapsed exact-quality/provenance
+table. Basic, 150/180-cycle, 10-minute, and 2-hour selections remain in a
+waiting state until their first complete finalized record exists. Wye mode
+labels voltage vectors Va/Vb/Vc against the L-N nominal reference; delta mode
+labels them Vab/Vbc/Vca against the L-L nominal reference.
+
+**Reading → Sequence** provides an original operator visualization of the
+backend's authoritative positive, negative, and zero sequence RMS magnitudes,
+together with its negative- and zero-sequence ratios. It uses labeled magnitude
+lanes, shared-scale ratio meters, and plain-language phase-order guidance rather
+than copying an external meter screen. The API does not publish sequence
+angles, so the browser does not reconstruct a polar sequence plot or infer
+angles from phase data. Its star (wye) or delta connection diagram comes from
+`metering.measurement_topology`: the setting changes nominal-voltage labels and
+zero-sequence interpretation guidance only, never the PL/RPU sequence
+calculation. For star, `system_nominal_voltage_v` is line-to-neutral (L-N); for
+delta, it is line-to-line (L-L).
 
 The viewer-facing **Reading → Harmonics** tab reads the latest complete M16
 family from `GET /api/v1/meter/harmonics`. Its Voltage selection presents Va,
@@ -56,8 +93,11 @@ angle. The page never mixes partial families: it continues to hide the table
 until all 42 channel/chunk records agree. The embedded conditioner selects an exact `L/25` conversion
 profile for every
 supported 1, 2, 4, 8, 16, 32, 64, or 128 kSPS capture rate and always supplies
-4,096 samples to the XFFT. While a new profile is applying, the page keeps the
-previous family hidden until grid lock and all 42 replacement records agree.
+4,096 samples to the XFFT. Reading-page values use a larger operator type scale;
+the combined harmonic chart is approximately 240 px high and individual lanes
+approximately 96 px, without reducing labels on narrow layouts. While a new
+profile is applying, the page keeps the previous family hidden until grid lock
+and all 42 replacement records agree.
 
 The aggregate grid frequency is **informative only**. Per
 IEC 61000-4-30:2025 the standardized frequency product is defined over its own
@@ -67,7 +107,9 @@ measurement. Meter controls are separated under the administrator-only
 **Configuration → Meter** view, including the grid-frequency zero-crossing
 settings, the declared nominal grid frequency selector (50 Hz or 60 Hz),
 which chooses the IEC 61000-4-30 basic measurement block of 10 or 12 cycles,
-and the generator signal frequency that drives the ADC simulator source.
+the presentation-only star (wye) or delta measurement connection, the matching
+L-N or L-L nominal-voltage reference, and the generator signal frequency that
+drives the ADC simulator source.
 
 Administrators can open **Developer → Overview** to monitor the ZynqMP LPD,
 FPD, and PL temperatures discovered from their Linux hwmon labels, together
@@ -110,6 +152,7 @@ Node.js 20.20).
 
 ```sh
 npm ci
+npm test
 npm run build
 ```
 

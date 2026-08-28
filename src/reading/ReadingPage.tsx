@@ -4,32 +4,26 @@ import {
 } from 'react'
 import {
   api, ApiError, HarmonicChannel, HarmonicOrder, HarmonicPeriod,
-  HarmonicSpectrum, MeterAggregate, MeterReadingAttribute, MeterTenMinute,
+  HarmonicSpectrum, MeterAggregate, MeterTenMinute,
   MeterTwoHour, MeterReadings,
 } from '../api'
+import type { MeasurementTopology } from '../api'
+import { PowerView } from './PowerView'
+import { SequenceView, SEQUENCE_CONTEXT_KEYS } from './SequenceView'
+import {
+  READING_INTERVAL_LABELS, aggregateReadingRecord, attribute, basicReadingRecord,
+  effectiveQuality, formatReading, formatUtc, friendlyAttributeName, isValidReading,
+  operatingMode, powerAttribute, selectCommittedRecord, updateCompleteRecordCache,
+  visibleQuality, type CompleteRecordCache, type PowerScope, type ReadingInterval,
+  type ReadingRecord,
+} from './readingModel'
 import './reading.css'
 
-type ReadingSubtab = 'overview' | 'phasor' | 'harmonics'
-type ReadingInterval = 'basic' | 'aggregate' | 'min10' | 'hour2'
+type ReadingSubtab = 'overview' | 'power' | 'phasor' | 'sequence' | 'harmonics'
 type PhasorScope = 'voltage' | 'current' | 'all'
 type HarmonicGroup = 'voltage' | 'current'
 type HarmonicDisplay = 'magnitude' | 'percentage'
 type HarmonicChartView = 'lanes' | 'combined'
-
-interface IntervalChannel {
-  index: number
-  unit: string
-  valid: boolean
-  rms: number
-}
-
-interface ReadingIntervalSnapshot {
-  available: boolean
-  attributes: MeterReadingAttribute[]
-  channels: IntervalChannel[]
-  sequence: number | undefined
-  timeQuality: 'unsynchronized' | 'synchronized' | 'holdover' | undefined
-}
 
 type PhasorPhase = 'a' | 'b' | 'c'
 
@@ -74,13 +68,6 @@ const CHANNEL_GROUPS: Record<HarmonicGroup, ChannelColumn[]> = {
   ],
 }
 
-const READING_INTERVAL_LABELS: Record<ReadingInterval, string> = {
-  basic: '10/12-cycle finalized',
-  aggregate: '150/180-cycle aggregate',
-  min10: '10-minute finalized',
-  hour2: '2-hour finalized',
-}
-
 const PHASOR_DEFINITIONS: PhasorDefinition[] = [
   { label: 'Va', description: 'Voltage A', group: 'voltage', phase: 'a', channel: 6,
     angleKey: 'phase.angle.voltage.a' },
@@ -94,6 +81,23 @@ const PHASOR_DEFINITIONS: PhasorDefinition[] = [
     angleKey: 'phase.angle.current.b' },
   { label: 'Ic', description: 'Current C', group: 'current', phase: 'c', channel: 2,
     angleKey: 'phase.angle.current.c' },
+]
+
+const OVERVIEW_CONTEXT_KEYS = [
+  'voltage.ll.ab.rms', 'voltage.ll.bc.rms', 'voltage.ll.ca.rms',
+  'power.active.total', 'power.reactive.total', 'power.apparent.total',
+  'power.factor.total', 'unbalance.voltage', 'unbalance.current',
+]
+const POWER_CONTEXT_KEYS = [
+  ...['active', 'reactive', 'apparent', 'factor'].flatMap((metric) =>
+    ['a', 'b', 'c', 'total'].map((scope) => `power.${metric}.${scope}`)),
+  ...['a', 'b', 'c', 'total'].map((scope) => `power.factor.displacement.${scope}`),
+  'unbalance.voltage', 'unbalance.current',
+]
+const PHASOR_CONTEXT_KEYS = [
+  ...PHASOR_DEFINITIONS.map((definition) => definition.angleKey),
+  'unbalance.voltage', 'unbalance.current',
+  'unbalance.voltage.zero', 'unbalance.current.zero',
 ]
 
 const ALL_HARMONIC_ORDERS = Array.from({ length: 127 }, (_, index) => index + 1)
@@ -250,7 +254,7 @@ function harmonicTooltipText(detail: HarmonicTooltipDetail) {
     : `${formatPercentage(detail.percentage)} % H1`
   const angle = detail.angle === undefined
     ? 'Unavailable'
-    : `${detail.angle.toFixed(3)} deg`
+    : `${detail.angle.toFixed(3)}°`
   return `${detail.channelLabel} H${detail.order}\n` +
     `Magnitude: ${formatMagnitude(detail.magnitude)} ${detail.unit}\n` +
     `Percentage: ${percentage}\nRelative angle: ${angle}`
@@ -577,70 +581,118 @@ function ReadingIntervalSelect({ id, value, onChange }: {
   </label>
 }
 
-function formatDerivedAttribute(attribute: MeterReadingAttribute) {
-  if (!attribute.valid) return '—'
-  if (attribute.unit === 'PF') return attribute.value.toFixed(4)
-  if (attribute.unit === 'W' || attribute.unit === 'VA' || attribute.unit === 'var') {
-    return attribute.value.toFixed(2)
-  }
-  return attribute.value.toFixed(3)
-}
-
-function DerivedAttributesPanel({ attributes, interval, sequence }: {
-  attributes: MeterReadingAttribute[]
-  interval: string
-  sequence: number | undefined
-}) {
-  return <section className="telemetry-panel reading-derived-panel">
-    <header className="temperature-panel-header">
-      <div><p className="eyebrow">Derived quantities</p>
-        <h2>Line-line, power, phasors, and unbalance</h2></div>
-      <span>{interval}{sequence === undefined ? '' : ` · record ${formatCount(sequence)}`}</span>
-    </header>
-    <div className="metric-grid developer-metrics">
-      {attributes.map((attribute) => <article className="metric" key={attribute.key}>
-        <span>{attribute.key}</span>
-        <strong>{formatDerivedAttribute(attribute)}
-          {attribute.valid && attribute.unit !== 'PF' && <small> {attribute.unit}</small>}
-        </strong>
-      </article>)}
-    </div>
-  </section>
-}
-
-function ReadingOverview({ interval, snapshot, intervalError, onIntervalChange }: {
+function RecordContextBar({ interval, record, section, intervalError, onIntervalChange }: {
   interval: ReadingInterval
-  snapshot: ReadingIntervalSnapshot
+  record: ReadingRecord | undefined
+  section: Exclude<ReadingSubtab, 'harmonics'>
   intervalError: string
   onIntervalChange: (interval: ReadingInterval) => void
 }) {
-  return <section className="reading-section" aria-labelledby="reading-overview-title">
-    <div className="reading-section-heading">
-      <div>
-        <p className="eyebrow">Reading overview</p>
-        <h2 id="reading-overview-title">Derived electrical quantities</h2>
-        <p>Inspect one coherent finalized interval without mixing measurement tiers.</p>
-      </div>
-      <ReadingIntervalSelect id="reading-overview-interval" value={interval}
-        onChange={onIntervalChange} />
-    </div>
+  const contextKeys = section === 'overview' ? OVERVIEW_CONTEXT_KEYS
+    : section === 'power' ? POWER_CONTEXT_KEYS
+      : section === 'sequence' ? SEQUENCE_CONTEXT_KEYS : PHASOR_CONTEXT_KEYS
+  const quality = record ? visibleQuality(contextKeys.map((key) => attribute(record, key))) : undefined
+  const qualityLabel = quality === 'valid' ? 'Visible values valid'
+    : quality === 'partial' ? 'Some values unavailable'
+      : quality === 'invalid' ? 'Invalid values present' : 'Awaiting complete record'
+  const synchronization = record?.timeQuality === 'synchronized' ? 'Synchronized'
+    : record?.timeQuality === 'holdover' ? 'Clock holdover'
+      : record?.timeQuality === 'unsynchronized' ? 'Unsynchronized' : 'Timing unavailable'
+  const uncertainty = record?.utcUncertaintyNanoseconds === undefined ? undefined
+    : record.utcUncertaintyNanoseconds / 1_000_000
 
+  return <section className="record-context" aria-label="Finalized meter record context">
+    <ReadingIntervalSelect id="shared-reading-interval" value={interval}
+      onChange={onIntervalChange} />
+    <div className="record-context-status">
+      <span className="record-mode-badge">Finalized</span>
+      <span className={`record-quality quality-${quality ?? 'waiting'}`}>{qualityLabel}</span>
+      <span>{synchronization}</span>
+      {record?.flags.map((flag) => <span className="record-flag" key={flag}>{flag}</span>)}
+    </div>
+    <dl>
+      <div><dt>Record sequence</dt><dd>{record ? formatCount(record.sequence) : '—'}</dd></div>
+      <div><dt>UTC start</dt><dd>{formatUtc(record?.utcStartNanoseconds)}</dd></div>
+      <div><dt>UTC uncertainty</dt><dd>{uncertainty === undefined
+        ? '—' : `±${uncertainty.toLocaleString('en-US', { maximumFractionDigits: 3 })} ms`}</dd></div>
+    </dl>
     {intervalError && <div className="error-banner"><strong>Interval unavailable</strong>
       <span>{intervalError}</span></div>}
-    {!snapshot.available
+  </section>
+}
+
+function OverviewReading({ record, name, metricKey, digits }: {
+  record: ReadingRecord
+  name: string
+  metricKey: string
+  digits: number
+}) {
+  const reading = attribute(record, metricKey)
+  const quality = effectiveQuality(reading)
+  return <article className={`overview-reading quality-${quality.replaceAll('_', '-')}`}>
+    <span>{name}</span>
+    <strong>{formatReading(reading, digits)}</strong>
+    <small>{quality.replaceAll('_', ' ')}</small>
+  </article>
+}
+
+function ReadingOverview({ interval, record }: {
+  interval: ReadingInterval
+  record: ReadingRecord | undefined
+}) {
+  const active = powerAttribute(record, 'active', 'total')
+  const reactive = powerAttribute(record, 'reactive', 'total')
+  return <section className="reading-section" aria-labelledby="reading-overview-title">
+    <div className="reading-section-heading compact">
+      <div>
+        <p className="eyebrow">Operator summary</p>
+        <h2 id="reading-overview-title">Electrical state at a glance</h2>
+        <p>{READING_INTERVAL_LABELS[interval]} · one coherent backend record.</p>
+      </div>
+    </div>
+    {!record
       ? <div className="harmonic-empty">
         <strong>Waiting for {READING_INTERVAL_LABELS[interval]} data</strong>
-        <span>The newest complete interval will appear here when the metrology pipeline publishes it.</span>
+        <span>The previous generation is cleared immediately; this view commits only when every
+          derived sibling has the same source sequence.</span>
       </div>
-      : snapshot.attributes.length === 0
-        ? <div className="harmonic-empty warning">
-          <strong>No derived attributes in this record</strong>
-          <span>The interval is available, but its derived-quantity catalog is empty.</span>
-        </div>
-        : <DerivedAttributesPanel attributes={snapshot.attributes}
-          interval={`${READING_INTERVAL_LABELS[interval]}` +
-            `${snapshot.timeQuality ? ` · ${snapshot.timeQuality}` : ''}`}
-          sequence={snapshot.sequence} />}
+      : <div className="overview-groups">
+        <section className="overview-group" aria-labelledby="overview-voltage-heading">
+          <header><p className="eyebrow">Line-line voltage</p>
+            <h3 id="overview-voltage-heading">Three-phase voltage</h3></header>
+          <div className="overview-reading-grid three">
+            <OverviewReading record={record} name="Vab" metricKey="voltage.ll.ab.rms" digits={3} />
+            <OverviewReading record={record} name="Vbc" metricKey="voltage.ll.bc.rms" digits={3} />
+            <OverviewReading record={record} name="Vca" metricKey="voltage.ll.ca.rms" digits={3} />
+          </div>
+        </section>
+        <section className="overview-group" aria-labelledby="overview-power-heading">
+          <header><p className="eyebrow">Total power</p>
+            <h3 id="overview-power-heading">Authoritative system totals</h3></header>
+          <div className="overview-reading-grid four">
+            <OverviewReading record={record} name="Active power P"
+              metricKey="power.active.total" digits={2} />
+            <OverviewReading record={record} name="Apparent power S"
+              metricKey="power.apparent.total" digits={2} />
+            <OverviewReading record={record} name="True power factor"
+              metricKey="power.factor.total" digits={4} />
+            <OverviewReading record={record} name="Fundamental reactive power Q₁"
+              metricKey="power.reactive.total" digits={2} />
+          </div>
+          <div className="overview-operating-mode"><span>Operating mode</span>
+            <strong>{operatingMode(active, reactive)}</strong></div>
+        </section>
+        <section className="overview-group" aria-labelledby="overview-unbalance-heading">
+          <header><p className="eyebrow">Power quality</p>
+            <h3 id="overview-unbalance-heading">Unbalance</h3></header>
+          <div className="overview-reading-grid two">
+            <OverviewReading record={record} name="Voltage unbalance"
+              metricKey="unbalance.voltage" digits={3} />
+            <OverviewReading record={record} name="Current unbalance"
+              metricKey="unbalance.current" digits={3} />
+          </div>
+        </section>
+      </div>}
   </section>
 }
 
@@ -648,26 +700,38 @@ function normalizeAngle(angle: number) {
   return ((angle % 360) + 360) % 360
 }
 
-function phasorReadings(snapshot: ReadingIntervalSnapshot): PhasorReading[] {
-  const channels = new Map(snapshot.channels.map((channel) => [channel.index, channel]))
-  const attributes = new Map(snapshot.attributes.map((attribute) => [attribute.key, attribute]))
+function phasorReadings(
+  record: ReadingRecord,
+  topology: MeasurementTopology,
+): PhasorReading[] {
+  const channels = new Map(record.channels.map((channel) => [channel.index, channel]))
+  const attributes = new Map(record.attributes.map((attribute) => [attribute.key, attribute]))
   return PHASOR_DEFINITIONS.map((definition) => {
     const channel = channels.get(definition.channel)
     const angle = attributes.get(definition.angleKey)
+    const deltaVoltage = topology === 'delta' && definition.group === 'voltage'
+      ? {
+          a: { label: 'Vab', description: 'Line voltage AB' },
+          b: { label: 'Vbc', description: 'Line voltage BC' },
+          c: { label: 'Vca', description: 'Line voltage CA' },
+        }[definition.phase]
+      : undefined
     return {
       ...definition,
+      ...deltaVoltage,
       unit: channel?.unit ?? (definition.group === 'voltage' ? 'V' : 'A'),
       magnitude: channel?.rms ?? 0,
       magnitudeValid: channel?.valid ?? false,
       angle: angle?.value ?? 0,
-      angleValid: angle?.valid ?? false,
+      angleValid: isValidReading(angle),
     }
   })
 }
 
-function PhasorDiagram({ readings, nominalVoltage }: {
+function PhasorDiagram({ readings, nominalVoltage, topology }: {
   readings: PhasorReading[]
   nominalVoltage: number
+  topology: MeasurementTopology
 }) {
   const [activeLabel, setActiveLabel] = useState<string>()
   const center = 220
@@ -701,7 +765,7 @@ function PhasorDiagram({ readings, nominalVoltage }: {
       <div><p className="eyebrow">Vector view</p>
         <h3 id="phasor-diagram-title">Fundamental phasor diagram</h3></div>
       <span>{includesVoltage
-        ? `${formatMagnitude(nominalVoltage)} V L-N nominal`
+        ? `${formatMagnitude(nominalVoltage)} V ${topology === 'delta' ? 'L-L' : 'L-N'} nominal`
         : 'Current normalized to Imax'}</span>
     </header>
     <div className="phasor-diagram-frame">
@@ -709,7 +773,8 @@ function PhasorDiagram({ readings, nominalVoltage }: {
         aria-labelledby="phasor-diagram-svg-title phasor-diagram-svg-description">
         <title id="phasor-diagram-svg-title">Fundamental voltage and current phasors</title>
         <desc id="phasor-diagram-svg-description">Zero degrees points right and positive angles
-          rotate counter-clockwise. Voltage magnitude uses the configured nominal voltage.</desc>
+          rotate counter-clockwise. Voltage magnitude uses the configured
+          {topology === 'delta' ? ' line-to-line' : ' line-to-neutral'} nominal voltage.</desc>
         <circle className="phasor-grid-ring outer" cx={center} cy={center} r={outerRadius} />
         {[outerRadius / 3, outerRadius * 2 / 3].map((radius) => <circle
           className="phasor-grid-ring"
@@ -804,34 +869,66 @@ function PhasorDiagram({ readings, nominalVoltage }: {
   </section>
 }
 
-function PhasorAngleView({ interval, snapshot, intervalError, nominalVoltage, scope,
-  onIntervalChange, onScopeChange }: {
+function PhasorUnbalanceSummary({ record }: { record: ReadingRecord }) {
+  const groups = [
+    { title: 'Unbalance ratios', entries: [
+      ['Voltage unbalance', 'unbalance.voltage'],
+      ['Current unbalance', 'unbalance.current'],
+      ['Voltage zero-sequence ratio', 'unbalance.voltage.zero'],
+      ['Current zero-sequence ratio', 'unbalance.current.zero'],
+    ] },
+  ]
+  return <div className="phasor-context-grid">
+    {groups.map((group) => <section className="phasor-context-card" key={group.title}>
+      <h3>{group.title}</h3><dl>{group.entries.map(([label, key]) => {
+        const reading = attribute(record, key)
+        return <div key={key}><dt>{label}</dt><dd>{formatReading(reading, 3)}</dd></div>
+      })}</dl>
+    </section>)}
+  </div>
+}
+
+function RawPhasorDetails({ record }: { record: ReadingRecord }) {
+  const readings = record.attributes.filter((reading) =>
+    reading.key.startsWith('phase.angle.') || PHASOR_CONTEXT_KEYS.includes(reading.key))
+  return <details className="reading-advanced">
+    <summary>Advanced phasor and unbalance details <span>{readings.length} fields</span></summary>
+    <div className="reading-advanced-scroll"><table>
+      <thead><tr><th>Friendly name</th><th>Raw key</th><th>Value / unit</th>
+        <th>Quality</th><th>Source sequence</th></tr></thead>
+      <tbody>{readings.map((reading) => <tr key={reading.key}>
+        <td>{friendlyAttributeName(reading.key)}</td><td><code>{reading.key}</code></td>
+        <td>{formatReading(reading, 3)}</td><td>{effectiveQuality(reading)}</td>
+        <td>{formatCount(reading.source_sequence)}</td>
+      </tr>)}</tbody>
+    </table></div>
+  </details>
+}
+
+function PhasorUnbalanceView({
+  interval, record, nominalVoltage, topology, scope, onScopeChange,
+}: {
   interval: ReadingInterval
-  snapshot: ReadingIntervalSnapshot
-  intervalError: string
+  record: ReadingRecord | undefined
   nominalVoltage: number
+  topology: MeasurementTopology
   scope: PhasorScope
-  onIntervalChange: (interval: ReadingInterval) => void
   onScopeChange: (scope: PhasorScope) => void
 }) {
-  const allReadings = phasorReadings(snapshot)
+  const allReadings = record ? phasorReadings(record, topology) : []
   const displayed = allReadings.filter((reading) =>
     scope === 'all' || reading.group === scope)
 
   return <section className="reading-section" aria-labelledby="phasor-angle-title">
-    <div className="reading-section-heading">
+    <div className="reading-section-heading compact">
       <div>
         <p className="eyebrow">Fundamental vectors</p>
-        <h2 id="phasor-angle-title">Phasor magnitude and angle</h2>
-        <p>Compare phase relationships from one coherent finalized interval.</p>
+        <h2 id="phasor-angle-title">Phasor &amp; unbalance</h2>
+        <p>Compare phase relationships and unbalance from one coherent record.</p>
       </div>
-      <ReadingIntervalSelect id="phasor-interval" value={interval}
-        onChange={onIntervalChange} />
     </div>
 
-    {intervalError && <div className="error-banner"><strong>Interval unavailable</strong>
-      <span>{intervalError}</span></div>}
-    {!snapshot.available
+    {!record
       ? <div className="harmonic-empty">
         <strong>Waiting for {READING_INTERVAL_LABELS[interval]} phasors</strong>
         <span>The diagram appears when the selected finalized interval is available.</span>
@@ -848,9 +945,7 @@ function PhasorAngleView({ interval, snapshot, intervalError, nominalVoltage, sc
                 </button>)}
             </div>
           </div>
-          <span>{READING_INTERVAL_LABELS[interval]}
-            {snapshot.timeQuality ? ` · ${snapshot.timeQuality}` : ''}
-            {snapshot.sequence === undefined ? '' : ` · record ${formatCount(snapshot.sequence)}`}</span>
+          <span>Every vector is labeled by phase · record {formatCount(record.sequence)}</span>
         </div>
         <div className="phasor-workspace">
           <section className="phasor-readout-panel" aria-label="Phasor values">
@@ -872,8 +967,11 @@ function PhasorAngleView({ interval, snapshot, intervalError, nominalVoltage, sc
             <p className="phasor-readout-note">Neutral current is omitted because the metrology catalog
               currently publishes phase angles for Ia, Ib, and Ic only.</p>
           </section>
-          <PhasorDiagram readings={displayed} nominalVoltage={nominalVoltage} />
+          <PhasorDiagram readings={displayed} nominalVoltage={nominalVoltage}
+            topology={topology} />
         </div>
+        <PhasorUnbalanceSummary record={record} />
+        <RawPhasorDetails record={record} />
       </>}
   </section>
 }
@@ -883,14 +981,19 @@ function PhasorAngleView({ interval, snapshot, intervalError, nominalVoltage, sc
  * family is never mixed with a partial replacement while the API assembles
  * its seven channels and six chunks per channel.
  */
-export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: {
+export function ReadingPage({
+  readings, onUnauthorized, systemNominalVoltage, measurementTopology,
+}: {
   readings: MeterReadings | undefined
   onUnauthorized: () => void
   systemNominalVoltage: number
+  measurementTopology: MeasurementTopology
 }) {
   const [activeSubtab, setActiveSubtab] = useState<ReadingSubtab>('overview')
   const [readingInterval, setReadingInterval] = useState<ReadingInterval>('basic')
+  const [powerScope, setPowerScope] = useState<PowerScope>('total')
   const [phasorScope, setPhasorScope] = useState<PhasorScope>('all')
+  const [completeRecords, setCompleteRecords] = useState<CompleteRecordCache>({})
   const [aggregate, setAggregate] = useState<MeterAggregate>()
   const [tenMinute, setTenMinute] = useState<MeterTenMinute>()
   const [twoHour, setTwoHour] = useState<MeterTwoHour>()
@@ -998,37 +1101,26 @@ export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: 
   const aggregateResult = aggregate?.available ? aggregate : undefined
   const tenMinuteResult = tenMinute?.available ? tenMinute : undefined
   const twoHourResult = twoHour?.available ? twoHour : undefined
-  const intervalSnapshot: ReadingIntervalSnapshot = readingInterval === 'basic'
-    ? {
-      available: readings !== undefined,
-      attributes: readings?.attributes ?? [],
-      channels: readings?.channels ?? [],
-      sequence: readings?.sequence,
-      timeQuality: readings?.timing?.time_quality,
-    }
-    : readingInterval === 'aggregate'
-      ? {
-        available: aggregateResult !== undefined,
-        attributes: aggregateResult?.attributes ?? [],
-        channels: aggregateResult?.channels ?? [],
-        sequence: aggregateResult?.sequence,
-        timeQuality: aggregateResult?.time_quality,
-      }
-      : readingInterval === 'min10'
-        ? {
-          available: tenMinuteResult !== undefined,
-          attributes: tenMinuteResult?.attributes ?? [],
-          channels: tenMinuteResult?.channels ?? [],
-          sequence: tenMinuteResult?.sequence,
-          timeQuality: tenMinuteResult?.time_quality,
-        }
-        : {
-          available: twoHourResult !== undefined,
-          attributes: twoHourResult?.attributes ?? [],
-          channels: twoHourResult?.channels ?? [],
-          sequence: twoHourResult?.sequence,
-          timeQuality: twoHourResult?.time_quality,
-        }
+  const basicCandidate = useMemo(() => basicReadingRecord(readings), [readings])
+  const aggregateCandidate = useMemo(() =>
+    aggregateReadingRecord('aggregate', aggregateResult), [aggregateResult])
+  const tenMinuteCandidate = useMemo(() =>
+    aggregateReadingRecord('min10', tenMinuteResult), [tenMinuteResult])
+  const twoHourCandidate = useMemo(() =>
+    aggregateReadingRecord('hour2', twoHourResult), [twoHourResult])
+  const intervalCandidate = readingInterval === 'basic' ? basicCandidate
+    : readingInterval === 'aggregate' ? aggregateCandidate
+      : readingInterval === 'min10' ? tenMinuteCandidate : twoHourCandidate
+  const activeGeneration = readings?.configuration_generation ??
+    intervalCandidate?.configurationGeneration
+
+  useEffect(() => {
+    setCompleteRecords((current) => updateCompleteRecordCache(
+      current, readingInterval, intervalCandidate, activeGeneration))
+  }, [activeGeneration, intervalCandidate, readingInterval])
+
+  const committedRecord = selectCommittedRecord(
+    completeRecords, readingInterval, intervalCandidate, activeGeneration)
 
   return <section className="reading-page">
     <header className="reading-heading">
@@ -1041,24 +1133,43 @@ export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: 
       <button className={activeSubtab === 'overview' ? 'active' : ''} type="button"
         aria-current={activeSubtab === 'overview' ? 'page' : undefined}
         onClick={() => setActiveSubtab('overview')}>Overview</button>
+      <button className={activeSubtab === 'power' ? 'active' : ''} type="button"
+        aria-current={activeSubtab === 'power' ? 'page' : undefined}
+        onClick={() => setActiveSubtab('power')}>Power</button>
       <button className={activeSubtab === 'phasor' ? 'active' : ''} type="button"
         aria-current={activeSubtab === 'phasor' ? 'page' : undefined}
-        onClick={() => setActiveSubtab('phasor')}>Phasor Angle</button>
+        onClick={() => setActiveSubtab('phasor')}>Phasor &amp; Unbalance</button>
+      <button className={activeSubtab === 'sequence' ? 'active' : ''} type="button"
+        aria-current={activeSubtab === 'sequence' ? 'page' : undefined}
+        onClick={() => setActiveSubtab('sequence')}>Sequence</button>
       <button className={activeSubtab === 'harmonics' ? 'active' : ''} type="button"
         aria-current={activeSubtab === 'harmonics' ? 'page' : undefined}
         onClick={() => setActiveSubtab('harmonics')}>Harmonics</button>
     </nav>
 
+    {activeSubtab !== 'harmonics' && <RecordContextBar interval={readingInterval}
+      record={committedRecord} section={activeSubtab} intervalError={intervalError}
+      onIntervalChange={setReadingInterval} />}
+
     {activeSubtab === 'overview'
-      ? <ReadingOverview interval={readingInterval} snapshot={intervalSnapshot}
-          intervalError={intervalError} onIntervalChange={setReadingInterval} />
-      : activeSubtab === 'phasor'
-        ? <PhasorAngleView interval={readingInterval} snapshot={intervalSnapshot}
-            intervalError={intervalError} nominalVoltage={Math.max(1, systemNominalVoltage)}
-            scope={phasorScope} onIntervalChange={setReadingInterval}
-            onScopeChange={setPhasorScope} />
-        : <section className="reading-section" aria-labelledby="harmonic-spectrum-title">
-      <div className="reading-section-heading">
+      ? <ReadingOverview interval={readingInterval} record={committedRecord} />
+      : activeSubtab === 'power'
+        ? committedRecord
+          ? <PowerView record={committedRecord} scope={powerScope}
+              onScopeChange={setPowerScope} />
+          : <section className="reading-section"><div className="harmonic-empty">
+            <strong>Waiting for {READING_INTERVAL_LABELS[readingInterval]} power data</strong>
+            <span>Power cards, chart, and matrix commit together after all source sequences agree.</span>
+          </div></section>
+        : activeSubtab === 'phasor'
+          ? <PhasorUnbalanceView interval={readingInterval} record={committedRecord}
+              nominalVoltage={Math.max(1, systemNominalVoltage)} scope={phasorScope}
+              topology={measurementTopology} onScopeChange={setPhasorScope} />
+          : activeSubtab === 'sequence'
+            ? <SequenceView interval={readingInterval} record={committedRecord}
+                topology={measurementTopology} />
+            : <section className="reading-section" aria-labelledby="harmonic-spectrum-title">
+      <div className="reading-section-heading harmonic-section-heading">
         <div>
           <p className="eyebrow">Metrology M16</p>
           <h2 id="harmonic-spectrum-title">Harmonic subgroup spectrum</h2>

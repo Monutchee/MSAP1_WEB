@@ -30,6 +30,13 @@
   `PUT /api/v1/settings/active`; a successful request hot-applies and
   atomically saves the settings. Do not persist settings in browser storage.
   Factory reset remains an administrator-only, explicitly confirmed operation.
+- Treat `metering.measurement_topology` as presentation metadata. Use `wye` to
+  label the nominal voltage L-N and `delta` to label it L-L, but never infer a
+  topology from readings or change/reconstruct metrology algorithms in the
+  browser.
+- The Sequence reading view may display the backend's authoritative sequence
+  magnitudes and unbalance ratios. Do not synthesize sequence angles or a polar
+  sequence plot until those angles are explicitly published by the API.
 - Configuration -> Modbus edits `ProductSettings.modbus` through the same
   complete-document settings endpoint. Keep TCP/RTU validation aligned with
   the backend schema; the browser must never bind sockets or open serial ports.
