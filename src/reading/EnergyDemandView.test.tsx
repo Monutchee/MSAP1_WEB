@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { EnergyDemandView, formatExactInteger } from './EnergyDemandView'
+import { EnergyDemandView, formatEnergyValue, formatExactInteger } from './EnergyDemandView'
 
 const group = (base: string) => ({
   phase_a: base,
@@ -58,6 +58,9 @@ describe('Energy & Demand view', () => {
   it('formats counters and session identifiers through BigInt', () => {
     expect(formatExactInteger('9007199254740993')).toBe('9,007,199,254,740,993')
     expect(formatExactInteger('-9007199254740993')).toBe('-9,007,199,254,740,993')
+    expect(formatEnergyValue('9007199254740993', 'Wh')).toBe('9,007,199,254.740993')
+    expect(formatEnergyValue('9007199254740993', 'kWh')).toBe('9,007,199.254740993')
+    expect(formatEnergyValue('9007199254740993', 'MWh')).toBe('9,007.199254740993')
   })
 
   it('renders every quadrant with explicit P/Q signs and admin reset controls', async () => {
@@ -76,10 +79,39 @@ describe('Energy & Demand view', () => {
     expect(screen.getByText('P < 0 · Q₁ > 0')).toBeInTheDocument()
     expect(screen.getByText('P < 0 · Q₁ < 0')).toBeInTheDocument()
     expect(screen.getByText('P ≥ 0 · Q₁ < 0')).toBeInTheDocument()
-    expect(screen.getByText('9,007,199,254,740,993')).toBeInTheDocument()
+    const unit = screen.getByRole('combobox', { name: 'Energy display unit' })
+    expect(unit).toHaveValue('kWh')
+    expect(screen.getByText('9,007,199.254740993')).toBeInTheDocument()
+    expect(screen.getAllByText('kWh').length).toBeGreaterThan(1)
+    expect(screen.getAllByText('kVAh').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('kvarh').length).toBeGreaterThan(0)
+    expect(screen.queryByText('µWh')).not.toBeInTheDocument()
+    fireEvent.change(unit, { target: { value: 'Wh' } })
+    expect(screen.getByText('9,007,199,254.740993')).toBeInTheDocument()
     expect(screen.getAllByText('18,446,744,073,709,551,614')).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Reset all energy' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reset demand peaks' })).toBeInTheDocument()
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+  })
+
+  it('treats the missing first demand checkpoint as warm-up, not a durable-data fault', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (input.toString().endsWith('/energy')) {
+        return new Response(JSON.stringify(energy), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ error: 'no durable DEMAND checkpoint exists' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    render(<EnergyDemandView canReset onUnauthorized={() => undefined} />)
+
+    expect(await screen.findByText('Demand warm-up')).toBeInTheDocument()
+    expect(screen.queryByText('Some durable values are unavailable')).not.toBeInTheDocument()
+    expect(screen.getByText('Waiting for a completed UTC interval')).toBeInTheDocument()
   })
 })

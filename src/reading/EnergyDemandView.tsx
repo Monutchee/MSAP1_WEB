@@ -6,6 +6,18 @@ import {
 
 type ResetTarget = 'energy' | 'demand'
 type PhaseKey = keyof PhaseTotalDecimalStrings
+export type EnergyDisplayUnit = 'Wh' | 'kWh' | 'MWh'
+
+const ENERGY_DISPLAY_UNITS: {
+  value: EnergyDisplayUnit
+  divisor: bigint
+  decimals: number
+  prefix: '' | 'k' | 'M'
+}[] = [
+  { value: 'Wh', divisor: 1_000_000n, decimals: 6, prefix: '' },
+  { value: 'kWh', divisor: 1_000_000_000n, decimals: 9, prefix: 'k' },
+  { value: 'MWh', divisor: 1_000_000_000_000n, decimals: 12, prefix: 'M' },
+]
 
 const PHASES: { key: PhaseKey; label: string }[] = [
   { key: 'phase_a', label: 'Phase A' },
@@ -42,22 +54,60 @@ export function formatExactInteger(value: string): string {
   }
 }
 
+/** Convert exact micro-energy integers without narrowing through Number. */
+export function formatEnergyValue(value: string, unit: EnergyDisplayUnit): string {
+  try {
+    const selected = ENERGY_DISPLAY_UNITS.find((candidate) => candidate.value === unit)
+      ?? ENERGY_DISPLAY_UNITS[1]
+    const input = BigInt(value)
+    const negative = input < 0n
+    const magnitude = negative ? -input : input
+    const integer = magnitude / selected.divisor
+    const remainder = magnitude % selected.divisor
+    const fraction = remainder.toString().padStart(selected.decimals, '0').replace(/0+$/, '')
+    const sign = negative ? '-' : ''
+    return `${sign}${new Intl.NumberFormat('en-US').format(integer)}${fraction ? `.${fraction}` : ''}`
+  } catch {
+    return value
+  }
+}
+
+function energyUnitLabel(unit: EnergyDisplayUnit, quantity: 'active' | 'apparent' | 'reactive') {
+  const prefix = ENERGY_DISPLAY_UNITS.find((candidate) => candidate.value === unit)?.prefix ?? 'k'
+  if (quantity === 'apparent') return `${prefix}VAh`
+  if (quantity === 'reactive') return `${prefix}varh`
+  return `${prefix}Wh`
+}
+
 function ExactValue({ value, unit }: { value: string; unit: string }) {
   return <span className="energy-exact-value">
     <strong>{formatExactInteger(value)}</strong><small>{unit}</small>
   </span>
 }
 
-function EnergyGroup({ title, description, values, unit }: {
+function EnergyValue({ value, displayUnit, quantity }: {
+  value: string
+  displayUnit: EnergyDisplayUnit
+  quantity: 'active' | 'apparent' | 'reactive'
+}) {
+  return <span className="energy-exact-value">
+    <strong>{formatEnergyValue(value, displayUnit)}</strong>
+    <small>{energyUnitLabel(displayUnit, quantity)}</small>
+  </span>
+}
+
+function EnergyGroup({ title, description, values, displayUnit, quantity }: {
   title: string
   description: string
   values: PhaseTotalDecimalStrings
-  unit: string
+  displayUnit: EnergyDisplayUnit
+  quantity: 'active' | 'apparent'
 }) {
   return <article className="energy-group-card">
     <header><h3>{title}</h3><p>{description}</p></header>
     <dl>{PHASES.map(({ key, label }) => <div className={key === 'total' ? 'total' : ''}
-      key={key}><dt>{label}</dt><dd><ExactValue value={values[key]} unit={unit} /></dd></div>)}</dl>
+      key={key}><dt>{label}</dt><dd><EnergyValue value={values[key]}
+        displayUnit={displayUnit} quantity={quantity} /></dd></div>)}</dl>
   </article>
 }
 
@@ -115,6 +165,8 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
   const [demand, setDemand] = useState<MeterDemand>()
   const [energyError, setEnergyError] = useState('')
   const [demandError, setDemandError] = useState('')
+  const [demandWarmup, setDemandWarmup] = useState(false)
+  const [displayUnit, setDisplayUnit] = useState<EnergyDisplayUnit>('kWh')
   const [resetTarget, setResetTarget] = useState<ResetTarget>()
   const [resetKey, setResetKey] = useState('')
   const [resetBusy, setResetBusy] = useState(false)
@@ -142,7 +194,14 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
     if (nextDemand.status === 'fulfilled') {
       setDemand(nextDemand.value)
       setDemandError('')
+      setDemandWarmup(false)
+    } else if (nextDemand.reason instanceof ApiError && nextDemand.reason.status === 503 &&
+      nextDemand.reason.message === 'no durable DEMAND checkpoint exists') {
+      setDemand(undefined)
+      setDemandError('')
+      setDemandWarmup(true)
     } else {
+      setDemandWarmup(false)
       handleError(nextDemand.reason, 'Unable to read 10-minute demand', setDemandError)
     }
   }, [handleError])
@@ -200,15 +259,27 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
     <div className="reading-section-heading compact">
       <div><p className="eyebrow">Metrology M17</p><h2 id="energy-demand-title">Energy &amp; Demand</h2>
         <p>Durable lifetime energy and completed UTC 10-minute active demand.</p></div>
-      {canReset && <div className="energy-admin-actions">
-        <button type="button" className="secondary" disabled={!energy}
-          onClick={() => openReset('energy')}>Reset all energy</button>
-        <button type="button" className="secondary" disabled={!demand}
-          onClick={() => openReset('demand')}>Reset demand peaks</button>
-      </div>}
+      <div className="energy-view-controls">
+        <label className="energy-unit-select">Energy unit
+          <select aria-label="Energy display unit" value={displayUnit}
+            onChange={(event) => setDisplayUnit(event.target.value as EnergyDisplayUnit)}>
+            {ENERGY_DISPLAY_UNITS.map(({ value }) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </label>
+        {canReset && <div className="energy-admin-actions">
+          <button type="button" className="secondary" disabled={!energy}
+            onClick={() => openReset('energy')}>Reset all energy</button>
+          <button type="button" className="secondary" disabled={!demand}
+            onClick={() => openReset('demand')}>Reset demand peaks</button>
+        </div>}
+      </div>
     </div>
 
     {resetNotice && <div className="energy-reset-notice" role="status">{resetNotice}</div>}
+    {demandWarmup && <div className="energy-warmup-notice" role="status">
+      <strong>Demand warm-up</strong>
+      <span>The first durable value appears after a UTC 10-minute interval closes.</span>
+    </div>}
     {(energyError || demandError) && <div className="error-banner">
       <strong>Some durable values are unavailable</strong>
       <span>{[energyError, demandError].filter(Boolean).join(' · ')}</span>
@@ -227,11 +298,11 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
 
       <div className="energy-groups">
         <EnergyGroup title="Active import" description="P > 0 integrated over accepted samples"
-          values={energy.active_import_uwh} unit="µWh" />
+          values={energy.active_import_uwh} displayUnit={displayUnit} quantity="active" />
         <EnergyGroup title="Active export" description="Magnitude of P < 0 integrated over accepted samples"
-          values={energy.active_export_uwh} unit="µWh" />
+          values={energy.active_export_uwh} displayUnit={displayUnit} quantity="active" />
         <EnergyGroup title="Apparent energy" description="Apparent power integrated over accepted samples"
-          values={energy.apparent_uvah} unit="µVAh" />
+          values={energy.apparent_uvah} displayUnit={displayUnit} quantity="apparent" />
       </div>
 
       <section className="quadrant-panel" aria-labelledby="quadrant-energy-title">
@@ -245,8 +316,8 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
             <span>{quadrant.sign}</span><small>{quadrant.meaning}</small></th>)}</tr></thead>
           <tbody>{PHASES.map(({ key, label }) => <tr className={key === 'total' ? 'total' : ''}
             key={key}><th scope="row">{label}</th>{QUADRANTS.map((quadrant) => <td
-              key={quadrant.numeral}><ExactValue value={energy[quadrant.key][key]}
-                unit="µvarh" /></td>)}</tr>)}</tbody>
+              key={quadrant.numeral}><EnergyValue value={energy[quadrant.key][key]}
+                displayUnit={displayUnit} quantity="reactive" /></td>)}</tr>)}</tbody>
         </table></div>
         <p className="quadrant-axis-note"><strong>Axis behavior:</strong> P = 0 uses the import side;
           Q₁ = 0 adds no reactive energy to any quadrant.</p>

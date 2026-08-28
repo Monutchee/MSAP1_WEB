@@ -2288,6 +2288,39 @@
 
 .energy-demand-view { position: relative; }
 
+.energy-view-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: .65rem 1rem;
+}
+
+.energy-unit-select {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.energy-unit-select select {
+  min-width: 5.25rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: .55rem .7rem;
+  color: #ecf5f5;
+  background: #0a151a;
+}
+
+.energy-unit-select select:focus-visible {
+  border-color: var(--green);
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(84, 226, 164, .1);
+}
+
 .energy-admin-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2443,6 +2476,20 @@
   background: rgba(84, 226, 164, .06);
 }
 
+.energy-warmup-notice {
+  display: flex;
+  align-items: baseline;
+  gap: .65rem 1rem;
+  margin-bottom: 1rem;
+  padding: .8rem 1rem;
+  border: 1px solid rgba(91, 184, 214, .35);
+  border-radius: 9px;
+  color: var(--muted);
+  background: rgba(91, 184, 214, .06);
+}
+
+.energy-warmup-notice strong { color: #b8e4f1; }
+
 .energy-reset-backdrop {
   position: fixed;
   z-index: 1000;
@@ -2520,6 +2567,10 @@
 }
 
 @media (max-width: 520px) {
+  .energy-view-controls,
+  .energy-unit-select,
+  .energy-unit-select select { width: 100%; }
+  .energy-unit-select { align-items: stretch; flex-direction: column; }
   .energy-admin-actions { width: 100%; justify-content: stretch; }
   .energy-admin-actions button { flex: 1 1 100%; }
   .energy-exact-value strong { font-size: .82rem; }
