@@ -9,8 +9,11 @@ const DATASETS: Array<{ key: keyof DatabaseSettings; label: string; note: string
   { key: 'spool', label: 'Raw record spool', note: 'Lossless handoff to durable consumers' },
   { key: 'basic', label: 'Basic 10/12-cycle', note: 'High-rate historical values' },
   { key: 'cycles_150_180', label: '150/180-cycle', note: '15 basic-block aggregate' },
-  { key: 'minutes_10', label: '10-minute', note: 'Future PL measurement product' },
-  { key: 'hours_2', label: '2-hour', note: 'Future PL measurement product' },
+  { key: 'minutes_10', label: '10-minute', note: 'Aligned scalar measurement product' },
+  { key: 'hours_2', label: '2-hour', note: 'Aligned scalar measurement product' },
+  { key: 'harmonic_cycles_150_180', label: 'Harmonic 3-second', note: 'Magnitude families; 24-hour memory default' },
+  { key: 'harmonic_minutes_10', label: 'Harmonic 10-minute', note: 'Persistent magnitude families' },
+  { key: 'harmonic_hours_2', label: 'Harmonic 2-hour', note: 'Persistent magnitude families' },
 ]
 
 function formatBytes(bytes: number) {

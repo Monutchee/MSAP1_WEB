@@ -1,9 +1,13 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import {
+  FormEvent, type KeyboardEvent as ReactKeyboardEvent, ReactNode,
+  useCallback, useEffect, useRef, useState,
+} from 'react'
 import {
   api, AdcSimulatorConfiguration, AdcSimulatorEvent, AdcSimulatorEventCommand,
+  AdcSimulatorHarmonic,
   AdcSource, ApiError, DeveloperAbout, SingleCycleStatus, PowerQualityStatus,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
-  MeterAggregate, MeterAggregateResult, MeterReadingAttribute,
+  MeterAggregate, MeterAggregateResult,
   MeterTenMinute, MeterTenMinuteResult,
   MeterTwoHour, MeterTwoHourResult,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
@@ -13,6 +17,7 @@ import { WaveformExplorer } from './waveform/WaveformExplorer'
 import { DeveloperDatabasePage } from './developer/DeveloperDatabasePage'
 import { DeveloperDataRecorderPage } from './developer/DeveloperDataRecorderPage'
 import { HistoryPage } from './history/HistoryPage'
+import { ReadingPage } from './reading/ReadingPage'
 import { ModbusConfiguration } from './configuration/ModbusConfiguration'
 import { MqttConfiguration } from './configuration/MqttConfiguration'
 
@@ -28,6 +33,13 @@ const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
  * ten-minute accumulator images.
  */
 type MeterTier = 'basic' | 'aggregate' | 'min10Live' | 'min10' | 'hour2Live' | 'hour2'
+
+type SimulatorApplyDialogState = {
+  phase: 'hidden' | 'applying' | 'success' | 'error'
+  activate: boolean
+  message?: string
+  httpStatus?: number
+}
 
 const TIER_LABELS: Record<MeterTier, string> = {
   basic: 'Basic block (10/12 cycles)',
@@ -88,6 +100,96 @@ function StatusPill({ ok, neutral = false, children }: {
 }) {
   const state = neutral ? 'neutral' : ok ? 'ok' : 'bad'
   return <span className={`status-pill ${state}`}><i />{children}</span>
+}
+
+function SimulatorApplyDialog({ state, onClose, onRetry }: {
+  state: SimulatorApplyDialogState
+  onClose: () => void
+  onRetry: () => void
+}) {
+  const panel = useRef<HTMLElement>(null)
+  const visible = state.phase !== 'hidden'
+  const applying = state.phase === 'applying'
+
+  useEffect(() => {
+    if (!visible) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    panel.current?.focus()
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [visible, state.phase])
+
+  if (!visible) return null
+
+  const title = applying
+    ? state.activate ? 'Applying simulator profile' : 'Saving simulator profile'
+    : state.phase === 'success'
+      ? state.activate ? 'Simulator profile applied' : 'Simulator profile saved'
+      : 'Simulator profile was not applied'
+  const description = applying
+    ? state.activate
+      ? 'The complete profile is being committed to R5C0 and the PL simulator, verified by readback, and saved.'
+      : 'The profile is being validated against the simulator hardware and saved while the physical ADC remains selected.'
+    : state.message ?? ''
+
+  return <div className="simulator-apply-backdrop">
+    <section ref={panel} tabIndex={-1}
+      className={`simulator-apply-dialog ${state.phase}`}
+      role={state.phase === 'error' ? 'alertdialog' : 'dialog'}
+      aria-modal="true" aria-labelledby="simulator-apply-title"
+      aria-describedby="simulator-apply-description" aria-busy={applying}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          if (!applying) onClose()
+          return
+        }
+        if (event.key !== 'Tab') return
+        const controls = Array.from(panel.current?.querySelectorAll<HTMLButtonElement>(
+          'button:not(:disabled)',
+        ) ?? [])
+        if (controls.length === 0) {
+          event.preventDefault()
+          return
+        }
+        const first = controls[0]
+        const last = controls[controls.length - 1]
+        if (event.shiftKey &&
+            (document.activeElement === first || document.activeElement === panel.current)) {
+          event.preventDefault()
+          last.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+      }}>
+      <div className={`simulator-apply-symbol ${state.phase}`} aria-hidden="true">
+        {applying ? <span className="simulator-apply-spinner" />
+          : state.phase === 'success' ? '✓' : '!'}
+      </div>
+      <div className="simulator-apply-copy" aria-live="polite">
+        <p className="eyebrow">ADC simulator settings</p>
+        <h2 id="simulator-apply-title">{title}</h2>
+        <p id="simulator-apply-description">{description}</p>
+        {applying && <p className="simulator-apply-note">
+          Capture can pause briefly during this coordinated transaction. Do not reload this page.</p>}
+        {state.phase === 'success' && <p className="simulator-apply-note">
+          The backend confirmed both the hardware apply and persistent save.</p>}
+        {state.phase === 'error' && <>
+          {state.httpStatus !== undefined && <code className="simulator-apply-code">
+            HTTP {state.httpStatus}</code>}
+          <p className="simulator-apply-note">
+            The previous active profile remains in service. Close this dialog to edit the profile, or retry the same transaction.</p>
+        </>}
+      </div>
+      {!applying && <div className="simulator-apply-actions">
+        {state.phase === 'error' && <button type="button" className="secondary"
+          onClick={onClose}>Review settings</button>}
+        {state.phase === 'error' && <button type="button" onClick={onRetry}>Retry apply</button>}
+        {state.phase === 'success' && <button type="button" onClick={onClose}>Done</button>}
+      </div>}
+    </section>
+  </div>
 }
 
 function Login({ onLogin }: { onLogin: (session: Session) => void }) {
@@ -321,31 +423,6 @@ function LongIntervalPending({ title, detail }: { title: string; detail: string 
   return <section className="aggregate-pending">
     <strong>{title}</strong>
     <span>{detail} Acquisition is not degraded while this is shown.</span>
-  </section>
-}
-
-function DerivedAttributesPanel({ attributes, interval }: {
-  attributes: MeterReadingAttribute[]
-  interval: string
-}) {
-  if (attributes.length === 0) return null
-  return <section className="telemetry-panel">
-    <header className="temperature-panel-header">
-      <div><p className="eyebrow">Derived quantities</p><h2>Line-line, power, phasors, and unbalance</h2></div>
-      <span>{interval}</span>
-    </header>
-    <div className="metric-grid developer-metrics">
-      {attributes.map((attribute) => (
-        <article className="metric" key={attribute.key}>
-          <span>{attribute.key}</span>
-          <strong>{attribute.valid
-            ? attribute.unit === 'PF'
-              ? attribute.value.toFixed(4)
-              : attribute.value.toFixed(attribute.unit === 'W' || attribute.unit === 'VA' || attribute.unit === 'var' ? 2 : 3)
-            : '—'}{attribute.unit !== 'PF' && <small> {attribute.unit}</small>}</strong>
-        </article>
-      ))}
-    </div>
   </section>
 }
 
@@ -869,11 +946,246 @@ function NumberField({ label, value, onValue, min, max, step }: {
       setDraft(event.target.value)
       const parsed = Number(event.target.value)
       if (event.target.value !== '' && Number.isFinite(parsed)) onValue(parsed)
-    }} /></label>
+  }} /></label>
+}
+
+const HARMONIC_RATIO_QUANTUM = 1 / 65536
+// The old number input used 1.000015 as its HTML step base, producing values
+// such as 5.000015 when the operator selected H5. Snap that decimal artefact,
+// but preserve a genuine one-Q16-LSB interharmonic (5.000015258789...).
+const HARMONIC_INTEGER_SNAP = HARMONIC_RATIO_QUANTUM - 0.00000015
+const SIMULATOR_CHANNEL_NAMES = ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va'] as const
+
+function isIntegerHarmonic(order: number): boolean {
+  return Math.abs(order - Math.round(order)) < HARMONIC_INTEGER_SNAP
+}
+
+/** Mirror the RPU's Q16.16 wire representation and remove UI step artefacts. */
+function normalizeToneRatio(order: number): number {
+  if (isIntegerHarmonic(order)) return Math.round(order)
+  const quantized = Math.round(order * 65536) / 65536
+  return quantized
+}
+
+function toneTargets(channels: AdcSimulatorHarmonic['channels']): string {
+  if (channels === 'voltage') return 'Va, Vb, Vc'
+  if (channels === 'current') return 'Ia, Ib, Ic, In'
+  return 'all voltage and current lanes'
+}
+
+function SimulatorToneCard({ harmonic, index, baseFrequencyHz, sampleRateHz,
+  channels, onChange, onRemove }: {
+  harmonic: AdcSimulatorHarmonic
+  index: number
+  baseFrequencyHz: number
+  sampleRateHz: number
+  channels: AdcSimulatorConfiguration['channels']
+  onChange: (changes: Partial<AdcSimulatorHarmonic>) => void
+  onRemove: () => void
+}) {
+  const mode = isIntegerHarmonic(harmonic.order) ? 'harmonic' : 'interharmonic'
+  const ratio = normalizeToneRatio(harmonic.order)
+  const harmonicOrder = Math.min(127, Math.max(2, Math.round(ratio)))
+  const toneFrequencyHz = ratio * baseFrequencyHz
+  const nyquistHz = sampleRateHz / 2
+  const ratioValid = ratio > 1 && ratio < 128
+  const belowNyquist = toneFrequencyHz * 2 < sampleRateHz
+  const laneIncluded = (channel: number) => harmonic.channels === 'all' ||
+    (harmonic.channels === 'current' && channel < 4) ||
+    (harmonic.channels === 'voltage' && channel >= 4 && channel < 7)
+  const expected = channels
+    .filter((channel) => channel.channel < 7 && laneIncluded(channel.channel))
+    .map((channel) => {
+      const name = SIMULATOR_CHANNEL_NAMES[channel.channel]
+      const unit = channel.channel < 4 ? 'A' : 'V'
+      return `${name} ${(channel.rms * harmonic.percent / 100).toFixed(3)} ${unit}`
+    })
+  const switchMode = (next: 'harmonic' | 'interharmonic') => {
+    if (next === mode) return
+    onChange({ order: next === 'harmonic'
+      ? harmonicOrder
+      : Math.min(127.5, harmonicOrder + 0.5) })
+  }
+  const maximumToneHz = Math.min(baseFrequencyHz * 128, nyquistHz)
+
+  return <article className={`simulator-tone-card ${!ratioValid || !belowNyquist ? 'invalid' : ''}`}>
+    <header>
+      <div><span>Slot {index + 1}</span>
+        <strong>{mode === 'harmonic' ? `H${harmonicOrder}` : 'Interharmonic'}</strong></div>
+      <div className="simulator-tone-kind" role="group" aria-label={`Slot ${index + 1} tone type`}>
+        <button type="button" className={mode === 'harmonic' ? 'active' : ''}
+          onClick={() => switchMode('harmonic')}>Harmonic</button>
+        <button type="button" className={mode === 'interharmonic' ? 'active' : ''}
+          onClick={() => switchMode('interharmonic')}>Interharmonic</button>
+      </div>
+      <button className="simulator-tone-remove" type="button" onClick={onRemove}
+        aria-label={`Remove tone slot ${index + 1}`}>Remove</button>
+    </header>
+    <div className="simulator-tone-fields">
+      {mode === 'harmonic'
+        ? <NumberField label="Harmonic order" min="2" max="127" step="1"
+            value={harmonicOrder}
+            onValue={(value) => onChange({ order: Math.round(value) })} />
+        : <NumberField label="Tone frequency (Hz)"
+            min={(baseFrequencyHz + 0.001).toFixed(3)}
+            max={Math.max(baseFrequencyHz + 0.001, maximumToneHz - 0.001).toFixed(3)}
+            step="0.001" value={toneFrequencyHz}
+            onValue={(value) => onChange({ order: value / baseFrequencyHz })} />}
+      <NumberField label="Level (% of H1)" min="0" max="99.9"
+        step="0.1" value={harmonic.percent}
+        onValue={(value) => onChange({ percent: value })} />
+      <NumberField label="Additional phase (degrees)" min="0" max="359.999"
+        step="0.001" value={wrapDegrees(harmonic.phase_degrees)}
+        onValue={(value) => onChange({ phase_degrees: wrapDegrees(value) })} />
+      <label>Apply to<select value={harmonic.channels}
+        onChange={(event) => onChange({
+          channels: event.target.value as AdcSimulatorHarmonic['channels'],
+        })}>
+        <option value="voltage">Voltage · Va Vb Vc</option>
+        <option value="current">Current · Ia Ib Ic In</option>
+        <option value="all">All measurement lanes</option>
+      </select></label>
+    </div>
+    <div className="simulator-tone-preview">
+      <span><small>Generated tone</small><strong>{toneFrequencyHz.toFixed(3)} Hz</strong>
+        <em>{mode === 'harmonic' ? `${harmonicOrder} × ${baseFrequencyHz.toFixed(3)} Hz` : `ratio ${ratio.toFixed(6)}`}</em></span>
+      <span><small>Targets</small><strong>{toneTargets(harmonic.channels)}</strong>
+        <em>{expected.join(' · ') || 'No receiving lanes'}</em></span>
+      <span><small>Sample-rate check</small>
+        <strong className={belowNyquist ? 'good' : 'bad'}>
+          {belowNyquist ? 'Inside Nyquist band' : 'Tone is not representable'}</strong>
+        <em>{sampleRateHz.toLocaleString()} SPS · Nyquist {nyquistHz.toLocaleString()} Hz</em></span>
+    </div>
+    {!ratioValid && <p className="simulator-tone-error">The frequency ratio must be above 1 and below 128.</p>}
+    {ratioValid && !belowNyquist && <p className="simulator-tone-error">
+      Lower the tone frequency or select a higher ADC sample rate before applying this profile.</p>}
+    {harmonic.percent === 0 && <p className="simulator-tone-hint">
+      A 0% level is valid but produces no visible spectral component.</p>}
+  </article>
+}
+
+type SimulatorCategory = 'measurement' | 'harmonics' | 'power-quality'
+
+const SIMULATOR_LANE_GROUPS = [
+  { title: 'Voltage', detail: 'Phase-to-neutral inputs', channels: [6, 5, 4] },
+  { title: 'Current', detail: 'Phase and neutral inputs', channels: [0, 1, 2, 3] },
+] as const
+
+function SimulatorMeasurementLanes({ simulator, onChange, onUnauthorized }: {
+  simulator: AdcSimulatorConfiguration
+  onChange: (configuration: AdcSimulatorConfiguration) => void
+  onUnauthorized: () => void
+}) {
+  return <section id="simulator-panel-measurement" role="tabpanel"
+    aria-labelledby="simulator-tab-measurement" className="simulator-category-panel">
+    <div className="simulator-form-heading">
+      <div><p className="eyebrow">Base waveform</p><h3>Signal and continuity</h3></div>
+      <span>H1 establishes every tone's level and phase reference.</span>
+    </div>
+    <div className="simulator-global-grid">
+      <NumberField label="Signal frequency (Hz)" min="0.001" max="1000"
+        step="0.001" value={simulator.frequency_hz}
+        onValue={(value) => onChange({ ...simulator, frequency_hz: value })} />
+      <label className="simulator-checkbox">
+        <input type="checkbox" checked={simulator.preserve_phase}
+          onChange={(event) => onChange({
+            ...simulator, preserve_phase: event.target.checked,
+          })} />
+        Preserve phase across apply
+      </label>
+    </div>
+    <div className="simulator-form-heading compact">
+      <div><p className="eyebrow">Fundamentals</p><h3>Measurement lanes</h3></div>
+      <span>RMS, phase, offset, and noise before spectral tones are added.</span>
+    </div>
+    {SIMULATOR_LANE_GROUPS.map((group) => <section className="simulator-lane-group"
+      key={group.title} aria-labelledby={`simulator-${group.title.toLowerCase()}-lanes`}>
+      <header><div><h4 id={`simulator-${group.title.toLowerCase()}-lanes`}>
+        {group.title}</h4><span>{group.detail}</span></div>
+        <small>{group.channels.length} lanes</small></header>
+      <div className="simulator-channel-grid">
+        {group.channels.flatMap((channelIndex) => {
+          const channel = simulator.channels.find((candidate) =>
+            candidate.channel === channelIndex)
+          if (!channel) return []
+          const name = SIMULATOR_CHANNEL_NAMES[channel.channel]
+          const unit = channel.channel < 4 ? 'A' : 'V'
+          const update = (changes: Partial<typeof channel>) => onChange({
+            ...simulator,
+            channels: simulator.channels.map((candidate) =>
+              candidate.channel === channel.channel ? { ...candidate, ...changes } : candidate),
+          })
+          return [<fieldset key={channel.channel}>
+            <legend>{name}<span>CH{channel.channel}</span></legend>
+            <NumberField label={`RMS (${unit})`} min="0" step="0.001"
+              value={channel.rms} onValue={(value) => update({ rms: value })} />
+            <NumberField label="Phase (degrees)" min="0" max="359.999"
+              step="0.001" value={wrapDegrees(channel.phase_degrees)}
+              onValue={(value) => update({ phase_degrees: wrapDegrees(value) })} />
+            <NumberField label={`DC offset (${unit})`} step="0.001"
+              value={channel.dc} onValue={(value) => update({ dc: value })} />
+            <NumberField label={`Noise RMS (${unit})`} min="0" step="0.001"
+              value={channel.noise_rms}
+              onValue={(value) => update({ noise_rms: value })} />
+          </fieldset>]
+        })}
+      </div>
+    </section>)}
+    <SingleCycleReadout onUnauthorized={onUnauthorized} />
+    <details className="simulator-explainer"><summary>Measurement-lane details</summary>
+      <p>CH7 remains zero and invalid. RMS values become signed 24-bit ADC sine peaks; DC is a constant offset and noise is uniform white fluctuation. Standard ABC rotation is A=0&deg;, B=240&deg;, C=120&deg;; 0/120/240 selects reverse ACB rotation. Preserve phase keeps waveform and packet framing continuous across a reconfiguration.</p>
+    </details>
+  </section>
+}
+
+function SimulatorHarmonics({ simulator, simulatorSelected, sampleRateHz, onChange }: {
+  simulator: AdcSimulatorConfiguration
+  simulatorSelected: boolean
+  sampleRateHz: number
+  onChange: (configuration: AdcSimulatorConfiguration) => void
+}) {
+  return <section id="simulator-panel-harmonics" role="tabpanel"
+    aria-labelledby="simulator-tab-harmonics"
+    className="simulator-category-panel simulator-tone-section">
+    <div className="simulator-form-heading">
+      <div><p className="eyebrow">Spectrum injection</p><h3>Harmonics and interharmonics</h3></div>
+      <span>{simulator.harmonics.length}/4 slots configured · H1 {simulator.frequency_hz.toFixed(3)} Hz</span>
+    </div>
+    {!simulatorSelected && <div className="simulator-staged-note">
+      <strong>The physical ADC is active.</strong>
+      <span>These tones are saved as a profile but cannot appear in readings until you switch to the PL simulator. Use “Save and use PL simulator” below to do both atomically.</span>
+    </div>}
+    <div className="simulator-tone-list">
+      {simulator.harmonics.map((harmonic, index) => {
+        const update = (changes: Partial<typeof harmonic>) => onChange({
+          ...simulator,
+          harmonics: simulator.harmonics.map((candidate, position) =>
+            position === index ? { ...candidate, ...changes } : candidate),
+        })
+        return <SimulatorToneCard key={index} harmonic={harmonic} index={index}
+          baseFrequencyHz={simulator.frequency_hz} sampleRateHz={sampleRateHz}
+          channels={simulator.channels} onChange={update}
+          onRemove={() => onChange({
+            ...simulator,
+            harmonics: simulator.harmonics.filter((_, position) => position !== index),
+          })} />
+      })}
+    </div>
+    {simulator.harmonics.length < 4 && <button className="simulator-tone-add"
+      type="button" onClick={() => onChange({
+        ...simulator,
+        harmonics: [...simulator.harmonics,
+          { order: 3, percent: 5, phase_degrees: 0, channels: 'voltage' as const }],
+      })}><span>+</span><strong>Add spectral tone</strong>
+        <small>Choose an integer harmonic order or an interharmonic frequency</small></button>}
+    <details className="simulator-explainer"><summary>Spectral-tone details</summary>
+      <p>Each tone is a percentage of its receiving lane's fundamental. Lane phase is scaled by the frequency ratio, so a balanced third harmonic is naturally zero-sequence. Integer ratios inject harmonics; fractional ratios inject interharmonics.</p>
+    </details>
+  </section>
 }
 
 function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
-  sourceStatus, simulatorStatus, onSourceChange, onSimulatorChange,
+  sourceStatus, simulatorStatus, simulatorApplyBusy, onSourceChange, onSimulatorChange,
   onSimulatorSubmit }: {
   onUnauthorized: () => void
   health: SystemHealth | undefined
@@ -882,12 +1194,38 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   simulator: AdcSimulatorConfiguration | undefined
   sourceStatus: string
   simulatorStatus: string
+  simulatorApplyBusy: boolean
   onSourceChange: (source: AdcSource['source']) => void
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
-  onSimulatorSubmit: (event: FormEvent) => void
+  onSimulatorSubmit: (activate: boolean) => void
 }) {
   const [activeTab, setActiveTab] =
     useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'waveform' | 'about' | 'logs'>('overview')
+  const [simulatorCategory, setSimulatorCategory] =
+    useState<SimulatorCategory>('measurement')
+  const handleSimulatorTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const tabs = Array.from(event.currentTarget.parentElement
+      ?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+    const currentIndex = tabs.indexOf(event.currentTarget)
+    if (currentIndex < 0 || tabs.length === 0) return
+    const nextIndex = event.key === 'Home' ? 0
+      : event.key === 'End' ? tabs.length - 1
+        : event.key === 'ArrowRight' ? (currentIndex + 1) % tabs.length
+          : (currentIndex - 1 + tabs.length) % tabs.length
+    tabs[nextIndex].focus()
+    tabs[nextIndex].click()
+  }
+  const sampleRateHz = health?.adc.sample_rate_hz || readings?.sample_rate_hz || 128000
+  const simulatorSelected = adcSource?.source === 'simulator'
+  const tonesValid = simulator !== undefined && simulator.frequency_hz > 0 &&
+    simulator.frequency_hz <= 1000 && simulator.harmonics.every((harmonic) => {
+      const ratio = normalizeToneRatio(harmonic.order)
+      return ratio > 1 && ratio < 128 && harmonic.percent >= 0 &&
+        harmonic.percent <= 99.9 &&
+        ratio * simulator.frequency_hz * 2 < sampleRateHz
+    })
   return <section className="developer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Developer</p><h1>System diagnostics</h1>
@@ -936,101 +1274,70 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
         </StatusPill>
         <span>{sourceStatus}</span>
       </div>
-      <SingleCycleReadout onUnauthorized={onUnauthorized} />
-      <PowerQualityPanel onUnauthorized={onUnauthorized} />
-      {simulator && <form className="simulator-form" onSubmit={onSimulatorSubmit}>
-        <div className="simulator-summary">
-          <span>Frames: {formatCount(simulator.generated_frames)}</span>
-          <span>Saturation: {formatCount(simulator.saturation_count)}</span>
-          <span>Missed ticks: {formatCount(simulator.missed_sample_count)}</span>
-        </div>
-        <div className="simulator-global-grid">
-          <NumberField label="Signal frequency (Hz)" min="0.001" max="1000"
-            step="0.001" value={simulator.frequency_hz}
-            onValue={(value) => onSimulatorChange({
-              ...simulator, frequency_hz: value,
-            })} />
-          <label className="simulator-checkbox">
-            <input type="checkbox" checked={simulator.preserve_phase}
-              onChange={(event) => onSimulatorChange({
-                ...simulator, preserve_phase: event.target.checked,
-              })} />
-            Preserve phase across apply
-          </label>
-        </div>
-        <div className="simulator-channel-grid">
-          {simulator.channels.filter((channel) => channel.channel < 7).map((channel) => {
-            const names = ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va']
-            const unit = channel.channel < 4 ? 'A' : 'V'
-            const update = (changes: Partial<typeof channel>) => onSimulatorChange({
-              ...simulator,
-              channels: simulator.channels.map((candidate) =>
-                candidate.channel === channel.channel ? { ...candidate, ...changes } : candidate),
-            })
-            return <fieldset key={channel.channel}>
-              <legend>CH{channel.channel} {names[channel.channel]}</legend>
-              <NumberField label={`RMS (${unit})`} min="0" step="0.001"
-                value={channel.rms} onValue={(value) => update({ rms: value })} />
-              <NumberField label="Phase (degrees)" min="0" max="359.999"
-                step="0.001" value={wrapDegrees(channel.phase_degrees)}
-                onValue={(value) => update({ phase_degrees: wrapDegrees(value) })} />
-              <NumberField label={`DC offset (${unit})`} step="0.001"
-                value={channel.dc} onValue={(value) => update({ dc: value })} />
-              <NumberField label={`Noise RMS (${unit})`} min="0" step="0.001"
-                value={channel.noise_rms}
-                onValue={(value) => update({ noise_rms: value })} />
-            </fieldset>
-          })}
-        </div>
-        <div className="simulator-channel-grid">
-          {simulator.harmonics.map((harmonic, index) => {
-            const update = (changes: Partial<typeof harmonic>) => onSimulatorChange({
-              ...simulator,
-              harmonics: simulator.harmonics.map((candidate, position) =>
-                position === index ? { ...candidate, ...changes } : candidate),
-            })
-            return <fieldset key={index}>
-              <legend>Harmonic slot {index + 1}
-                <button type="button" onClick={() => onSimulatorChange({
-                  ...simulator,
-                  harmonics: simulator.harmonics.filter((_, position) => position !== index),
-                })}>Remove</button>
-              </legend>
-              <NumberField label="Order (2..63)" min="2" max="63" step="1"
-                value={harmonic.order}
-                onValue={(value) => update({ order: Math.round(value) })} />
-              <NumberField label="Amplitude (% of fundamental)" min="0" max="99.9"
-                step="0.1" value={harmonic.percent}
-                onValue={(value) => update({ percent: value })} />
-              <NumberField label="Extra phase (degrees)" min="0" max="359.999"
-                step="0.001" value={wrapDegrees(harmonic.phase_degrees)}
-                onValue={(value) => update({ phase_degrees: wrapDegrees(value) })} />
-              <label className="simulator-checkbox">
-                Lanes
-                <select value={harmonic.channels}
-                  onChange={(event) => update({
-                    channels: event.target.value as typeof harmonic.channels,
-                  })}>
-                  <option value="voltage">Voltage</option>
-                  <option value="current">Current</option>
-                  <option value="all">All</option>
-                </select>
-              </label>
-            </fieldset>
-          })}
-          {simulator.harmonics.length < 4 && <fieldset>
-            <legend>Harmonics</legend>
-            <button type="button" onClick={() => onSimulatorChange({
-              ...simulator,
-              harmonics: [...simulator.harmonics,
-                { order: 3, percent: 5, phase_degrees: 0, channels: 'voltage' as const }],
-            })}>Add harmonic slot</button>
-          </fieldset>}
-        </div>
-        <p className="simulator-note">CH7 remains zero and invalid. Values are converted to signed 24-bit raw ADC counts before they are sent to PL: RMS to a sine peak, DC as a constant offset, and noise RMS to a uniform white fluctuation so readings jitter like a real grid input. Harmonic slots ride on top: each adds order&times;frequency at a percentage of every receiving lane's fundamental, with the lane's phase offset scaled by the order (so a 3rd harmonic on a balanced set is zero-sequence, as on a real grid). The signal frequency here is the generated waveform; the declared nominal grid frequency stays under Configuration → Meter. Preserve phase keeps the waveform and packet framing continuous across a reconfiguration. Phase angles use the 0&ndash;359.999&deg; convention; out-of-range or negative entries wrap onto it. NOTE the rotation direction: standard ABC rotation is A=0&deg;, B=240&deg;, C=120&deg; (phase B lags A) &mdash; entering the ascending 0/120/240 produces REVERSE (ACB) rotation, which the unbalance readings will flag with a collapsed positive sequence.</p>
-        <div className="frequency-actions"><button type="submit">Apply and save</button>
-          <span>{simulatorStatus}</span></div>
-      </form>}
+      <nav className="simulator-category-tabs" role="tablist" aria-orientation="horizontal"
+        aria-label="ADC simulator configuration sections">
+        <button id="simulator-tab-measurement" role="tab" type="button"
+          className={simulatorCategory === 'measurement' ? 'active' : ''}
+          aria-selected={simulatorCategory === 'measurement'}
+          aria-controls="simulator-panel-measurement"
+          tabIndex={simulatorCategory === 'measurement' ? 0 : -1}
+          onKeyDown={handleSimulatorTabKeyDown}
+          onClick={() => setSimulatorCategory('measurement')}>
+          <span>Measurement lanes</span><small>7 inputs</small></button>
+        <button id="simulator-tab-harmonics" role="tab" type="button"
+          className={simulatorCategory === 'harmonics' ? 'active' : ''}
+          aria-selected={simulatorCategory === 'harmonics'}
+          aria-controls="simulator-panel-harmonics"
+          tabIndex={simulatorCategory === 'harmonics' ? 0 : -1}
+          onKeyDown={handleSimulatorTabKeyDown}
+          onClick={() => setSimulatorCategory('harmonics')}>
+          <span>Harmonics</span><small>{simulator?.harmonics.length ?? 0}/4 slots</small></button>
+        <button id="simulator-tab-power-quality" role="tab" type="button"
+          className={simulatorCategory === 'power-quality' ? 'active' : ''}
+          aria-selected={simulatorCategory === 'power-quality'}
+          aria-controls="simulator-panel-power-quality"
+          tabIndex={simulatorCategory === 'power-quality' ? 0 : -1}
+          onKeyDown={handleSimulatorTabKeyDown}
+          onClick={() => setSimulatorCategory('power-quality')}>
+          <span>Power quality Urms</span><small>½-cycle events</small></button>
+      </nav>
+      {simulatorCategory === 'power-quality'
+        ? <section id="simulator-panel-power-quality" role="tabpanel"
+            aria-labelledby="simulator-tab-power-quality"
+            className="simulator-form simulator-category-panel">
+            <PowerQualityPanel onUnauthorized={onUnauthorized} />
+          </section>
+        : simulator
+          ? <form className="simulator-form" onSubmit={(event) => {
+              event.preventDefault()
+              onSimulatorSubmit(true)
+            }}>
+              <div className="simulator-summary">
+                <StatusPill ok={simulatorSelected && simulator.healthy} neutral={!simulatorSelected}>
+                  {simulatorSelected ? 'PL simulator active' : 'Profile staged · physical ADC active'}</StatusPill>
+                <span>Generation: 0x{simulator.active_generation.toString(16).padStart(8, '0')}</span>
+                <span>Frames: {formatCount(simulator.generated_frames)}</span>
+                <span>Saturation: {formatCount(simulator.saturation_count)}</span>
+                <span>Missed ticks: {formatCount(simulator.missed_sample_count)}</span>
+                <span>{sampleRateHz.toLocaleString()} SPS</span>
+              </div>
+              {simulatorCategory === 'measurement'
+                ? <SimulatorMeasurementLanes simulator={simulator}
+                    onChange={onSimulatorChange} onUnauthorized={onUnauthorized} />
+                : <SimulatorHarmonics simulator={simulator}
+                    simulatorSelected={simulatorSelected} sampleRateHz={sampleRateHz}
+                    onChange={onSimulatorChange} />}
+              <div className="frequency-actions simulator-actions">
+                {!simulatorSelected && <button className="secondary" type="button"
+                  disabled={simulatorApplyBusy || !tonesValid}
+                  onClick={() => onSimulatorSubmit(false)}>Save profile only</button>}
+                <button type="submit" disabled={simulatorApplyBusy || !tonesValid}>
+                  {simulatorApplyBusy ? 'Applying profile…'
+                    : simulatorSelected ? 'Apply to running simulator' : 'Save and use PL simulator'}</button>
+                <span>{simulatorStatus}</span>
+              </div>
+            </form>
+          : <div className="simulator-form simulator-category-loading">Loading simulator profile…</div>}
     </>
       : activeTab === 'recorder'
         ? <DeveloperDataRecorderPage onUnauthorized={onUnauthorized} />
@@ -1088,7 +1395,7 @@ function SingleCycleReadout({ onUnauthorized }: {
   const phases = ['PA', 'PB', 'PC']
   const snapshot = status?.has_snapshot ? status : undefined
 
-  return <div className="simulator-source-panel">
+  return <section className="simulator-readout-panel">
     <label>
       Single-cycle readout
       <span className="simulator-note">
@@ -1121,7 +1428,7 @@ function SingleCycleReadout({ onUnauthorized }: {
           </span>)
         : <span>fundamental: invalid (no frequency reference)</span>}
     </div>}
-  </div>
+  </section>
 }
 
 /**
@@ -1199,7 +1506,7 @@ function PowerQualityPanel({ onUnauthorized }: {
     : sequencer?.holding ? 'holding'
     : sequencer?.armed ? 'armed' : 'idle'
 
-  return <div className="simulator-source-panel">
+  return <section className="simulator-power-quality-panel">
     <label>
       Power quality — Urms(1/2)
       <span className="simulator-note">
@@ -1273,7 +1580,7 @@ function PowerQualityPanel({ onUnauthorized }: {
         Repeat until cancelled
       </label>
     </div>
-    <div className="simulator-source-panel">
+    <div className="simulator-event-actions">
       <button type="button" onClick={() => void command('arm')}>Arm burst</button>
       <button type="button" onClick={() => void command('cancel')}>Cancel</button>
       <button type="button" onClick={() => void command('clear')}>
@@ -1281,7 +1588,7 @@ function PowerQualityPanel({ onUnauthorized }: {
       </button>
       <span>{message}</span>
     </div>
-  </div>
+  </section>
 }
 
 function DeveloperWaveformStatus({ onUnauthorized }: {
@@ -1358,6 +1665,7 @@ function WaveformConfiguration() {
 
 function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
   nominalFrequency, onNominalFrequencyChange,
+  systemNominalVoltage, onSystemNominalVoltageChange,
   simulator, onSimulatorChange, onUnauthorized }: {
   configuration: FrequencyConfiguration | undefined
   configurationStatus: string
@@ -1365,6 +1673,8 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onSubmit: (event: FormEvent) => void
   nominalFrequency: number | undefined
   onNominalFrequencyChange: (nominalFrequency: number) => void
+  systemNominalVoltage: number | undefined
+  onSystemNominalVoltageChange: (systemNominalVoltage: number) => void
   simulator: AdcSimulatorConfiguration | undefined
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onUnauthorized: () => void
@@ -1416,6 +1726,10 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         <option value={60}>60 Hz</option>
       </select>
         <small>Basic measurement block: {(nominalFrequency ?? 60) === 50 ? 10 : 12} cycles</small></label>
+      <label>System nominal voltage (V L-N)<input type="number" min="1" max="1000000"
+        step="0.001" required value={systemNominalVoltage ?? 120}
+        onChange={(event) => onSystemNominalVoltageChange(Number(event.target.value))} />
+        <small>Voltage reference for the phasor diagram; measurements are unchanged</small></label>
       {simulator && <label>Signal frequency (Hz)<input type="number" min="0.001" max="1000" step="0.001"
         value={simulator.frequency_hz}
         onChange={(event) => onSimulatorChange({
@@ -1465,7 +1779,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   onUnauthorized: () => void
 }) {
   const [activeView, setActiveView] =
-    useState<'dashboard' | 'history' | 'waveforms' | 'configuration' | 'about' | 'developer'>('dashboard')
+    useState<'dashboard' | 'reading' | 'history' | 'waveforms' | 'configuration' | 'about' | 'developer'>('dashboard')
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
@@ -1490,11 +1804,14 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [frequencyConfiguration, setFrequencyConfiguration] =
     useState<FrequencyConfiguration>()
   const [nominalFrequency, setNominalFrequency] = useState<number>()
+  const [systemNominalVoltage, setSystemNominalVoltage] = useState<number>()
   const [configurationStatus, setConfigurationStatus] = useState('')
   const [adcSource, setAdcSource] = useState<AdcSource>()
   const [simulator, setSimulator] = useState<AdcSimulatorConfiguration>()
   const [sourceStatus, setSourceStatus] = useState('')
   const [simulatorStatus, setSimulatorStatus] = useState('')
+  const [simulatorApplyDialog, setSimulatorApplyDialog] =
+    useState<SimulatorApplyDialogState>({ phase: 'hidden', activate: false })
   const [error, setError] = useState('')
 
   const handleError = useCallback((reason: unknown) => {
@@ -1532,6 +1849,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           })
           setFrequencyConfiguration(activeSettings.settings.metering.frequency)
           setNominalFrequency(activeSettings.settings.metering.nominal_frequency_hz)
+          setSystemNominalVoltage(
+            activeSettings.settings.metering.system_nominal_voltage_v ?? 120)
         }
       })
       .catch((reason) => { if (active) handleError(reason) })
@@ -1577,6 +1896,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         if (nominalFrequency !== undefined) {
           settings.metering.nominal_frequency_hz = nominalFrequency
         }
+        if (systemNominalVoltage !== undefined) {
+          settings.metering.system_nominal_voltage_v = systemNominalVoltage
+        }
         // The simulator signal frequency is edited on the Meter form but
         // persists through the same adc.simulator path the simulator pane
         // uses; channels stay untouched here.
@@ -1603,23 +1925,50 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     }
   }
 
-  async function saveSimulator(event: FormEvent) {
-    event.preventDefault()
-    if (!simulator) return
-    setSimulatorStatus('Saving…')
+  async function saveSimulator(activate: boolean) {
+    if (!simulator || simulatorApplyDialog.phase === 'applying') return
+    setSimulatorStatus('Applying…')
+    setSimulatorApplyDialog({ phase: 'applying', activate })
     try {
+      const normalized = {
+        ...simulator,
+        harmonics: simulator.harmonics.map((harmonic) => ({
+          ...harmonic,
+          order: normalizeToneRatio(harmonic.order),
+          phase_degrees: wrapDegrees(harmonic.phase_degrees),
+        })),
+      }
       await saveSettings((settings) => {
+        if (activate) settings.adc.source = 'simulator'
         settings.adc.simulator = {
-          frequency_hz: simulator.frequency_hz,
-          preserve_phase: simulator.preserve_phase,
-          channels: simulator.channels,
-          harmonics: simulator.harmonics,
+          frequency_hz: normalized.frequency_hz,
+          preserve_phase: normalized.preserve_phase,
+          channels: normalized.channels,
+          harmonics: normalized.harmonics,
         }
       })
-      setSimulatorStatus('Applied and saved.')
+      setSimulator(normalized)
+      if (activate) {
+        setAdcSource((current) => current ? { ...current, source: 'simulator' } : current)
+        setSourceStatus('PL simulator selected.')
+      }
+      const message = activate
+        ? 'Profile applied; waiting for the next harmonic family.'
+        : 'Profile saved. Physical ADC remains active.'
+      setSimulatorStatus(message)
+      setSimulatorApplyDialog({ phase: 'success', activate, message })
     } catch (reason) {
-      setSimulatorStatus('')
-      handleError(reason)
+      if (reason instanceof ApiError && reason.status === 401) {
+        setSimulatorApplyDialog({ phase: 'hidden', activate })
+        onUnauthorized()
+        return
+      }
+      const message = reason instanceof Error ? reason.message : 'Request failed'
+      setSimulatorStatus(`Apply failed: ${message}`)
+      setSimulatorApplyDialog({
+        phase: 'error', activate, message,
+        httpStatus: reason instanceof ApiError ? reason.status : undefined,
+      })
     }
   }
 
@@ -1964,6 +2313,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       <button type="button" className={activeView === 'dashboard' ? 'active' : ''}
         aria-current={activeView === 'dashboard' ? 'page' : undefined}
         onClick={() => setActiveView('dashboard')}>Dashboard</button>
+      <button type="button" className={activeView === 'reading' ? 'active' : ''}
+        aria-current={activeView === 'reading' ? 'page' : undefined}
+        onClick={() => setActiveView('reading')}>Reading</button>
       <button type="button" className={activeView === 'history' ? 'active' : ''}
         aria-current={activeView === 'history' ? 'page' : undefined}
         onClick={() => setActiveView('history')}>History</button>
@@ -1988,11 +2340,15 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           simulator={simulator}
           sourceStatus={sourceStatus}
           simulatorStatus={simulatorStatus}
+          simulatorApplyBusy={simulatorApplyDialog.phase === 'applying'}
           onSourceChange={changeAdcSource}
           onSimulatorChange={setSimulator}
           onSimulatorSubmit={saveSimulator} />
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
+      : activeView === 'reading'
+        ? <ReadingPage readings={readings} onUnauthorized={onUnauthorized}
+            systemNominalVoltage={systemNominalVoltage ?? 120} />
       : activeView === 'history'
         ? <HistoryPage onUnauthorized={onUnauthorized} />
       : activeView === 'waveforms'
@@ -2005,6 +2361,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             onSubmit={saveFrequencyConfiguration}
             nominalFrequency={nominalFrequency}
             onNominalFrequencyChange={setNominalFrequency}
+            systemNominalVoltage={systemNominalVoltage}
+            onSystemNominalVoltageChange={setSystemNominalVoltage}
             simulator={simulator}
             onSimulatorChange={setSimulator}
             onUnauthorized={onUnauthorized} />
@@ -2102,12 +2460,6 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
                       : <><span>no {isTwoHourTier ? 'two-hour' : 'ten-minute'} value</span><span>invalid</span></>} />
                 })}
               </section>
-              <DerivedAttributesPanel attributes={longIntervalResult.attributes}
-                interval={isLiveTier
-                  ? `${isTwoHourTier ? 'Two-hour' : 'Ten-minute'} live partial (non-normative)`
-                  : isTwoHourTier
-                    ? 'Two-hour finalized tier (12 × 10-minute)'
-                    : 'Clock-aligned ten-minute finalized tier'} />
             </>
           : <LongIntervalPending
               title={isLiveTier
@@ -2130,10 +2482,15 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
               ? <><span>mean {channel.mean_micro_units} µ</span><span>{channel.rms_count} count</span></>
               : <><span>not implemented</span><span>invalid</span></>} />)}
         </section>
-        <DerivedAttributesPanel attributes={readings?.attributes ?? []}
-          interval="10/12-cycle finalized tier" />
         </>}
     </>}
+    <SimulatorApplyDialog state={simulatorApplyDialog}
+      onClose={() => {
+        if (simulatorApplyDialog.phase !== 'applying') {
+          setSimulatorApplyDialog({ phase: 'hidden', activate: false })
+        }
+      }}
+      onRetry={() => { void saveSimulator(simulatorApplyDialog.activate) }} />
   </main>
 }
 

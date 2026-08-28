@@ -13,7 +13,10 @@ export interface AcquisitionHealth {
   records: number
   bytes: number
   read_errors: number
+  /** Rejections since the current deliberate capture epoch began. */
   invalid_records: number
+  /** Process-lifetime rejection total retained for diagnostics. */
+  lifetime_invalid_records: number
   sequence_gaps: number
   configuration_generation: number
 }
@@ -153,9 +156,10 @@ export interface MeterReadingAttribute {
 }
 
 /**
- * One channel of a 150/180-cycle aggregate. The aggregate publishes RMS only:
- * there is no mean correction term and no per-channel RMS accumulator count,
- * so those fields are absent rather than zero.
+ * One RMS channel of a finalized aggregate. Derived catalog quantities travel
+ * separately in the response's `attributes` array; there is no mean correction
+ * term or per-channel RMS accumulator count, so those fields are absent rather
+ * than zero.
  */
 export interface MeterAggregateChannel {
   index: number
@@ -196,6 +200,8 @@ export interface MeterAggregateResult {
   time_quality: 'unsynchronized' | 'synchronized' | 'holdover'
   age_ms: number
   channels: MeterAggregateChannel[]
+  /** Catalog attributes from the aggregate POWER/PHASOR/UNBAL record family. */
+  attributes: MeterReadingAttribute[]
   frequency: MeterAggregateFrequency
 }
 
@@ -304,7 +310,7 @@ export interface AdcSimulatorChannel {
 }
 
 export interface AdcSimulatorHarmonic {
-  /** Harmonic order, 2..63. */
+  /** Frequency ratio, >1 and <128; fractional values are interharmonics. */
   order: number
   /** Amplitude, percent of each receiving lane's fundamental (0..99.9). */
   percent: number
@@ -319,7 +325,7 @@ export interface AdcSimulatorConfiguration {
   /** Keep waveform phase/framing across the configuration commit. */
   preserve_phase: boolean
   channels: AdcSimulatorChannel[]
-  /** Up to four global harmonic slots; empty keeps a pure tone. */
+  /** Up to four global harmonic/interharmonic slots; empty keeps a pure tone. */
   harmonics: AdcSimulatorHarmonic[]
   active_source: 'physical' | 'simulator'
   configuration_generation: number
@@ -404,6 +410,72 @@ export interface PowerQualityStatus {
   has_event: boolean
   latest: PowerQualityRecord
   event: PowerQualityRecord
+}
+
+/** One order in the M16 IEC-style subgroup spectrum. */
+export interface HarmonicOrder {
+  order: number
+  magnitude_micro_units: number
+  /** Engineering units: amperes for current channels, volts for voltage. */
+  magnitude: number
+  magnitude_valid: boolean
+  angle_millidegrees: number
+  /** Relative to order * Va fundamental angle, wrapped onto [0, 360). */
+  angle_degrees: number
+  angle_valid: boolean
+}
+
+export interface HarmonicChannel {
+  channel: number
+  name: string
+  unit: 'A' | 'V'
+  orders: HarmonicOrder[]
+}
+
+export type HarmonicPeriod =
+  | 'cycles_150_180'
+  | 'minutes_10'
+  | 'hours_2'
+  | 'basic'
+
+/** GET /api/v1/meter/harmonics — latest complete 42-record M16 family. */
+export interface HarmonicSpectrum {
+  running: boolean
+  available: boolean
+  records: number
+  families: number
+  incomplete_families: number
+  period: HarmonicPeriod
+  sequence: number
+  configuration_generation: number
+  sample_rate_hz: number
+  sample_count: number
+  first_sample: number
+  measured_frequency_millihz: number
+  qualified_max_order: number
+  nominal_frequency_hz: number
+  cycle_count: number
+  filter_profile_id: number
+  valid_mask: number
+  status: number
+  emit_drops: number
+  result_drops: number
+  target_sample: number
+  contributors: number
+  overshoot_samples: number
+  first_source_sequence: number
+  last_source_sequence: number
+  time_aligned: boolean
+  contaminated: boolean
+  interval_valid: boolean
+  arithmetic_error: boolean
+  grid_locked: boolean
+  conditioner_valid: boolean
+  fft_valid: boolean
+  full_range: boolean
+  first_after_discontinuity: boolean
+  rate_limited: boolean
+  channels: HarmonicChannel[]
 }
 
 /**
@@ -588,6 +660,9 @@ export interface ProductSettings {
     // Declared nominal grid frequency (50 or 60), selecting the
     // IEC 61000-4-30 basic block: 50 Hz -> 10 cycles, 60 Hz -> 12 cycles.
     nominal_frequency_hz: number
+    // Declared line-to-neutral system voltage used as the voltage-phasor
+    // radial reference. It does not rescale measured values.
+    system_nominal_voltage_v: number
     rms: RmsSettings
     frequency: FrequencyConfiguration
     // IEC 61000-4-30 Urms(1/2) event detection. reference_volts = 0 is
@@ -636,6 +711,9 @@ export interface DatabaseSettings {
   cycles_150_180: DatasetStorageSettings
   minutes_10: DatasetStorageSettings
   hours_2: DatasetStorageSettings
+  harmonic_cycles_150_180: DatasetStorageSettings
+  harmonic_minutes_10: DatasetStorageSettings
+  harmonic_hours_2: DatasetStorageSettings
 }
 
 export interface DatabaseConsumerCursor {
@@ -678,7 +756,9 @@ export interface DatabaseStatus {
 }
 
 export type HistorianDataset =
-  'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2'
+  | 'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2'
+  | 'harmonic_cycles_150_180' | 'harmonic_minutes_10'
+  | 'harmonic_hours_2'
 
 export type DatabaseMaintenanceRequest =
   | { action: 'clear_datasets'; datasets: HistorianDataset[]; confirmed: true }
@@ -931,6 +1011,8 @@ export const api = {
     request<SingleCycleStatus>('/api/v1/meter/single-cycle'),
   meterPowerQuality: () =>
     request<PowerQualityStatus>('/api/v1/meter/power-quality'),
+  meterHarmonics: (period: HarmonicPeriod = 'cycles_150_180') =>
+    request<HarmonicSpectrum>(`/api/v1/meter/harmonics?period=${encodeURIComponent(period)}`),
   adcSimulatorEvent: () =>
     request<AdcSimulatorEvent>('/api/v1/adc/simulator/event'),
   commandAdcSimulatorEvent: (command: AdcSimulatorEventCommand) =>
