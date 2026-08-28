@@ -196,11 +196,14 @@
 }
 
 .phasor-readout-list article.phase-a,
-.phasor-vector.phase-a { --phase-color: #54e2a4; }
+.phasor-vector.phase-a,
+.phasor-vector-detail.phase-a { --phase-color: #54e2a4; }
 .phasor-readout-list article.phase-b,
-.phasor-vector.phase-b { --phase-color: #57b8d9; }
+.phasor-vector.phase-b,
+.phasor-vector-detail.phase-b { --phase-color: #57b8d9; }
 .phasor-readout-list article.phase-c,
-.phasor-vector.phase-c { --phase-color: #ffbd5c; }
+.phasor-vector.phase-c,
+.phasor-vector-detail.phase-c { --phase-color: #ffbd5c; }
 
 .phasor-readout-list article > div:first-child {
   display: flex;
@@ -322,7 +325,19 @@
 .phasor-vector {
   --phase-color: var(--green);
   color: var(--phase-color);
+  cursor: crosshair;
+  opacity: 1;
+  transition: opacity .16s ease;
 }
+
+.phasor-vector:focus { outline: none; }
+
+.phasor-vector:focus-visible line:not(.phasor-vector-hit) {
+  stroke-width: 4;
+  filter: drop-shadow(0 0 8px currentColor);
+}
+
+.phasor-vector.dimmed { opacity: .14; }
 
 .phasor-vector line {
   stroke: currentColor;
@@ -350,6 +365,100 @@
 .phasor-vector text {
   fill: currentColor;
   font: 700 12px ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.phasor-vector line:not(.phasor-vector-hit),
+.phasor-vector polygon,
+.phasor-vector text {
+  transition: stroke-width .16s ease, filter .16s ease, opacity .16s ease;
+}
+
+.phasor-vector.highlighted line:not(.phasor-vector-hit) {
+  stroke-width: 4;
+  filter: drop-shadow(0 0 8px currentColor);
+}
+
+.phasor-vector.current.highlighted line:not(.phasor-vector-hit) {
+  stroke-width: 3.2;
+}
+
+.phasor-vector .phasor-vector-hit {
+  stroke: transparent;
+  stroke-width: 20;
+  stroke-dasharray: none;
+  filter: none;
+  pointer-events: stroke;
+}
+
+.phasor-vector-detail {
+  --phase-color: var(--green);
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 2;
+  width: min(17rem, calc(100% - 2rem));
+  overflow: hidden;
+  border: 1px solid #31505b;
+  border-radius: 11px;
+  background: rgba(7, 17, 22, .94);
+  box-shadow: inset 3px 0 var(--phase-color), 0 14px 38px rgba(0, 0, 0, .34);
+  pointer-events: none;
+}
+
+.phasor-vector-detail > header {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .7rem .8rem;
+  border-bottom: 1px solid rgba(255, 255, 255, .07);
+}
+
+.phasor-vector-detail > header > i {
+  width: .65rem;
+  height: .65rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--phase-color);
+  box-shadow: 0 0 12px var(--phase-color);
+}
+
+.phasor-vector-detail.current > header > i {
+  border: 2px solid var(--phase-color);
+  background: transparent;
+}
+
+.phasor-vector-detail > header > span { display: grid; gap: .08rem; }
+.phasor-vector-detail > header strong { color: #e6f0f1; font-size: .78rem; }
+.phasor-vector-detail > header small { color: var(--muted); font-size: .58rem; }
+
+.phasor-vector-detail dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .5rem;
+  margin: 0;
+  padding: .72rem .8rem .8rem;
+}
+
+.phasor-vector-detail dt {
+  margin-bottom: .23rem;
+  color: var(--muted);
+  font-size: .5rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.phasor-vector-detail dd {
+  margin: 0;
+  color: #e6f0f1;
+  font: .65rem ui-monospace, "SFMono-Regular", Consolas, monospace;
+  white-space: nowrap;
+}
+
+.phasor-vector-detail dd span {
+  display: block;
+  margin-top: .08rem;
+  color: var(--muted);
+  font-size: .51rem;
 }
 
 .phasor-origin {
@@ -1163,6 +1272,16 @@
   .phasor-diagram-frame {
     min-height: auto;
     padding: .75rem;
+  }
+
+  .phasor-vector-detail {
+    top: .65rem;
+    left: .65rem;
+    width: min(16rem, calc(100% - 1.3rem));
+  }
+
+  .phasor-vector-detail dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .harmonic-controls {

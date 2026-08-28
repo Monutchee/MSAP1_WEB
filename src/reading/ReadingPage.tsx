@@ -676,6 +676,7 @@ function PhasorDiagram({ readings, nominalVoltage }: {
   readings: PhasorReading[]
   nominalVoltage: number
 }) {
+  const [activeLabel, setActiveLabel] = useState<string>()
   const center = 220
   const outerRadius = 180
   const valid = readings.filter((reading) =>
@@ -691,6 +692,7 @@ function PhasorDiagram({ readings, nominalVoltage }: {
   const spokes = Array.from({ length: 12 }, (_, index) => index * 30)
   const voltageScaleMaximum = Math.max(nominalVoltage * 1.2, maximumVoltage * 1.05)
   const nominalRadius = outerRadius * nominalVoltage / voltageScaleMaximum
+  const active = valid.find((reading) => reading.label === activeLabel)
 
   const radiusFor = (reading: PhasorReading) => {
     if (reading.group === 'voltage') {
@@ -748,17 +750,54 @@ function PhasorDiagram({ readings, nominalVoltage }: {
           const labelX = x + unitX * 14
           const labelY = y + unitY * 14
           const anchor = unitX > 0.25 ? 'start' : unitX < -0.25 ? 'end' : 'middle'
-          return <g className={`phasor-vector ${reading.group} phase-${reading.phase}`}
-            key={reading.label}>
+          const highlighted = active?.label === reading.label
+          const dimmed = active !== undefined && !highlighted
+          const accessibleDetail = `${reading.label}, ${reading.description}, ` +
+            `${formatMagnitude(reading.magnitude)} ${reading.unit} RMS, ` +
+            `${normalizeAngle(reading.angle).toFixed(3)} degrees`
+          return <g className={`phasor-vector ${reading.group} phase-${reading.phase}` +
+              `${highlighted ? ' highlighted' : ''}${dimmed ? ' dimmed' : ''}`}
+            role="img" tabIndex={0} aria-label={accessibleDetail}
+            aria-describedby={highlighted ? 'phasor-vector-detail' : undefined}
+            onPointerEnter={() => setActiveLabel(reading.label)}
+            onPointerLeave={() => setActiveLabel((current) =>
+              current === reading.label ? undefined : current)}
+            onPointerCancel={() => setActiveLabel(undefined)}
+            onFocus={() => setActiveLabel(reading.label)}
+            onBlur={() => setActiveLabel((current) =>
+              current === reading.label ? undefined : current)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setActiveLabel(undefined)
+              }
+            }} key={reading.label}>
             <title>{reading.label}: {formatMagnitude(reading.magnitude)} {reading.unit} RMS,
               {' '}{normalizeAngle(reading.angle).toFixed(3)} degrees</title>
             <line x1={center} y1={center} x2={x} y2={y} />
             <polygon points={arrow} />
             <text x={labelX} y={labelY} textAnchor={anchor}>{reading.label}</text>
+            <line className="phasor-vector-hit" x1={center} y1={center} x2={x} y2={y}
+              aria-hidden="true" />
           </g>
         })}
         <circle className="phasor-origin" cx={center} cy={center} r="4" />
       </svg>
+      {active && <aside id="phasor-vector-detail"
+        className={`phasor-vector-detail ${active.group} phase-${active.phase}`} role="tooltip">
+        <header><i /><span><strong>{active.label}</strong><small>{active.description}</small></span></header>
+        <dl>
+          <div><dt>Magnitude</dt><dd>{formatMagnitude(active.magnitude)}
+            <span>{active.unit} RMS</span></dd></div>
+          <div><dt>Angle</dt><dd>{normalizeAngle(active.angle).toFixed(3)}<span>°</span></dd></div>
+          <div><dt>Plot scale</dt><dd>{active.group === 'voltage'
+            ? nominalVoltage > 0
+              ? `${(active.magnitude / nominalVoltage * 100).toFixed(2)} % nominal`
+              : 'Nominal unavailable'
+            : maximumCurrent > 0
+              ? `${(active.magnitude / maximumCurrent * 100).toFixed(2)} % Imax`
+              : 'Imax unavailable'}</dd></div>
+        </dl>
+      </aside>}
       {valid.length === 0 && <div className="phasor-diagram-empty">
         <strong>No valid phase angles</strong>
         <span>The selected interval does not provide drawable phasors.</span>
