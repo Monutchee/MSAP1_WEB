@@ -13,7 +13,10 @@ export interface AcquisitionHealth {
   records: number
   bytes: number
   read_errors: number
+  /** Rejections since the current deliberate capture epoch began. */
   invalid_records: number
+  /** Process-lifetime rejection total retained for diagnostics. */
+  lifetime_invalid_records: number
   sequence_gaps: number
   configuration_generation: number
 }
