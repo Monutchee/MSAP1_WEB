@@ -673,6 +673,9 @@ export interface MqttStatus {
   publications: Record<string, MqttPublicationStatus>
 }
 
+/** Presentation topology for the three voltage measurement inputs. */
+export type MeasurementTopology = 'wye' | 'delta'
+
 export interface ProductSettings {
   schema_version: number
   metering: {
@@ -680,8 +683,10 @@ export interface ProductSettings {
     // Declared nominal grid frequency (50 or 60), selecting the
     // IEC 61000-4-30 basic block: 50 Hz -> 10 cycles, 60 Hz -> 12 cycles.
     nominal_frequency_hz: number
-    // Declared line-to-neutral system voltage used as the voltage-phasor
-    // radial reference. It does not rescale measured values.
+    // Presentation-only input topology. It does not alter PL/RPU algorithms.
+    measurement_topology: MeasurementTopology
+    // Voltage-phasor radial reference: L-N for wye and L-L for delta.
+    // It does not rescale measured values.
     system_nominal_voltage_v: number
     rms: RmsSettings
     frequency: FrequencyConfiguration

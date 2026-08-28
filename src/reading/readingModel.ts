@@ -233,6 +233,7 @@ export function formatReading(
   if (quality === 'unavailable') return '—'
   if (quality !== 'valid' || !reading) return 'Invalid'
   const value = normalizeForPrecision(reading.value, digits).toFixed(digits)
+  if (includeUnit && reading.unit === 'deg') return `${value}°`
   return includeUnit && reading.unit && reading.unit !== 'PF'
     ? `${value} ${reading.unit}`
     : value

@@ -7,7 +7,9 @@ import {
   HarmonicSpectrum, MeterAggregate, MeterTenMinute,
   MeterTwoHour, MeterReadings,
 } from '../api'
+import type { MeasurementTopology } from '../api'
 import { PowerView } from './PowerView'
+import { SequenceView, SEQUENCE_CONTEXT_KEYS } from './SequenceView'
 import {
   READING_INTERVAL_LABELS, aggregateReadingRecord, attribute, basicReadingRecord,
   effectiveQuality, formatReading, formatUtc, friendlyAttributeName, isValidReading,
@@ -17,7 +19,7 @@ import {
 } from './readingModel'
 import './reading.css'
 
-type ReadingSubtab = 'overview' | 'power' | 'phasor' | 'harmonics'
+type ReadingSubtab = 'overview' | 'power' | 'phasor' | 'sequence' | 'harmonics'
 type PhasorScope = 'voltage' | 'current' | 'all'
 type HarmonicGroup = 'voltage' | 'current'
 type HarmonicDisplay = 'magnitude' | 'percentage'
@@ -96,9 +98,6 @@ const PHASOR_CONTEXT_KEYS = [
   ...PHASOR_DEFINITIONS.map((definition) => definition.angleKey),
   'unbalance.voltage', 'unbalance.current',
   'unbalance.voltage.zero', 'unbalance.current.zero',
-  'sequence.voltage.zero.rms', 'sequence.voltage.positive.rms',
-  'sequence.voltage.negative.rms', 'sequence.current.zero.rms',
-  'sequence.current.positive.rms', 'sequence.current.negative.rms',
 ]
 
 const ALL_HARMONIC_ORDERS = Array.from({ length: 127 }, (_, index) => index + 1)
@@ -255,7 +254,7 @@ function harmonicTooltipText(detail: HarmonicTooltipDetail) {
     : `${formatPercentage(detail.percentage)} % H1`
   const angle = detail.angle === undefined
     ? 'Unavailable'
-    : `${detail.angle.toFixed(3)} deg`
+    : `${detail.angle.toFixed(3)}°`
   return `${detail.channelLabel} H${detail.order}\n` +
     `Magnitude: ${formatMagnitude(detail.magnitude)} ${detail.unit}\n` +
     `Percentage: ${percentage}\nRelative angle: ${angle}`
@@ -590,7 +589,8 @@ function RecordContextBar({ interval, record, section, intervalError, onInterval
   onIntervalChange: (interval: ReadingInterval) => void
 }) {
   const contextKeys = section === 'overview' ? OVERVIEW_CONTEXT_KEYS
-    : section === 'power' ? POWER_CONTEXT_KEYS : PHASOR_CONTEXT_KEYS
+    : section === 'power' ? POWER_CONTEXT_KEYS
+      : section === 'sequence' ? SEQUENCE_CONTEXT_KEYS : PHASOR_CONTEXT_KEYS
   const quality = record ? visibleQuality(contextKeys.map((key) => attribute(record, key))) : undefined
   const qualityLabel = quality === 'valid' ? 'Visible values valid'
     : quality === 'partial' ? 'Some values unavailable'
@@ -700,14 +700,25 @@ function normalizeAngle(angle: number) {
   return ((angle % 360) + 360) % 360
 }
 
-function phasorReadings(record: ReadingRecord): PhasorReading[] {
+function phasorReadings(
+  record: ReadingRecord,
+  topology: MeasurementTopology,
+): PhasorReading[] {
   const channels = new Map(record.channels.map((channel) => [channel.index, channel]))
   const attributes = new Map(record.attributes.map((attribute) => [attribute.key, attribute]))
   return PHASOR_DEFINITIONS.map((definition) => {
     const channel = channels.get(definition.channel)
     const angle = attributes.get(definition.angleKey)
+    const deltaVoltage = topology === 'delta' && definition.group === 'voltage'
+      ? {
+          a: { label: 'Vab', description: 'Line voltage AB' },
+          b: { label: 'Vbc', description: 'Line voltage BC' },
+          c: { label: 'Vca', description: 'Line voltage CA' },
+        }[definition.phase]
+      : undefined
     return {
       ...definition,
+      ...deltaVoltage,
       unit: channel?.unit ?? (definition.group === 'voltage' ? 'V' : 'A'),
       magnitude: channel?.rms ?? 0,
       magnitudeValid: channel?.valid ?? false,
@@ -717,9 +728,10 @@ function phasorReadings(record: ReadingRecord): PhasorReading[] {
   })
 }
 
-function PhasorDiagram({ readings, nominalVoltage }: {
+function PhasorDiagram({ readings, nominalVoltage, topology }: {
   readings: PhasorReading[]
   nominalVoltage: number
+  topology: MeasurementTopology
 }) {
   const [activeLabel, setActiveLabel] = useState<string>()
   const center = 220
@@ -753,7 +765,7 @@ function PhasorDiagram({ readings, nominalVoltage }: {
       <div><p className="eyebrow">Vector view</p>
         <h3 id="phasor-diagram-title">Fundamental phasor diagram</h3></div>
       <span>{includesVoltage
-        ? `${formatMagnitude(nominalVoltage)} V L-N nominal`
+        ? `${formatMagnitude(nominalVoltage)} V ${topology === 'delta' ? 'L-L' : 'L-N'} nominal`
         : 'Current normalized to Imax'}</span>
     </header>
     <div className="phasor-diagram-frame">
@@ -761,7 +773,8 @@ function PhasorDiagram({ readings, nominalVoltage }: {
         aria-labelledby="phasor-diagram-svg-title phasor-diagram-svg-description">
         <title id="phasor-diagram-svg-title">Fundamental voltage and current phasors</title>
         <desc id="phasor-diagram-svg-description">Zero degrees points right and positive angles
-          rotate counter-clockwise. Voltage magnitude uses the configured nominal voltage.</desc>
+          rotate counter-clockwise. Voltage magnitude uses the configured
+          {topology === 'delta' ? ' line-to-line' : ' line-to-neutral'} nominal voltage.</desc>
         <circle className="phasor-grid-ring outer" cx={center} cy={center} r={outerRadius} />
         {[outerRadius / 3, outerRadius * 2 / 3].map((radius) => <circle
           className="phasor-grid-ring"
@@ -864,16 +877,6 @@ function PhasorUnbalanceSummary({ record }: { record: ReadingRecord }) {
       ['Voltage zero-sequence ratio', 'unbalance.voltage.zero'],
       ['Current zero-sequence ratio', 'unbalance.current.zero'],
     ] },
-    { title: 'Voltage sequence components', entries: [
-      ['Positive V₁', 'sequence.voltage.positive.rms'],
-      ['Negative V₂', 'sequence.voltage.negative.rms'],
-      ['Zero V₀', 'sequence.voltage.zero.rms'],
-    ] },
-    { title: 'Current sequence components', entries: [
-      ['Positive I₁', 'sequence.current.positive.rms'],
-      ['Negative I₂', 'sequence.current.negative.rms'],
-      ['Zero I₀', 'sequence.current.zero.rms'],
-    ] },
   ]
   return <div className="phasor-context-grid">
     {groups.map((group) => <section className="phasor-context-card" key={group.title}>
@@ -902,14 +905,17 @@ function RawPhasorDetails({ record }: { record: ReadingRecord }) {
   </details>
 }
 
-function PhasorUnbalanceView({ interval, record, nominalVoltage, scope, onScopeChange }: {
+function PhasorUnbalanceView({
+  interval, record, nominalVoltage, topology, scope, onScopeChange,
+}: {
   interval: ReadingInterval
   record: ReadingRecord | undefined
   nominalVoltage: number
+  topology: MeasurementTopology
   scope: PhasorScope
   onScopeChange: (scope: PhasorScope) => void
 }) {
-  const allReadings = record ? phasorReadings(record) : []
+  const allReadings = record ? phasorReadings(record, topology) : []
   const displayed = allReadings.filter((reading) =>
     scope === 'all' || reading.group === scope)
 
@@ -918,7 +924,7 @@ function PhasorUnbalanceView({ interval, record, nominalVoltage, scope, onScopeC
       <div>
         <p className="eyebrow">Fundamental vectors</p>
         <h2 id="phasor-angle-title">Phasor &amp; unbalance</h2>
-        <p>Compare phase relationships, sequence components, and unbalance from one record.</p>
+        <p>Compare phase relationships and unbalance from one coherent record.</p>
       </div>
     </div>
 
@@ -961,7 +967,8 @@ function PhasorUnbalanceView({ interval, record, nominalVoltage, scope, onScopeC
             <p className="phasor-readout-note">Neutral current is omitted because the metrology catalog
               currently publishes phase angles for Ia, Ib, and Ic only.</p>
           </section>
-          <PhasorDiagram readings={displayed} nominalVoltage={nominalVoltage} />
+          <PhasorDiagram readings={displayed} nominalVoltage={nominalVoltage}
+            topology={topology} />
         </div>
         <PhasorUnbalanceSummary record={record} />
         <RawPhasorDetails record={record} />
@@ -974,10 +981,13 @@ function PhasorUnbalanceView({ interval, record, nominalVoltage, scope, onScopeC
  * family is never mixed with a partial replacement while the API assembles
  * its seven channels and six chunks per channel.
  */
-export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: {
+export function ReadingPage({
+  readings, onUnauthorized, systemNominalVoltage, measurementTopology,
+}: {
   readings: MeterReadings | undefined
   onUnauthorized: () => void
   systemNominalVoltage: number
+  measurementTopology: MeasurementTopology
 }) {
   const [activeSubtab, setActiveSubtab] = useState<ReadingSubtab>('overview')
   const [readingInterval, setReadingInterval] = useState<ReadingInterval>('basic')
@@ -1129,6 +1139,9 @@ export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: 
       <button className={activeSubtab === 'phasor' ? 'active' : ''} type="button"
         aria-current={activeSubtab === 'phasor' ? 'page' : undefined}
         onClick={() => setActiveSubtab('phasor')}>Phasor &amp; Unbalance</button>
+      <button className={activeSubtab === 'sequence' ? 'active' : ''} type="button"
+        aria-current={activeSubtab === 'sequence' ? 'page' : undefined}
+        onClick={() => setActiveSubtab('sequence')}>Sequence</button>
       <button className={activeSubtab === 'harmonics' ? 'active' : ''} type="button"
         aria-current={activeSubtab === 'harmonics' ? 'page' : undefined}
         onClick={() => setActiveSubtab('harmonics')}>Harmonics</button>
@@ -1151,8 +1164,11 @@ export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: 
         : activeSubtab === 'phasor'
           ? <PhasorUnbalanceView interval={readingInterval} record={committedRecord}
               nominalVoltage={Math.max(1, systemNominalVoltage)} scope={phasorScope}
-              onScopeChange={setPhasorScope} />
-        : <section className="reading-section" aria-labelledby="harmonic-spectrum-title">
+              topology={measurementTopology} onScopeChange={setPhasorScope} />
+          : activeSubtab === 'sequence'
+            ? <SequenceView interval={readingInterval} record={committedRecord}
+                topology={measurementTopology} />
+            : <section className="reading-section" aria-labelledby="harmonic-spectrum-title">
       <div className="reading-section-heading harmonic-section-heading">
         <div>
           <p className="eyebrow">Metrology M16</p>

@@ -39,10 +39,10 @@ eligible basic blocks are needed. This is not an acquisition failure and does
 not degrade system health.
 
 The viewer-facing Reading workspace is organized as **Overview**, **Power**,
-**Phasor & Unbalance**, and **Harmonics**. Overview is an operator summary of
-line-line voltage, authoritative total power, operating mode, and unbalance;
-raw dotted attribute names are reserved for collapsed Advanced tables. The
-first three tabs share one finalized interval context bar for Basic,
+**Phasor & Unbalance**, **Sequence**, and **Harmonics**. Overview is an operator
+summary of line-line voltage, authoritative total power, operating mode, and
+unbalance; raw dotted attribute names are reserved for collapsed Advanced
+tables. The first four tabs share one finalized interval context bar for Basic,
 150/180-cycle, clock-aligned 10-minute, and 2-hour records. The browser commits
 a record only when `record_complete` is true and every attribute
 `source_sequence` matches the top-level sequence. A brief incomplete sibling
@@ -59,16 +59,28 @@ Positive P means import, negative P export, positive Q₁ inductive/lagging, and
 negative Q₁ capacitive/leading. The dashed apparent-power envelope is backend
 S; the separately displayed `sqrt(P² + Q₁²)` resultant need not match it in
 distorted or unbalanced conditions. Totals are never reconstructed from phase
-values. The current backend does not supply THD, fundamental P₁/S₁,
-measurement topology, or algorithm profile/version, so those items remain
-explicitly unavailable and no distortion component or fundamental triangle is
-invented.
+values. The current backend does not supply THD, fundamental P₁/S₁, or
+algorithm profile/version, so those items remain explicitly unavailable and no
+distortion component or fundamental triangle is invented.
 
 **Reading → Phasor & Unbalance** retains the fundamental phasor diagram and
-adds friendly unbalance and positive/negative/zero-sequence summaries plus a
-collapsed exact-quality/provenance table. Basic, 150/180-cycle, 10-minute, and
-2-hour selections remain in a waiting state until their first complete
-finalized record exists.
+adds friendly unbalance summaries plus a collapsed exact-quality/provenance
+table. Basic, 150/180-cycle, 10-minute, and 2-hour selections remain in a
+waiting state until their first complete finalized record exists. Wye mode
+labels voltage vectors Va/Vb/Vc against the L-N nominal reference; delta mode
+labels them Vab/Vbc/Vca against the L-L nominal reference.
+
+**Reading → Sequence** provides an original operator visualization of the
+backend's authoritative positive, negative, and zero sequence RMS magnitudes,
+together with its negative- and zero-sequence ratios. It uses labeled magnitude
+lanes, shared-scale ratio meters, and plain-language phase-order guidance rather
+than copying an external meter screen. The API does not publish sequence
+angles, so the browser does not reconstruct a polar sequence plot or infer
+angles from phase data. Its star (wye) or delta connection diagram comes from
+`metering.measurement_topology`: the setting changes nominal-voltage labels and
+zero-sequence interpretation guidance only, never the PL/RPU sequence
+calculation. For star, `system_nominal_voltage_v` is line-to-neutral (L-N); for
+delta, it is line-to-line (L-L).
 
 The viewer-facing **Reading → Harmonics** tab reads the latest complete M16
 family from `GET /api/v1/meter/harmonics`. Its Voltage selection presents Va,
@@ -95,7 +107,9 @@ measurement. Meter controls are separated under the administrator-only
 **Configuration → Meter** view, including the grid-frequency zero-crossing
 settings, the declared nominal grid frequency selector (50 Hz or 60 Hz),
 which chooses the IEC 61000-4-30 basic measurement block of 10 or 12 cycles,
-and the generator signal frequency that drives the ADC simulator source.
+the presentation-only star (wye) or delta measurement connection, the matching
+L-N or L-L nominal-voltage reference, and the generator signal frequency that
+drives the ADC simulator source.
 
 Administrators can open **Developer → Overview** to monitor the ZynqMP LPD,
 FPD, and PL temperatures discovered from their Linux hwmon labels, together

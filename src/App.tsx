@@ -10,6 +10,7 @@ import {
   MeterAggregate, MeterAggregateResult,
   MeterTenMinute, MeterTenMinuteResult,
   MeterTwoHour, MeterTwoHourResult,
+  MeasurementTopology,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
 } from './api'
@@ -1665,6 +1666,7 @@ function WaveformConfiguration() {
 
 function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
   nominalFrequency, onNominalFrequencyChange,
+  measurementTopology, onMeasurementTopologyChange,
   systemNominalVoltage, onSystemNominalVoltageChange,
   simulator, onSimulatorChange, onUnauthorized }: {
   configuration: FrequencyConfiguration | undefined
@@ -1673,6 +1675,8 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onSubmit: (event: FormEvent) => void
   nominalFrequency: number | undefined
   onNominalFrequencyChange: (nominalFrequency: number) => void
+  measurementTopology: MeasurementTopology | undefined
+  onMeasurementTopologyChange: (topology: MeasurementTopology) => void
   systemNominalVoltage: number | undefined
   onSystemNominalVoltageChange: (systemNominalVoltage: number) => void
   simulator: AdcSimulatorConfiguration | undefined
@@ -1681,6 +1685,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
 }) {
   const [activeTab, setActiveTab] =
     useState<'meter' | 'waveform' | 'data-logging' | 'modbus' | 'mqtt'>('meter')
+  const nominalVoltageReference = measurementTopology === 'delta' ? 'L-L' : 'L-N'
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
@@ -1726,10 +1731,18 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         <option value={60}>60 Hz</option>
       </select>
         <small>Basic measurement block: {(nominalFrequency ?? 60) === 50 ? 10 : 12} cycles</small></label>
-      <label>System nominal voltage (V L-N)<input type="number" min="1" max="1000000"
+      <label>Measurement connection<select value={measurementTopology ?? 'wye'}
+        onChange={(event) => onMeasurementTopologyChange(
+          event.target.value as MeasurementTopology)}>
+        <option value="wye">Star (wye)</option>
+        <option value="delta">Delta</option>
+      </select>
+        <small>Operator interpretation only; PL/RPU sequence calculations are unchanged</small></label>
+      <label>System nominal voltage (V {nominalVoltageReference})<input type="number"
+        min="1" max="1000000"
         step="0.001" required value={systemNominalVoltage ?? 120}
         onChange={(event) => onSystemNominalVoltageChange(Number(event.target.value))} />
-        <small>Voltage reference for the phasor diagram; measurements are unchanged</small></label>
+        <small>{nominalVoltageReference} reference for diagrams; measurements are unchanged</small></label>
       {simulator && <label>Signal frequency (Hz)<input type="number" min="0.001" max="1000" step="0.001"
         value={simulator.frequency_hz}
         onChange={(event) => onSimulatorChange({
@@ -1804,6 +1817,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [frequencyConfiguration, setFrequencyConfiguration] =
     useState<FrequencyConfiguration>()
   const [nominalFrequency, setNominalFrequency] = useState<number>()
+  const [measurementTopology, setMeasurementTopology] = useState<MeasurementTopology>()
   const [systemNominalVoltage, setSystemNominalVoltage] = useState<number>()
   const [configurationStatus, setConfigurationStatus] = useState('')
   const [adcSource, setAdcSource] = useState<AdcSource>()
@@ -1849,6 +1863,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           })
           setFrequencyConfiguration(activeSettings.settings.metering.frequency)
           setNominalFrequency(activeSettings.settings.metering.nominal_frequency_hz)
+          setMeasurementTopology(
+            activeSettings.settings.metering.measurement_topology ?? 'wye')
           setSystemNominalVoltage(
             activeSettings.settings.metering.system_nominal_voltage_v ?? 120)
         }
@@ -1895,6 +1911,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         // zero-crossing configuration but is edited by the same form.
         if (nominalFrequency !== undefined) {
           settings.metering.nominal_frequency_hz = nominalFrequency
+        }
+        if (measurementTopology !== undefined) {
+          settings.metering.measurement_topology = measurementTopology
         }
         if (systemNominalVoltage !== undefined) {
           settings.metering.system_nominal_voltage_v = systemNominalVoltage
@@ -2348,7 +2367,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         ? <AboutPage onUnauthorized={onUnauthorized} />
       : activeView === 'reading'
         ? <ReadingPage readings={readings} onUnauthorized={onUnauthorized}
-            systemNominalVoltage={systemNominalVoltage ?? 120} />
+            systemNominalVoltage={systemNominalVoltage ?? 120}
+            measurementTopology={measurementTopology ?? 'wye'} />
       : activeView === 'history'
         ? <HistoryPage onUnauthorized={onUnauthorized} />
       : activeView === 'waveforms'
@@ -2361,6 +2381,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             onSubmit={saveFrequencyConfiguration}
             nominalFrequency={nominalFrequency}
             onNominalFrequencyChange={setNominalFrequency}
+            measurementTopology={measurementTopology}
+            onMeasurementTopologyChange={setMeasurementTopology}
             systemNominalVoltage={systemNominalVoltage}
             onSystemNominalVoltageChange={setSystemNominalVoltage}
             simulator={simulator}

@@ -1871,7 +1871,7 @@
 
 .phasor-context-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 1rem;
   margin-top: 1rem;
 }
@@ -1917,6 +1917,314 @@
 .reading-page .phasor-vector line:not(.phasor-vector-hit),
 .reading-page .phasor-vector polygon,
 .reading-page .phasor-vector text { transition-duration: .12s; }
+
+/* Sequence is an original operator view built around the magnitudes and
+ * ratios the meter actually publishes. It deliberately avoids a polar plot,
+ * because sequence-component angles are not part of the API contract. */
+.sequence-view {
+  --sequence-positive: #54e2a4;
+  --sequence-negative: #ffbd5c;
+  --sequence-zero: #c68ae8;
+}
+
+.sequence-topology-card {
+  display: grid;
+  grid-template-columns: minmax(16rem, .42fr) minmax(24rem, 1fr);
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+  padding: 1.25rem 1.4rem;
+  overflow: hidden;
+  border: 1px solid #31505a;
+  border-radius: 15px;
+  background:
+    radial-gradient(circle at 12% 50%, rgba(84, 226, 164, .09), transparent 19rem),
+    var(--panel);
+}
+
+.sequence-topology-card.delta {
+  background:
+    radial-gradient(circle at 12% 50%, rgba(255, 189, 92, .09), transparent 19rem),
+    var(--panel);
+}
+
+.sequence-topology-card > div { min-width: 0; }
+.sequence-topology-card .eyebrow { margin: 0 0 .3rem; }
+.sequence-topology-card h3 {
+  margin: 0 0 .45rem;
+  color: #edf6f6;
+  font-size: 1.35rem;
+}
+.sequence-topology-card > div > strong {
+  display: block;
+  color: var(--green);
+  font-size: 1rem;
+}
+.sequence-topology-card.delta > div > strong { color: var(--amber); }
+.sequence-topology-card p:not(.eyebrow) {
+  margin: .8rem 0 .55rem;
+  color: #b6c8cb;
+  font-size: var(--reading-label-size);
+  line-height: 1.6;
+}
+.sequence-topology-card small {
+  color: var(--muted);
+  font-size: var(--reading-label-size);
+  line-height: 1.5;
+}
+
+.sequence-topology-diagram {
+  display: block;
+  width: min(100%, 20rem);
+  min-width: 16rem;
+  height: auto;
+  margin: 0 auto;
+  overflow: visible;
+}
+.sequence-topology-diagram line,
+.sequence-topology-diagram path {
+  fill: none;
+  stroke: var(--sequence-positive);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.sequence-topology-diagram.delta path { stroke: var(--sequence-negative); }
+.sequence-topology-diagram .neutral {
+  stroke: #82979d;
+  stroke-width: 3;
+  stroke-dasharray: 5 5;
+}
+.sequence-topology-diagram .junction {
+  fill: #081419;
+  stroke: #edf6f6;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+.sequence-topology-diagram text {
+  fill: #dce8e9;
+  font: 800 16px var(--mono);
+}
+.sequence-topology-diagram .neutral-label,
+.sequence-topology-diagram .edge-label {
+  fill: #90a6ab;
+  font-size: 14px;
+}
+
+.sequence-component-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(42rem, 100%), 1fr));
+  gap: 1rem;
+}
+
+.sequence-component-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--panel);
+}
+.sequence-component-panel > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.15rem;
+  border-bottom: 1px solid var(--line);
+}
+.sequence-component-panel > header .eyebrow { margin: 0 0 .25rem; }
+.sequence-component-panel h3 {
+  margin: 0;
+  color: #e2eded;
+  font-size: 1.125rem;
+}
+.sequence-positive-reference {
+  display: grid;
+  gap: .25rem;
+  text-align: right;
+}
+.sequence-positive-reference span {
+  color: var(--muted);
+  font-size: var(--reading-label-size);
+}
+.sequence-positive-reference strong {
+  color: var(--sequence-positive);
+  font: 500 var(--reading-value-size) var(--mono);
+}
+
+.sequence-chart-scroll {
+  overflow-x: auto;
+  scrollbar-color: #38515a #0b171c;
+  scrollbar-width: thin;
+}
+.sequence-magnitude-chart {
+  display: block;
+  width: 100%;
+  min-width: 42rem;
+  height: auto;
+  background:
+    linear-gradient(90deg, rgba(84, 226, 164, .025), transparent 55%),
+    #0b171c;
+}
+.sequence-chart-grid {
+  stroke: rgba(177, 204, 208, .12);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.sequence-chart-axis,
+.sequence-chart-unit,
+.sequence-chart-description,
+.sequence-chart-value {
+  fill: #8fa5aa;
+  font: 14px var(--mono);
+}
+.sequence-chart-symbol {
+  fill: currentColor;
+  font: 800 20px var(--mono);
+}
+.sequence-chart-name {
+  fill: #dce8e9;
+  font: 750 15px var(--sans, system-ui, sans-serif);
+}
+.sequence-chart-description { font-family: var(--sans, system-ui, sans-serif); }
+.sequence-chart-track {
+  fill: #102128;
+  stroke: #2b4650;
+  stroke-width: 1;
+}
+.sequence-chart-bar { fill: currentColor; opacity: .76; }
+.sequence-chart-marker {
+  fill: #071116;
+  stroke: currentColor;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+.sequence-chart-value {
+  fill: #f1f7f7;
+  font-size: 15px;
+  font-weight: 800;
+}
+.sequence-positive { color: var(--sequence-positive); }
+.sequence-negative { color: var(--sequence-negative); }
+.sequence-zero { color: var(--sequence-zero); }
+.sequence-chart-lane { cursor: default; }
+.sequence-chart-lane:focus { outline: none; }
+.sequence-chart-lane:focus-visible .sequence-chart-track {
+  stroke: currentColor;
+  stroke-width: 3;
+}
+
+.sequence-ratio-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .75rem;
+  padding: 1rem;
+  border-top: 1px solid var(--line);
+}
+.sequence-ratio-card {
+  min-width: 0;
+  padding: .85rem;
+  border: 1px solid #29434c;
+  border-radius: 11px;
+  background: #0a151a;
+}
+.sequence-ratio-card > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.sequence-ratio-card > div:first-child span,
+.sequence-ratio-card small {
+  color: var(--muted);
+  font-size: var(--reading-label-size);
+  line-height: 1.45;
+}
+.sequence-ratio-card strong {
+  color: currentColor;
+  font: 600 1.125rem var(--mono);
+  white-space: nowrap;
+}
+.sequence-ratio-meter {
+  height: .8rem;
+  margin: .7rem 0 .55rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #14262e;
+}
+.sequence-ratio-meter > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  transition: width .12s ease;
+}
+
+.sequence-concepts {
+  margin-top: 1rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--panel);
+}
+.sequence-concepts > header {
+  padding: 1rem 1.15rem;
+  border-bottom: 1px solid var(--line);
+}
+.sequence-concepts > header .eyebrow { margin: 0 0 .25rem; }
+.sequence-concepts h3 {
+  margin: 0;
+  color: #e2eded;
+  font-size: 1.125rem;
+}
+.sequence-concepts > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.sequence-concepts article {
+  min-width: 0;
+  padding: 1.15rem;
+  border-right: 1px solid var(--line);
+}
+.sequence-concepts article:last-child { border-right: 0; }
+.sequence-concepts article > span {
+  display: inline-block;
+  padding: .35rem .55rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font: 800 1rem var(--mono);
+}
+.sequence-concepts h4 {
+  margin: .85rem 0 .4rem;
+  color: #e2eded;
+  font-size: 1rem;
+}
+.sequence-concepts p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--reading-label-size);
+  line-height: 1.6;
+}
+
+.sequence-angle-note {
+  display: grid;
+  grid-template-columns: minmax(14rem, .35fr) minmax(24rem, 1fr);
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid rgba(87, 184, 217, .35);
+  border-radius: 12px;
+  background: rgba(87, 184, 217, .055);
+}
+.sequence-angle-note strong { color: #9bd9ee; font-size: 1rem; }
+.sequence-angle-note span {
+  color: #b7c8cb;
+  font-size: var(--reading-label-size);
+  line-height: 1.55;
+}
+.sequence-advanced { margin-top: 1rem; }
 
 /* Harmonics retains its atomic-family behavior while gaining operator-scale
  * labels, values, gutters, tooltips, and plotting area. */
@@ -1986,7 +2294,7 @@
   .power-summary-card.operating-mode-card { min-width: 0; }
   .power-analysis-grid { grid-template-columns: 1fr; }
   .pq-chart-layout { grid-template-columns: minmax(24rem, 1fr) minmax(16rem, .55fr); }
-  .phasor-context-grid { grid-template-columns: 1fr 1fr; }
+  .sequence-component-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 860px) {
@@ -2019,6 +2327,9 @@
   .overview-reading-grid.four .overview-reading:nth-child(2) { border-right: 0; }
   .overview-reading-grid.four .overview-reading:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
   .phasor-context-grid { grid-template-columns: 1fr; }
+  .sequence-topology-card { grid-template-columns: 1fr; }
+  .sequence-topology-card > div { text-align: center; }
+  .sequence-angle-note { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 520px) {
@@ -2050,6 +2361,18 @@
   .overview-reading-grid.four .overview-reading:nth-child(2) { border-right: 0; }
   .overview-operating-mode { align-items: flex-start; flex-direction: column; }
   .overview-operating-mode strong { text-align: left; }
+  .sequence-component-panel > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .sequence-positive-reference { text-align: left; }
+  .sequence-ratio-grid,
+  .sequence-concepts > div { grid-template-columns: 1fr; }
+  .sequence-concepts article {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .sequence-concepts article:last-child { border-bottom: 0; }
   .reading-page .harmonic-skyline-row { grid-template-columns: 1fr; }
   .reading-page .harmonic-skyline-axis { margin-left: 0; }
 }

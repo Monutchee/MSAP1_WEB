@@ -114,6 +114,12 @@ describe('reading quality and formatting', () => {
       .toBe('0.00 var')
   })
 
+  it('renders degree readings with the degree symbol', () => {
+    expect(formatReading(reading(
+      'phase.angle.voltage.b', 239.999, 'valid', 41, 'deg',
+    ), 3)).toBe('239.999°')
+  })
+
   it('formats measurement UTC only when supplied', () => {
     expect(formatUtc(Date.UTC(2026, 7, 28, 12, 3, 20, 200) * 1_000_000))
       .toBe('2026-08-28 12:03:20.200 UTC')
