@@ -2368,7 +2368,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       : activeView === 'reading'
         ? <ReadingPage readings={readings} onUnauthorized={onUnauthorized}
             systemNominalVoltage={systemNominalVoltage ?? 120}
-            measurementTopology={measurementTopology ?? 'wye'} />
+            measurementTopology={measurementTopology ?? 'wye'}
+            canReset={session.role === 'admin'} />
       : activeView === 'history'
         ? <HistoryPage onUnauthorized={onUnauthorized} />
       : activeView === 'waveforms'

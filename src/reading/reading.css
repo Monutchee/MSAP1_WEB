@@ -2286,7 +2286,192 @@
 .reading-page .harmonic-matrix th,
 .reading-page .harmonic-matrix td { padding: .85rem 1rem; }
 
+.energy-demand-view { position: relative; }
+
+.energy-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: .65rem;
+}
+
+.energy-admin-actions button { white-space: nowrap; }
+
+.energy-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .6rem 1rem;
+  margin-bottom: 1rem;
+  padding: .85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  background: rgba(8, 20, 25, .78);
+  font-size: .75rem;
+}
+
+.energy-status.compact { margin: 0; }
+.energy-status code,
+.demand-provenance code { color: #d7e9e7; }
+
+.energy-state-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: .38rem;
+  color: #f4b3af;
+  font-weight: 700;
+}
+
+.energy-state-flag i {
+  width: .45rem;
+  height: .45rem;
+  border-radius: 50%;
+  background: #ff6f6a;
+  box-shadow: 0 0 0 3px rgba(255, 111, 106, .12);
+}
+
+.energy-state-flag.ok { color: var(--green); }
+.energy-state-flag.ok i {
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(84, 226, 164, .12);
+}
+
+.energy-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.energy-group-card,
+.quadrant-panel,
+.demand-panel {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.energy-group-card > header,
+.quadrant-panel > header,
+.demand-panel > header { padding: 1.1rem 1.2rem; }
+
+.energy-group-card h3,
+.quadrant-panel h3,
+.demand-panel h3 { margin: 0; font-size: 1.05rem; }
+
+.energy-group-card header p,
+.quadrant-panel header > p:last-child { margin: .35rem 0 0; color: var(--muted); font-size: .76rem; }
+
+.energy-group-card dl { margin: 0; }
+.energy-group-card dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .85rem 1.2rem;
+  border-top: 1px solid var(--line);
+}
+
+.energy-group-card dl > div.total { background: rgba(84, 226, 164, .055); }
+.energy-group-card dt { color: var(--muted); font-size: .74rem; }
+.energy-group-card dd { margin: 0; text-align: right; }
+
+.energy-exact-value { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.energy-exact-value strong { color: #eef7f5; font-size: .95rem; font-weight: 650; }
+.energy-exact-value small { margin-left: .35rem; color: var(--muted); font-size: .64rem; }
+
+.quadrant-panel { margin-bottom: 1rem; }
+.energy-table-frame { overflow-x: auto; }
+.quadrant-matrix,
+.energy-demand-table { width: 100%; border-collapse: collapse; font-size: .77rem; }
+.quadrant-matrix caption,
+.energy-demand-table caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.quadrant-matrix th,
+.quadrant-matrix td,
+.energy-demand-table th,
+.energy-demand-table td {
+  padding: .85rem 1rem;
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  text-align: right;
+}
+.quadrant-matrix th:last-child,
+.quadrant-matrix td:last-child,
+.energy-demand-table th:last-child,
+.energy-demand-table td:last-child { border-right: 0; }
+.quadrant-matrix thead th { min-width: 10rem; vertical-align: top; text-align: left; }
+.quadrant-matrix thead th:first-child { min-width: 5rem; }
+.quadrant-matrix thead strong,
+.quadrant-matrix thead span,
+.quadrant-matrix thead small { display: block; }
+.quadrant-matrix thead span { margin-top: .25rem; color: var(--green); font-family: monospace; }
+.quadrant-matrix thead small { margin-top: .2rem; color: var(--muted); font-weight: 400; }
+.quadrant-matrix tbody th,
+.energy-demand-table tbody th { color: var(--muted); text-align: left; }
+.quadrant-matrix tr.total,
+.energy-demand-table tr.total { background: rgba(84, 226, 164, .055); }
+.quadrant-axis-note { margin: 0; padding: .9rem 1.2rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .72rem; }
+
+.demand-panel { margin-top: 1rem; }
+.demand-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.energy-demand-table thead th { text-align: right; }
+.energy-demand-table thead th:first-child { text-align: left; }
+.demand-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem 1rem;
+  padding: .85rem 1.2rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .72rem;
+}
+.demand-provenance strong { color: #f4b3af; }
+
+.energy-reset-notice {
+  margin-bottom: 1rem;
+  padding: .8rem 1rem;
+  border: 1px solid rgba(84, 226, 164, .35);
+  border-radius: 9px;
+  color: var(--green);
+  background: rgba(84, 226, 164, .06);
+}
+
+.energy-reset-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(2, 8, 11, .78);
+  backdrop-filter: blur(4px);
+}
+
+.energy-reset-dialog {
+  width: min(31rem, 100%);
+  padding: 1.5rem;
+  border: 1px solid rgba(255, 111, 106, .5);
+  border-radius: 14px;
+  background: #0e1c22;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .55);
+}
+.energy-reset-dialog h2 { margin: 0 0 .6rem; }
+.energy-reset-dialog > p:not(.eyebrow) { color: var(--muted); }
+.energy-reset-dialog dl { margin: 1rem 0; }
+.energy-reset-dialog dl > div { display: flex; justify-content: space-between; gap: 1rem; }
+.energy-reset-dialog dd { margin: 0; }
+.energy-reset-actions { display: flex; justify-content: flex-end; gap: .65rem; margin-top: 1.25rem; }
+.energy-reset-actions .danger { border-color: rgba(255, 111, 106, .6); color: #fff; background: #8e302d; }
+
 @media (max-width: 1180px) {
+  .energy-groups { grid-template-columns: 1fr; }
   .power-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .power-summary-card { min-width: 0; border-bottom: 1px solid var(--line); }
   .power-summary-card:nth-child(3n) { border-right: 0; }
@@ -2298,6 +2483,8 @@
 }
 
 @media (max-width: 860px) {
+  .demand-panel > header { align-items: flex-start; flex-direction: column; }
+  .energy-status.compact { width: 100%; }
   .record-context { grid-template-columns: 1fr; align-items: stretch; }
   .record-context-status { justify-content: flex-start; }
   .record-context dl { grid-template-columns: 1fr; }
@@ -2333,6 +2520,9 @@
 }
 
 @media (max-width: 520px) {
+  .energy-admin-actions { width: 100%; justify-content: stretch; }
+  .energy-admin-actions button { flex: 1 1 100%; }
+  .energy-exact-value strong { font-size: .82rem; }
   .reading-page { --reading-value-size: 1.25rem; }
   .reading-heading { padding-top: 2.5rem; }
   .record-context { padding: 1rem; }

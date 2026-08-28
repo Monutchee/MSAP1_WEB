@@ -4,10 +4,13 @@ import 'uplot/dist/uPlot.min.css'
 import { api, ApiError, HistoryCapabilities, HistoryPoint } from '../api'
 import './history.css'
 
-function scaleValue(value: number, unit: string) {
-  if (unit === 'mHz') return value / 1000
-  if (unit === 'uV' || unit === 'uA') return value / 1_000_000
-  return value
+function scaleValue(value: string, unit: string) {
+  // The API remains exact decimal text. This Number is a disposable plotting
+  // coordinate only; authoritative energy display/reset logic never uses it.
+  const plotted = Number(value)
+  if (unit === 'mHz') return plotted / 1000
+  if (unit === 'uV' || unit === 'uA') return plotted / 1_000_000
+  return plotted
 }
 
 function displayUnit(unit: string) {
@@ -75,6 +78,26 @@ function HistoryPlot({ points, capabilities, attributes }: {
         times.push(previous + (time - previous) / 2)
       times.push(time)
     }
+
+    /* Lifetime counters deliberately jump to zero at an administrative
+     * reset. The historian supplies the exact epoch on each M17 point; add an
+     * all-null row between differing epochs so no chart line implies negative
+     * energy or joins independent peak epochs. */
+    const previousEpoch = new Map<string, { epoch: string; time: number }>()
+    for (const point of points) {
+      if (point.reset_epoch === undefined) continue
+      const prior = previousEpoch.get(point.attribute)
+      if (prior && prior.epoch !== point.reset_epoch &&
+          prior.time < point.measured_at_nanoseconds)
+        times.push(prior.time + (point.measured_at_nanoseconds - prior.time) / 2)
+      previousEpoch.set(point.attribute, {
+        epoch: point.reset_epoch,
+        time: point.measured_at_nanoseconds,
+      })
+    }
+    times.sort((a, b) => a - b)
+    for (let index = times.length - 1; index > 0; index -= 1)
+      if (times[index] === times[index - 1]) times.splice(index, 1)
     const timeIndex = new Map(times.map((time, index) => [time, index]))
     const columns: Array<Array<number | null>> = attributes.map(() =>
       Array.from({ length: times.length }, () => null))
