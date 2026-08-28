@@ -156,9 +156,10 @@ export interface MeterReadingAttribute {
 }
 
 /**
- * One channel of a 150/180-cycle aggregate. The aggregate publishes RMS only:
- * there is no mean correction term and no per-channel RMS accumulator count,
- * so those fields are absent rather than zero.
+ * One RMS channel of a finalized aggregate. Derived catalog quantities travel
+ * separately in the response's `attributes` array; there is no mean correction
+ * term or per-channel RMS accumulator count, so those fields are absent rather
+ * than zero.
  */
 export interface MeterAggregateChannel {
   index: number
@@ -199,6 +200,8 @@ export interface MeterAggregateResult {
   time_quality: 'unsynchronized' | 'synchronized' | 'holdover'
   age_ms: number
   channels: MeterAggregateChannel[]
+  /** Catalog attributes from the aggregate POWER/PHASOR/UNBAL record family. */
+  attributes: MeterReadingAttribute[]
   frequency: MeterAggregateFrequency
 }
 

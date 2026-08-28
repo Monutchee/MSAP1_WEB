@@ -23,8 +23,10 @@ selector in the "RMS readings" heading chooses which one the dashboard renders:
 - **Aggregate (150/180 cycles)** reads `GET /api/v1/meter/aggregate`, polled once per second
   and only while that tier is selected. The aggregate combines exactly 15
   consecutive basic measurement blocks into 150 cycles at 50 Hz nominal or 180
-  at 60 Hz (~3 s nominal). It carries RMS per channel but no mean correction
-  and no RMS count, so those card fields are omitted rather than zero-filled.
+  at 60 Hz (~3 s nominal). It carries RMS per channel plus the finalized
+  line-line, power, phasor, and unbalance attribute catalog. It has no exposed
+  mean correction or RMS count, so those diagnostic card fields are omitted
+  rather than zero-filled.
   A provenance strip shows the cycle count and nominal frequency, the basic
   block composition, the first..last basic sequence span, the aggregate age,
   the time quality, and an arithmetic-error warning when the aggregation
@@ -35,6 +37,13 @@ Before the first aggregate exists the endpoint returns `available: false`; the
 dashboard then shows a plain waiting state explaining that 15 consecutive
 eligible basic blocks are needed. This is not an acquisition failure and does
 not degrade system health.
+
+The viewer-facing **Reading → Overview** and **Reading → Phasor Angle** tabs use
+the same finalized interval selector. Basic, 150/180-cycle, clock-aligned
+10-minute, and 2-hour results all render their backend-provided derived
+attributes; the browser never reconstructs power, sequence components, or
+phase angles from RMS magnitudes. Ten-minute and 2-hour selections remain in a
+waiting state until their first finalized interval exists.
 
 The viewer-facing **Reading → Harmonics** tab reads the latest complete M16
 family from `GET /api/v1/meter/harmonics`. Its Voltage selection presents Va,

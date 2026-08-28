@@ -25,7 +25,6 @@ interface IntervalChannel {
 
 interface ReadingIntervalSnapshot {
   available: boolean
-  attributesSupported: boolean
   attributes: MeterReadingAttribute[]
   channels: IntervalChannel[]
   sequence: number | undefined
@@ -633,21 +632,15 @@ function ReadingOverview({ interval, snapshot, intervalError, onIntervalChange }
         <strong>Waiting for {READING_INTERVAL_LABELS[interval]} data</strong>
         <span>The newest complete interval will appear here when the metrology pipeline publishes it.</span>
       </div>
-      : !snapshot.attributesSupported
+      : snapshot.attributes.length === 0
         ? <div className="harmonic-empty warning">
-          <strong>Derived quantities are not published at 150/180 cycles</strong>
-          <span>This endpoint currently carries RMS channels only. Power, phase angles, sequence,
-            and unbalance remain unavailable at this tier rather than being reconstructed in the browser.</span>
+          <strong>No derived attributes in this record</strong>
+          <span>The interval is available, but its derived-quantity catalog is empty.</span>
         </div>
-        : snapshot.attributes.length === 0
-          ? <div className="harmonic-empty warning">
-            <strong>No derived attributes in this record</strong>
-            <span>The interval is available, but its derived-quantity catalog is empty.</span>
-          </div>
-          : <DerivedAttributesPanel attributes={snapshot.attributes}
-            interval={`${READING_INTERVAL_LABELS[interval]}` +
-              `${snapshot.timeQuality ? ` · ${snapshot.timeQuality}` : ''}`}
-            sequence={snapshot.sequence} />}
+        : <DerivedAttributesPanel attributes={snapshot.attributes}
+          interval={`${READING_INTERVAL_LABELS[interval]}` +
+            `${snapshot.timeQuality ? ` · ${snapshot.timeQuality}` : ''}`}
+          sequence={snapshot.sequence} />}
   </section>
 }
 
@@ -844,11 +837,6 @@ function PhasorAngleView({ interval, snapshot, intervalError, nominalVoltage, sc
         <span>The diagram appears when the selected finalized interval is available.</span>
       </div>
       : <>
-        {!snapshot.attributesSupported && <div className="harmonic-empty warning phasor-warning">
-          <strong>Angles are unavailable at 150/180 cycles</strong>
-          <span>RMS magnitudes are shown below, but the aggregate endpoint does not publish phase-angle
-            attributes. The browser will not infer them.</span>
-        </div>}
         <div className="phasor-toolbar">
           <div>
             <span className="harmonic-control-label" id="phasor-scope-label">Displayed vectors</span>
@@ -1013,7 +1001,6 @@ export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: 
   const intervalSnapshot: ReadingIntervalSnapshot = readingInterval === 'basic'
     ? {
       available: readings !== undefined,
-      attributesSupported: true,
       attributes: readings?.attributes ?? [],
       channels: readings?.channels ?? [],
       sequence: readings?.sequence,
@@ -1022,8 +1009,7 @@ export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: 
     : readingInterval === 'aggregate'
       ? {
         available: aggregateResult !== undefined,
-        attributesSupported: false,
-        attributes: [],
+        attributes: aggregateResult?.attributes ?? [],
         channels: aggregateResult?.channels ?? [],
         sequence: aggregateResult?.sequence,
         timeQuality: aggregateResult?.time_quality,
@@ -1031,7 +1017,6 @@ export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: 
       : readingInterval === 'min10'
         ? {
           available: tenMinuteResult !== undefined,
-          attributesSupported: true,
           attributes: tenMinuteResult?.attributes ?? [],
           channels: tenMinuteResult?.channels ?? [],
           sequence: tenMinuteResult?.sequence,
@@ -1039,7 +1024,6 @@ export function ReadingPage({ readings, onUnauthorized, systemNominalVoltage }: 
         }
         : {
           available: twoHourResult !== undefined,
-          attributesSupported: true,
           attributes: twoHourResult?.attributes ?? [],
           channels: twoHourResult?.channels ?? [],
           sequence: twoHourResult?.sequence,
