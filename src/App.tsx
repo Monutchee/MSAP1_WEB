@@ -31,6 +31,13 @@ const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
  */
 type MeterTier = 'basic' | 'aggregate' | 'min10Live' | 'min10' | 'hour2Live' | 'hour2'
 
+type SimulatorApplyDialogState = {
+  phase: 'hidden' | 'applying' | 'success' | 'error'
+  activate: boolean
+  message?: string
+  httpStatus?: number
+}
+
 const TIER_LABELS: Record<MeterTier, string> = {
   basic: 'Basic block (10/12 cycles)',
   aggregate: 'Aggregate (150/180 cycles)',
@@ -90,6 +97,96 @@ function StatusPill({ ok, neutral = false, children }: {
 }) {
   const state = neutral ? 'neutral' : ok ? 'ok' : 'bad'
   return <span className={`status-pill ${state}`}><i />{children}</span>
+}
+
+function SimulatorApplyDialog({ state, onClose, onRetry }: {
+  state: SimulatorApplyDialogState
+  onClose: () => void
+  onRetry: () => void
+}) {
+  const panel = useRef<HTMLElement>(null)
+  const visible = state.phase !== 'hidden'
+  const applying = state.phase === 'applying'
+
+  useEffect(() => {
+    if (!visible) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    panel.current?.focus()
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [visible, state.phase])
+
+  if (!visible) return null
+
+  const title = applying
+    ? state.activate ? 'Applying simulator profile' : 'Saving simulator profile'
+    : state.phase === 'success'
+      ? state.activate ? 'Simulator profile applied' : 'Simulator profile saved'
+      : 'Simulator profile was not applied'
+  const description = applying
+    ? state.activate
+      ? 'The complete profile is being committed to R5C0 and the PL simulator, verified by readback, and saved.'
+      : 'The profile is being validated against the simulator hardware and saved while the physical ADC remains selected.'
+    : state.message ?? ''
+
+  return <div className="simulator-apply-backdrop">
+    <section ref={panel} tabIndex={-1}
+      className={`simulator-apply-dialog ${state.phase}`}
+      role={state.phase === 'error' ? 'alertdialog' : 'dialog'}
+      aria-modal="true" aria-labelledby="simulator-apply-title"
+      aria-describedby="simulator-apply-description" aria-busy={applying}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          if (!applying) onClose()
+          return
+        }
+        if (event.key !== 'Tab') return
+        const controls = Array.from(panel.current?.querySelectorAll<HTMLButtonElement>(
+          'button:not(:disabled)',
+        ) ?? [])
+        if (controls.length === 0) {
+          event.preventDefault()
+          return
+        }
+        const first = controls[0]
+        const last = controls[controls.length - 1]
+        if (event.shiftKey &&
+            (document.activeElement === first || document.activeElement === panel.current)) {
+          event.preventDefault()
+          last.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+      }}>
+      <div className={`simulator-apply-symbol ${state.phase}`} aria-hidden="true">
+        {applying ? <span className="simulator-apply-spinner" />
+          : state.phase === 'success' ? '✓' : '!'}
+      </div>
+      <div className="simulator-apply-copy" aria-live="polite">
+        <p className="eyebrow">ADC simulator settings</p>
+        <h2 id="simulator-apply-title">{title}</h2>
+        <p id="simulator-apply-description">{description}</p>
+        {applying && <p className="simulator-apply-note">
+          Capture can pause briefly during this coordinated transaction. Do not reload this page.</p>}
+        {state.phase === 'success' && <p className="simulator-apply-note">
+          The backend confirmed both the hardware apply and persistent save.</p>}
+        {state.phase === 'error' && <>
+          {state.httpStatus !== undefined && <code className="simulator-apply-code">
+            HTTP {state.httpStatus}</code>}
+          <p className="simulator-apply-note">
+            The previous active profile remains in service. Close this dialog to edit the profile, or retry the same transaction.</p>
+        </>}
+      </div>
+      {!applying && <div className="simulator-apply-actions">
+        {state.phase === 'error' && <button type="button" className="secondary"
+          onClick={onClose}>Review settings</button>}
+        {state.phase === 'error' && <button type="button" onClick={onRetry}>Retry apply</button>}
+        {state.phase === 'success' && <button type="button" onClick={onClose}>Done</button>}
+      </div>}
+    </section>
+  </div>
 }
 
 function Login({ onLogin }: { onLogin: (session: Session) => void }) {
@@ -965,7 +1062,7 @@ function SimulatorToneCard({ harmonic, index, baseFrequencyHz, sampleRateHz,
 }
 
 function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
-  sourceStatus, simulatorStatus, onSourceChange, onSimulatorChange,
+  sourceStatus, simulatorStatus, simulatorApplyBusy, onSourceChange, onSimulatorChange,
   onSimulatorSubmit }: {
   onUnauthorized: () => void
   health: SystemHealth | undefined
@@ -974,6 +1071,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   simulator: AdcSimulatorConfiguration | undefined
   sourceStatus: string
   simulatorStatus: string
+  simulatorApplyBusy: boolean
   onSourceChange: (source: AdcSource['source']) => void
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onSimulatorSubmit: (activate: boolean) => void
@@ -1136,9 +1234,11 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
         </details>
         <div className="frequency-actions simulator-actions">
           {!simulatorSelected && <button className="secondary" type="button"
-            disabled={!tonesValid} onClick={() => onSimulatorSubmit(false)}>Save profile only</button>}
-          <button type="submit" disabled={!tonesValid}>
-            {simulatorSelected ? 'Apply to running simulator' : 'Save and use PL simulator'}</button>
+            disabled={simulatorApplyBusy || !tonesValid}
+            onClick={() => onSimulatorSubmit(false)}>Save profile only</button>}
+          <button type="submit" disabled={simulatorApplyBusy || !tonesValid}>
+            {simulatorApplyBusy ? 'Applying profile…'
+              : simulatorSelected ? 'Apply to running simulator' : 'Save and use PL simulator'}</button>
           <span>{simulatorStatus}</span></div>
       </form>}
     </>
@@ -1613,6 +1713,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [simulator, setSimulator] = useState<AdcSimulatorConfiguration>()
   const [sourceStatus, setSourceStatus] = useState('')
   const [simulatorStatus, setSimulatorStatus] = useState('')
+  const [simulatorApplyDialog, setSimulatorApplyDialog] =
+    useState<SimulatorApplyDialogState>({ phase: 'hidden', activate: false })
   const [error, setError] = useState('')
 
   const handleError = useCallback((reason: unknown) => {
@@ -1727,8 +1829,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   }
 
   async function saveSimulator(activate: boolean) {
-    if (!simulator) return
-    setSimulatorStatus('Saving…')
+    if (!simulator || simulatorApplyDialog.phase === 'applying') return
+    setSimulatorStatus('Applying…')
+    setSimulatorApplyDialog({ phase: 'applying', activate })
     try {
       const normalized = {
         ...simulator,
@@ -1752,14 +1855,23 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         setAdcSource((current) => current ? { ...current, source: 'simulator' } : current)
         setSourceStatus('PL simulator selected.')
       }
-      setSimulatorStatus(activate
+      const message = activate
         ? 'Profile applied; waiting for the next harmonic family.'
-        : 'Profile saved. Physical ADC remains active.')
+        : 'Profile saved. Physical ADC remains active.'
+      setSimulatorStatus(message)
+      setSimulatorApplyDialog({ phase: 'success', activate, message })
     } catch (reason) {
-      setSimulatorStatus(reason instanceof Error
-        ? `Apply failed: ${reason.message}`
-        : 'Apply failed.')
-      handleError(reason)
+      if (reason instanceof ApiError && reason.status === 401) {
+        setSimulatorApplyDialog({ phase: 'hidden', activate })
+        onUnauthorized()
+        return
+      }
+      const message = reason instanceof Error ? reason.message : 'Request failed'
+      setSimulatorStatus(`Apply failed: ${message}`)
+      setSimulatorApplyDialog({
+        phase: 'error', activate, message,
+        httpStatus: reason instanceof ApiError ? reason.status : undefined,
+      })
     }
   }
 
@@ -2131,6 +2243,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           simulator={simulator}
           sourceStatus={sourceStatus}
           simulatorStatus={simulatorStatus}
+          simulatorApplyBusy={simulatorApplyDialog.phase === 'applying'}
           onSourceChange={changeAdcSource}
           onSimulatorChange={setSimulator}
           onSimulatorSubmit={saveSimulator} />
@@ -2274,6 +2387,13 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         </section>
         </>}
     </>}
+    <SimulatorApplyDialog state={simulatorApplyDialog}
+      onClose={() => {
+        if (simulatorApplyDialog.phase !== 'applying') {
+          setSimulatorApplyDialog({ phase: 'hidden', activate: false })
+        }
+      }}
+      onRetry={() => { void saveSimulator(simulatorApplyDialog.activate) }} />
   </main>
 }
 
