@@ -39,9 +39,13 @@ const demand = {
   export_peak_sample: group('18'),
   session_id: '18446744073709551614',
   last_sample_index: '89',
-  interval_target_sample: '90',
+  interval_anchor_sample: '90',
   source_interval_count: 1,
   source_status: 0,
+  method: 'sliding' as const,
+  window_seconds: 60,
+  update_seconds: 3,
+  profile_generation: 1,
   peak_reset_epoch: '9',
   last_durable_update_nanoseconds: '1787933000000000001',
   quality: 'valid',
@@ -113,6 +117,6 @@ describe('Energy & Demand view', () => {
 
     expect(await screen.findByText('Demand warm-up')).toBeInTheDocument()
     expect(screen.queryByText('Some durable values are unavailable')).not.toBeInTheDocument()
-    expect(screen.getByText('Waiting for a completed UTC interval')).toBeInTheDocument()
+    expect(screen.getByText('Waiting for a completed demand window')).toBeInTheDocument()
   })
 })

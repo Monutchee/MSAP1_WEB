@@ -146,7 +146,7 @@ function ResetDialog({ target, epoch, busy, error, onCancel, onConfirm }: {
 
 function DemandTable({ demand }: { demand: MeterDemand }) {
   return <div className="energy-table-frame"><table className="energy-demand-table">
-    <caption>Signed 10-minute active demand and authoritative peaks</caption>
+    <caption>Signed active demand and authoritative peaks for the configured window</caption>
     <thead><tr><th scope="col">Scope</th><th scope="col">Current demand</th>
       <th scope="col">Import peak</th><th scope="col">Export peak</th></tr></thead>
     <tbody>{PHASES.map(({ key, label }) => <tr className={key === 'total' ? 'total' : ''}
@@ -202,7 +202,7 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
       setDemandWarmup(true)
     } else {
       setDemandWarmup(false)
-      handleError(nextDemand.reason, 'Unable to read 10-minute demand', setDemandError)
+      handleError(nextDemand.reason, 'Unable to read active demand', setDemandError)
     }
   }, [handleError])
 
@@ -258,7 +258,7 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
   return <section className="reading-section energy-demand-view" aria-labelledby="energy-demand-title">
     <div className="reading-section-heading compact">
       <div><p className="eyebrow">Metrology M17</p><h2 id="energy-demand-title">Energy &amp; Demand</h2>
-        <p>Durable lifetime energy and completed UTC 10-minute active demand.</p></div>
+        <p>Durable lifetime energy and configurable fixed or sliding active demand.</p></div>
       <div className="energy-view-controls">
         <label className="energy-unit-select">Energy unit
           <select aria-label="Energy display unit" value={displayUnit}
@@ -278,7 +278,7 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
     {resetNotice && <div className="energy-reset-notice" role="status">{resetNotice}</div>}
     {demandWarmup && <div className="energy-warmup-notice" role="status">
       <strong>Demand warm-up</strong>
-      <span>The first durable value appears after a UTC 10-minute interval closes.</span>
+      <span>The first durable value appears after the configured demand window fills.</span>
     </div>}
     {(energyError || demandError) && <div className="error-banner">
       <strong>Some durable values are unavailable</strong>
@@ -326,27 +326,32 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
       <span>Both ENERGY-v1 records must validate and commit before values appear.</span></div>}
 
     <section className="demand-panel" aria-labelledby="active-demand-title">
-      <header><div><p className="eyebrow">UTC 10-minute block demand</p>
+      <header><div><p className="eyebrow">{demand
+        ? `${demand.method === 'fixed_block' ? 'Fixed block' : 'Sliding'} · ${demand.window_seconds / 60} min window · ${demand.update_seconds} s update`
+        : 'Configured active demand'}</p>
         <h3 id="active-demand-title">Active demand</h3></div>
         {demand && <div className="energy-status compact" aria-label="Demand interval status">
           <StateFlag ok={demand.quality === 'valid'}>{`Demand ${demand.quality}`}</StateFlag>
-          <StateFlag ok={demand.time_aligned}>UTC aligned</StateFlag>
-          <StateFlag ok={demand.boundary_valid && !demand.contaminated}>Interval clean</StateFlag>
+          {demand.method === 'fixed_block'
+            ? <StateFlag ok={demand.time_aligned}>UTC aligned</StateFlag>
+            : <StateFlag ok={demand.update_seconds === 3}>3-second refresh</StateFlag>}
+          <StateFlag ok={demand.boundary_valid && !demand.contaminated}>Window clean</StateFlag>
         </div>}</header>
       {demand ? <>
         <DemandTable demand={demand} />
         <div className="demand-provenance">
           <span>Peak epoch <code>{formatExactInteger(demand.peak_reset_epoch)}</code></span>
           <span>Session <code>{formatExactInteger(demand.session_id)}</code></span>
-          <span>Boundary sample <code>{formatExactInteger(demand.interval_target_sample)}</code></span>
+          <span>Window anchor <code>{formatExactInteger(demand.interval_anchor_sample)}</code></span>
+          <span>Profile generation <code>{formatExactInteger(String(demand.profile_generation))}</code></span>
           <span>Durable update <code>{formatExactInteger(demand.last_durable_update_nanoseconds)} ns UTC</code></span>
           {(demand.incomplete_accumulation || demand.saturated) && <strong>
             {demand.incomplete_accumulation ? 'Incomplete accumulation' : ''}
             {demand.incomplete_accumulation && demand.saturated ? ' · ' : ''}
             {demand.saturated ? 'Saturated' : ''}</strong>}
         </div>
-      </> : <div className="harmonic-empty"><strong>Waiting for a completed UTC interval</strong>
-        <span>Current demand and peaks publish only after a valid 10-minute family closes.</span></div>}
+      </> : <div className="harmonic-empty"><strong>Waiting for a completed demand window</strong>
+        <span>Current demand and peaks publish after the configured window is valid and complete.</span></div>}
     </section>
 
     {resetTarget && <ResetDialog target={resetTarget}

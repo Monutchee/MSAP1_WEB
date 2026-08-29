@@ -11,6 +11,7 @@ const DATASETS: Array<{ key: keyof DatabaseSettings; label: string; note: string
   { key: 'cycles_150_180', label: '150/180-cycle', note: '15 basic-block aggregate' },
   { key: 'minutes_10', label: '10-minute', note: 'Aligned scalar measurement product' },
   { key: 'hours_2', label: '2-hour', note: 'Aligned scalar measurement product' },
+  { key: 'demand', label: 'Demand', note: 'UTC 10-minute fixed/sliding demand snapshots' },
   { key: 'harmonic_cycles_150_180', label: 'Harmonic 3-second', note: 'Magnitude families; 24-hour memory default' },
   { key: 'harmonic_minutes_10', label: 'Harmonic 10-minute', note: 'Persistent magnitude families' },
   { key: 'harmonic_hours_2', label: 'Harmonic 2-hour', note: 'Persistent magnitude families' },

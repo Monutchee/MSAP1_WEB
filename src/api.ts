@@ -675,6 +675,12 @@ export interface MqttStatus {
 
 /** Presentation topology for the three voltage measurement inputs. */
 export type MeasurementTopology = 'wye' | 'delta'
+export type DemandMethod = 'fixed_block' | 'sliding'
+
+export interface DemandConfiguration {
+  method: DemandMethod
+  window_seconds: 60 | 300 | 600 | 900 | 1800
+}
 
 export interface ProductSettings {
   schema_version: number
@@ -694,6 +700,7 @@ export interface ProductSettings {
     // the DISARMED state: the PL still measures half-cycle RMS but never
     // declares a sag, swell, or interruption.
     power_quality: PowerQualitySettings
+    demand: DemandConfiguration
     conversion: {
       profile_id: string
       adc_reference_volts: number
@@ -739,6 +746,7 @@ export interface DatabaseSettings {
   harmonic_cycles_150_180: DatasetStorageSettings
   harmonic_minutes_10: DatasetStorageSettings
   harmonic_hours_2: DatasetStorageSettings
+  demand: DatasetStorageSettings
 }
 
 export interface DatabaseConsumerCursor {
@@ -781,7 +789,7 @@ export interface DatabaseStatus {
 }
 
 export type HistorianDataset =
-  | 'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2'
+  | 'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2' | 'demand'
   | 'harmonic_cycles_150_180' | 'harmonic_minutes_10'
   | 'harmonic_hours_2'
 
@@ -864,9 +872,13 @@ export interface MeterDemand {
   export_peak_sample: PhaseTotalDecimalStrings
   session_id: string
   last_sample_index: string
-  interval_target_sample: string
+  interval_anchor_sample: string
   source_interval_count: number
   source_status: number
+  method: DemandMethod
+  window_seconds: number
+  update_seconds: number
+  profile_generation: number
   peak_reset_epoch: string
   last_durable_update_nanoseconds: string
   quality: MeterReadingQuality

@@ -10,7 +10,7 @@ import {
   MeterAggregate, MeterAggregateResult,
   MeterTenMinute, MeterTenMinuteResult,
   MeterTwoHour, MeterTwoHourResult,
-  MeasurementTopology,
+  MeasurementTopology, DemandConfiguration,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
 } from './api'
@@ -1668,6 +1668,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   nominalFrequency, onNominalFrequencyChange,
   measurementTopology, onMeasurementTopologyChange,
   systemNominalVoltage, onSystemNominalVoltageChange,
+  demandConfiguration, onDemandConfigurationChange,
   simulator, onSimulatorChange, onUnauthorized }: {
   configuration: FrequencyConfiguration | undefined
   configurationStatus: string
@@ -1679,6 +1680,8 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onMeasurementTopologyChange: (topology: MeasurementTopology) => void
   systemNominalVoltage: number | undefined
   onSystemNominalVoltageChange: (systemNominalVoltage: number) => void
+  demandConfiguration: DemandConfiguration | undefined
+  onDemandConfigurationChange: (configuration: DemandConfiguration) => void
   simulator: AdcSimulatorConfiguration | undefined
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onUnauthorized: () => void
@@ -1743,6 +1746,32 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
         step="0.001" required value={systemNominalVoltage ?? 120}
         onChange={(event) => onSystemNominalVoltageChange(Number(event.target.value))} />
         <small>{nominalVoltageReference} reference for diagrams; measurements are unchanged</small></label>
+      <label>Demand calculation<select value={demandConfiguration?.method ?? 'sliding'}
+        onChange={(event) => onDemandConfigurationChange({
+          method: event.target.value as DemandConfiguration['method'],
+          window_seconds: event.target.value === 'fixed_block'
+            ? 600 : demandConfiguration?.method === 'sliding'
+              ? demandConfiguration.window_seconds : 60,
+        })}>
+        <option value="sliding">Sliding window</option>
+        <option value="fixed_block">Fixed UTC 10-minute block</option>
+      </select>
+        <small>{demandConfiguration?.method === 'fixed_block'
+          ? 'Publishes when each aligned UTC 10-minute block closes'
+          : 'Refreshes every 3 seconds after the selected window fills'}</small></label>
+      <label>Demand averaging window<select
+        disabled={demandConfiguration?.method === 'fixed_block'}
+        value={demandConfiguration?.window_seconds ?? 60}
+        onChange={(event) => onDemandConfigurationChange({
+          method: demandConfiguration?.method ?? 'sliding',
+          window_seconds: Number(event.target.value) as DemandConfiguration['window_seconds'],
+        })}>
+        <option value={60}>1 minute</option>
+        <option value={300}>5 minutes</option>
+        <option value={600}>10 minutes</option>
+        <option value={900}>15 minutes</option>
+        <option value={1800}>30 minutes</option>
+      </select></label>
       {simulator && <label>Signal frequency (Hz)<input type="number" min="0.001" max="1000" step="0.001"
         value={simulator.frequency_hz}
         onChange={(event) => onSimulatorChange({
@@ -1819,6 +1848,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [nominalFrequency, setNominalFrequency] = useState<number>()
   const [measurementTopology, setMeasurementTopology] = useState<MeasurementTopology>()
   const [systemNominalVoltage, setSystemNominalVoltage] = useState<number>()
+  const [demandConfiguration, setDemandConfiguration] =
+    useState<DemandConfiguration>()
   const [configurationStatus, setConfigurationStatus] = useState('')
   const [adcSource, setAdcSource] = useState<AdcSource>()
   const [simulator, setSimulator] = useState<AdcSimulatorConfiguration>()
@@ -1867,6 +1898,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             activeSettings.settings.metering.measurement_topology ?? 'wye')
           setSystemNominalVoltage(
             activeSettings.settings.metering.system_nominal_voltage_v ?? 120)
+          setDemandConfiguration(activeSettings.settings.metering.demand ?? {
+            method: 'sliding', window_seconds: 60,
+          })
         }
       })
       .catch((reason) => { if (active) handleError(reason) })
@@ -1917,6 +1951,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         }
         if (systemNominalVoltage !== undefined) {
           settings.metering.system_nominal_voltage_v = systemNominalVoltage
+        }
+        if (demandConfiguration !== undefined) {
+          settings.metering.demand = demandConfiguration
         }
         // The simulator signal frequency is edited on the Meter form but
         // persists through the same adc.simulator path the simulator pane
@@ -2386,6 +2423,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             onMeasurementTopologyChange={setMeasurementTopology}
             systemNominalVoltage={systemNominalVoltage}
             onSystemNominalVoltageChange={setSystemNominalVoltage}
+            demandConfiguration={demandConfiguration}
+            onDemandConfigurationChange={setDemandConfiguration}
             simulator={simulator}
             onSimulatorChange={setSimulator}
             onUnauthorized={onUnauthorized} />
