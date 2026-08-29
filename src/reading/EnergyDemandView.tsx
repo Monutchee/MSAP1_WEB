@@ -7,6 +7,7 @@ import {
 type ResetTarget = 'energy' | 'demand'
 type PhaseKey = keyof PhaseTotalDecimalStrings
 export type EnergyDisplayUnit = 'Wh' | 'kWh' | 'MWh'
+export type DemandDisplayUnit = 'W' | 'kW' | 'MW'
 
 const ENERGY_DISPLAY_UNITS: {
   value: EnergyDisplayUnit
@@ -17,6 +18,16 @@ const ENERGY_DISPLAY_UNITS: {
   { value: 'Wh', divisor: 1_000_000n, decimals: 6, prefix: '' },
   { value: 'kWh', divisor: 1_000_000_000n, decimals: 9, prefix: 'k' },
   { value: 'MWh', divisor: 1_000_000_000_000n, decimals: 12, prefix: 'M' },
+]
+
+const DEMAND_DISPLAY_UNITS: {
+  value: DemandDisplayUnit
+  divisor: bigint
+  decimals: number
+}[] = [
+  { value: 'W', divisor: 1_000_000n, decimals: 6 },
+  { value: 'kW', divisor: 1_000_000_000n, decimals: 9 },
+  { value: 'MW', divisor: 1_000_000_000_000n, decimals: 12 },
 ]
 
 const PHASES: { key: PhaseKey; label: string }[] = [
@@ -54,22 +65,33 @@ export function formatExactInteger(value: string): string {
   }
 }
 
-/** Convert exact micro-energy integers without narrowing through Number. */
-export function formatEnergyValue(value: string, unit: EnergyDisplayUnit): string {
+function formatScaledMicroValue(value: string, divisor: bigint, decimals: number): string {
   try {
-    const selected = ENERGY_DISPLAY_UNITS.find((candidate) => candidate.value === unit)
-      ?? ENERGY_DISPLAY_UNITS[1]
     const input = BigInt(value)
     const negative = input < 0n
     const magnitude = negative ? -input : input
-    const integer = magnitude / selected.divisor
-    const remainder = magnitude % selected.divisor
-    const fraction = remainder.toString().padStart(selected.decimals, '0').replace(/0+$/, '')
+    const integer = magnitude / divisor
+    const remainder = magnitude % divisor
+    const fraction = remainder.toString().padStart(decimals, '0').replace(/0+$/, '')
     const sign = negative ? '-' : ''
     return `${sign}${new Intl.NumberFormat('en-US').format(integer)}${fraction ? `.${fraction}` : ''}`
   } catch {
     return value
   }
+}
+
+/** Convert exact micro-energy integers without narrowing through Number. */
+export function formatEnergyValue(value: string, unit: EnergyDisplayUnit): string {
+  const selected = ENERGY_DISPLAY_UNITS.find((candidate) => candidate.value === unit)
+    ?? ENERGY_DISPLAY_UNITS[1]
+  return formatScaledMicroValue(value, selected.divisor, selected.decimals)
+}
+
+/** Convert exact microwatt integers without narrowing through Number. */
+export function formatDemandValue(value: string, unit: DemandDisplayUnit): string {
+  const selected = DEMAND_DISPLAY_UNITS.find((candidate) => candidate.value === unit)
+    ?? DEMAND_DISPLAY_UNITS[1]
+  return formatScaledMicroValue(value, selected.divisor, selected.decimals)
 }
 
 function energyUnitLabel(unit: EnergyDisplayUnit, quantity: 'active' | 'apparent' | 'reactive') {
@@ -79,9 +101,9 @@ function energyUnitLabel(unit: EnergyDisplayUnit, quantity: 'active' | 'apparent
   return `${prefix}Wh`
 }
 
-function ExactValue({ value, unit }: { value: string; unit: string }) {
+function DemandValue({ value, displayUnit }: { value: string; displayUnit: DemandDisplayUnit }) {
   return <span className="energy-exact-value">
-    <strong>{formatExactInteger(value)}</strong><small>{unit}</small>
+    <strong>{formatDemandValue(value, displayUnit)}</strong><small>{displayUnit}</small>
   </span>
 }
 
@@ -144,16 +166,19 @@ function ResetDialog({ target, epoch, busy, error, onCancel, onConfirm }: {
   </div>
 }
 
-function DemandTable({ demand }: { demand: MeterDemand }) {
+function DemandTable({ demand, displayUnit }: {
+  demand: MeterDemand
+  displayUnit: DemandDisplayUnit
+}) {
   return <div className="energy-table-frame"><table className="energy-demand-table">
     <caption>Signed active demand and authoritative peaks for the configured window</caption>
     <thead><tr><th scope="col">Scope</th><th scope="col">Current demand</th>
       <th scope="col">Import peak</th><th scope="col">Export peak</th></tr></thead>
     <tbody>{PHASES.map(({ key, label }) => <tr className={key === 'total' ? 'total' : ''}
       key={key}><th scope="row">{label}</th>
-      <td><ExactValue value={demand.current_active_uw[key]} unit="µW" /></td>
-      <td><ExactValue value={demand.import_peak_uw[key]} unit="µW" /></td>
-      <td><ExactValue value={demand.export_peak_uw[key]} unit="µW" /></td></tr>)}</tbody>
+      <td><DemandValue value={demand.current_active_uw[key]} displayUnit={displayUnit} /></td>
+      <td><DemandValue value={demand.import_peak_uw[key]} displayUnit={displayUnit} /></td>
+      <td><DemandValue value={demand.export_peak_uw[key]} displayUnit={displayUnit} /></td></tr>)}</tbody>
   </table></div>
 }
 
@@ -167,6 +192,7 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
   const [demandError, setDemandError] = useState('')
   const [demandWarmup, setDemandWarmup] = useState(false)
   const [displayUnit, setDisplayUnit] = useState<EnergyDisplayUnit>('kWh')
+  const [demandDisplayUnit, setDemandDisplayUnit] = useState<DemandDisplayUnit>('kW')
   const [resetTarget, setResetTarget] = useState<ResetTarget>()
   const [resetKey, setResetKey] = useState('')
   const [resetBusy, setResetBusy] = useState(false)
@@ -330,15 +356,23 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
         ? `${demand.method === 'fixed_block' ? 'Fixed block' : 'Sliding'} · ${demand.window_seconds / 60} min window · ${demand.update_seconds} s update`
         : 'Configured active demand'}</p>
         <h3 id="active-demand-title">Active demand</h3></div>
-        {demand && <div className="energy-status compact" aria-label="Demand interval status">
-          <StateFlag ok={demand.quality === 'valid'}>{`Demand ${demand.quality}`}</StateFlag>
-          {demand.method === 'fixed_block'
-            ? <StateFlag ok={demand.time_aligned}>UTC aligned</StateFlag>
-            : <StateFlag ok={demand.update_seconds === 3}>3-second refresh</StateFlag>}
-          <StateFlag ok={demand.boundary_valid && !demand.contaminated}>Window clean</StateFlag>
-        </div>}</header>
+        <div className="energy-view-controls">
+          <label className="energy-unit-select">Demand unit
+            <select aria-label="Demand display unit" value={demandDisplayUnit}
+              onChange={(event) => setDemandDisplayUnit(event.target.value as DemandDisplayUnit)}>
+              {DEMAND_DISPLAY_UNITS.map(({ value }) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          {demand && <div className="energy-status compact" aria-label="Demand interval status">
+            <StateFlag ok={demand.quality === 'valid'}>{`Demand ${demand.quality}`}</StateFlag>
+            {demand.method === 'fixed_block'
+              ? <StateFlag ok={demand.time_aligned}>UTC aligned</StateFlag>
+              : <StateFlag ok={demand.update_seconds === 3}>3-second refresh</StateFlag>}
+            <StateFlag ok={demand.boundary_valid && !demand.contaminated}>Window clean</StateFlag>
+          </div>}
+        </div></header>
       {demand ? <>
-        <DemandTable demand={demand} />
+        <DemandTable demand={demand} displayUnit={demandDisplayUnit} />
         <div className="demand-provenance">
           <span>Peak epoch <code>{formatExactInteger(demand.peak_reset_epoch)}</code></span>
           <span>Session <code>{formatExactInteger(demand.session_id)}</code></span>

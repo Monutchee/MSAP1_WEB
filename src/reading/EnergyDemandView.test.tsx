@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { EnergyDemandView, formatEnergyValue, formatExactInteger } from './EnergyDemandView'
+import {
+  EnergyDemandView, formatDemandValue, formatEnergyValue, formatExactInteger,
+} from './EnergyDemandView'
 
 const group = (base: string) => ({
   phase_a: base,
@@ -65,6 +67,9 @@ describe('Energy & Demand view', () => {
     expect(formatEnergyValue('9007199254740993', 'Wh')).toBe('9,007,199,254.740993')
     expect(formatEnergyValue('9007199254740993', 'kWh')).toBe('9,007,199.254740993')
     expect(formatEnergyValue('9007199254740993', 'MWh')).toBe('9,007.199254740993')
+    expect(formatDemandValue('-9007199254740993', 'W')).toBe('-9,007,199,254.740993')
+    expect(formatDemandValue('-9007199254740993', 'kW')).toBe('-9,007,199.254740993')
+    expect(formatDemandValue('-9007199254740993', 'MW')).toBe('-9,007.199254740993')
   })
 
   it('renders every quadrant with explicit P/Q signs and admin reset controls', async () => {
@@ -90,6 +95,14 @@ describe('Energy & Demand view', () => {
     expect(screen.getAllByText('kVAh').length).toBeGreaterThan(0)
     expect(screen.getAllByText('kvarh').length).toBeGreaterThan(0)
     expect(screen.queryByText('µWh')).not.toBeInTheDocument()
+    const demandUnit = screen.getByRole('combobox', { name: 'Demand display unit' })
+    expect(demandUnit).toHaveValue('kW')
+    expect(screen.getByText('-9,007,199.254740993')).toBeInTheDocument()
+    expect(screen.getAllByText('kW').length).toBeGreaterThan(0)
+    expect(screen.queryByText('µW')).not.toBeInTheDocument()
+    fireEvent.change(demandUnit, { target: { value: 'W' } })
+    expect(screen.getByText('-9,007,199,254.740993')).toBeInTheDocument()
+    expect(screen.getAllByText('W').length).toBeGreaterThan(0)
     expect(screen.getByText('Accumulation complete')).toHaveClass('ok')
     fireEvent.change(unit, { target: { value: 'Wh' } })
     expect(screen.getByText('9,007,199,254.740993')).toBeInTheDocument()
