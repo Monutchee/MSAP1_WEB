@@ -10,7 +10,7 @@ import {
   MeterAggregate, MeterAggregateResult,
   MeterTenMinute, MeterTenMinuteResult,
   MeterTwoHour, MeterTwoHourResult,
-  MeasurementTopology,
+  MeasurementTopology, DemandConfiguration,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
 } from './api'
@@ -1664,10 +1664,11 @@ function WaveformConfiguration() {
   </div>
 }
 
-function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
+export function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
   nominalFrequency, onNominalFrequencyChange,
   measurementTopology, onMeasurementTopologyChange,
   systemNominalVoltage, onSystemNominalVoltageChange,
+  demandConfiguration, onDemandConfigurationChange,
   simulator, onSimulatorChange, onUnauthorized }: {
   configuration: FrequencyConfiguration | undefined
   configurationStatus: string
@@ -1679,6 +1680,8 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   onMeasurementTopologyChange: (topology: MeasurementTopology) => void
   systemNominalVoltage: number | undefined
   onSystemNominalVoltageChange: (systemNominalVoltage: number) => void
+  demandConfiguration: DemandConfiguration | undefined
+  onDemandConfigurationChange: (configuration: DemandConfiguration) => void
   simulator: AdcSimulatorConfiguration | undefined
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onUnauthorized: () => void
@@ -1689,7 +1692,7 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
-        <p>Configure programmable-logic measurement behavior.</p></div>
+        <p>Configure nominal grid identity, demand, and measurement behavior.</p></div>
     </div>
     <nav className="developer-subtabs" aria-label="Configuration sections">
       <button className={activeTab === 'meter' ? 'active' : ''} type="button"
@@ -1710,73 +1713,125 @@ function ConfigurationPage({ configuration, configurationStatus, onChange, onSub
     </nav>
     {activeTab === 'meter' ? <>
       <section className="section-heading configuration-heading">
-      <div><p className="eyebrow">Frequency</p><h2>Zero-crossing configuration</h2></div>
-      <span>Reference: CH6 VLA</span>
-    </section>
-    {configuration && <form className="frequency-form" onSubmit={onSubmit}>
-      <label className="toggle"><input type="checkbox" checked={configuration.enabled}
-        onChange={(event) => onChange({ ...configuration, enabled: event.target.checked })} />Enable measurement</label>
-      <label>Mode<select value={configuration.mode}
-        onChange={(event) => onChange({
-          ...configuration,
-          mode: event.target.value as FrequencyConfiguration['mode'],
-        })}>
-        <option value="single_cycle">Single cycle</option>
-        <option value="rolling_cycles">Rolling cycles</option>
-        <option value="rolling_time">Rolling time</option>
-      </select></label>
-      <label>Nominal grid frequency<select value={nominalFrequency ?? 60}
-        onChange={(event) => onNominalFrequencyChange(Number(event.target.value))}>
-        <option value={50}>50 Hz</option>
-        <option value={60}>60 Hz</option>
-      </select>
-        <small>Basic measurement block: {(nominalFrequency ?? 60) === 50 ? 10 : 12} cycles</small></label>
-      <label>Measurement connection<select value={measurementTopology ?? 'wye'}
-        onChange={(event) => onMeasurementTopologyChange(
-          event.target.value as MeasurementTopology)}>
-        <option value="wye">Star (wye)</option>
-        <option value="delta">Delta</option>
-      </select>
-        <small>Operator interpretation only; PL/RPU sequence calculations are unchanged</small></label>
-      <label>System nominal voltage (V {nominalVoltageReference})<input type="number"
-        min="1" max="1000000"
-        step="0.001" required value={systemNominalVoltage ?? 120}
-        onChange={(event) => onSystemNominalVoltageChange(Number(event.target.value))} />
-        <small>{nominalVoltageReference} reference for diagrams; measurements are unchanged</small></label>
-      {simulator && <label>Signal frequency (Hz)<input type="number" min="0.001" max="1000" step="0.001"
-        value={simulator.frequency_hz}
-        onChange={(event) => onSimulatorChange({
-          ...simulator, frequency_hz: Number(event.target.value),
-        })} />
-        <small>Drives the ADC simulator source</small></label>}
-      <label>Averaging cycles<input type="number" min="1" max="64"
-        value={configuration.averaging_cycles}
-        onChange={(event) => onChange({
-          ...configuration, averaging_cycles: Number(event.target.value),
-        })} /></label>
-      <label>Time window (ms)<input type="number" min="100" max="1000"
-        value={configuration.averaging_window_ms}
-        onChange={(event) => onChange({
-          ...configuration, averaging_window_ms: Number(event.target.value),
-        })} /></label>
-      <label>Minimum (Hz)<input type="number" min="10" max="200" step="0.001"
-        value={configuration.minimum_hz}
-        onChange={(event) => onChange({
-          ...configuration, minimum_hz: Number(event.target.value),
-        })} /></label>
-      <label>Maximum (Hz)<input type="number" min="10" max="200" step="0.001"
-        value={configuration.maximum_hz}
-        onChange={(event) => onChange({
-          ...configuration, maximum_hz: Number(event.target.value),
-        })} /></label>
-      <label>Hysteresis (V)<input type="number" min="0.001" max="100" step="0.001"
-        value={configuration.hysteresis_volts}
-        onChange={(event) => onChange({
-          ...configuration, hysteresis_volts: Number(event.target.value),
-        })} /></label>
-      <div className="frequency-actions"><button type="submit">Apply and save</button>
-        <span>{configurationStatus}</span></div>
-    </form>}</> : activeTab === 'waveform'
+        <div><p className="eyebrow">Meter</p><h2>Measurement configuration</h2></div>
+        <span>Grid, demand, and frequency processing</span>
+      </section>
+      {configuration && <form className="frequency-form meter-settings-form" onSubmit={onSubmit}>
+        <section className="meter-settings-section" aria-labelledby="nominal-grid-settings-title">
+          <header><div><p className="eyebrow">Grid service</p>
+            <h3 id="nominal-grid-settings-title">Nominal grid configuration</h3></div>
+            <span>Electrical-system identity and display reference</span></header>
+          <div className="meter-settings-grid nominal-grid-settings">
+            <label>Nominal grid frequency<select value={nominalFrequency ?? 60}
+              onChange={(event) => onNominalFrequencyChange(Number(event.target.value))}>
+              <option value={50}>50 Hz</option>
+              <option value={60}>60 Hz</option>
+            </select>
+              <small>Basic measurement block: {(nominalFrequency ?? 60) === 50 ? 10 : 12} cycles</small></label>
+            <label>Measurement connection<select value={measurementTopology ?? 'wye'}
+              onChange={(event) => onMeasurementTopologyChange(
+                event.target.value as MeasurementTopology)}>
+              <option value="wye">Star (wye)</option>
+              <option value="delta">Delta</option>
+            </select>
+              <small>Operator interpretation only; PL/RPU sequence calculations are unchanged</small></label>
+            <label>System nominal voltage (V {nominalVoltageReference})<input type="number"
+              min="1" max="1000000" step="0.001" required
+              value={systemNominalVoltage ?? 120}
+              onChange={(event) => onSystemNominalVoltageChange(Number(event.target.value))} />
+              <small>{nominalVoltageReference} reference for diagrams; measurements are unchanged</small></label>
+          </div>
+        </section>
+
+        <section className="meter-settings-section" aria-labelledby="demand-settings-title">
+          <header><div><p className="eyebrow">Demand</p>
+            <h3 id="demand-settings-title">Active-demand configuration</h3></div>
+            <span>Calculation method, window, and publication cadence</span></header>
+          <div className="meter-settings-grid demand-settings-grid">
+            <label>Demand calculation<select value={demandConfiguration?.method ?? 'sliding'}
+              onChange={(event) => onDemandConfigurationChange({
+                method: event.target.value as DemandConfiguration['method'],
+                window_seconds: event.target.value === 'fixed_block'
+                  ? 600 : demandConfiguration?.method === 'sliding'
+                    ? demandConfiguration.window_seconds : 60,
+              })}>
+              <option value="sliding">Sliding window</option>
+              <option value="fixed_block">Fixed UTC 10-minute block</option>
+            </select>
+              <small>{demandConfiguration?.method === 'fixed_block'
+                ? 'Publishes when each aligned UTC 10-minute block closes'
+                : 'Refreshes every 3 seconds after the selected window fills'}</small></label>
+            <label>Demand averaging window<select
+              disabled={demandConfiguration?.method === 'fixed_block'}
+              value={demandConfiguration?.window_seconds ?? 60}
+              onChange={(event) => onDemandConfigurationChange({
+                method: demandConfiguration?.method ?? 'sliding',
+                window_seconds: Number(event.target.value) as DemandConfiguration['window_seconds'],
+              })}>
+              <option value={60}>1 minute</option>
+              <option value={300}>5 minutes</option>
+              <option value={600}>10 minutes</option>
+              <option value={900}>15 minutes</option>
+              <option value={1800}>30 minutes</option>
+            </select></label>
+          </div>
+        </section>
+
+        <section className="meter-settings-section" aria-labelledby="zero-crossing-settings-title">
+          <header><div><p className="eyebrow">Frequency</p>
+            <h3 id="zero-crossing-settings-title">Zero-crossing configuration</h3></div>
+            <span>Reference: CH6 VLA</span></header>
+          <div className="meter-settings-grid zero-crossing-settings-grid">
+            <label className="toggle"><input type="checkbox" checked={configuration.enabled}
+              onChange={(event) => onChange({
+                ...configuration, enabled: event.target.checked,
+              })} />Enable measurement</label>
+            <label>Mode<select value={configuration.mode}
+              onChange={(event) => onChange({
+                ...configuration,
+                mode: event.target.value as FrequencyConfiguration['mode'],
+              })}>
+              <option value="single_cycle">Single cycle</option>
+              <option value="rolling_cycles">Rolling cycles</option>
+              <option value="rolling_time">Rolling time</option>
+            </select></label>
+            {simulator && <label>Signal frequency (Hz)<input type="number"
+              min="0.001" max="1000" step="0.001" value={simulator.frequency_hz}
+              onChange={(event) => onSimulatorChange({
+                ...simulator, frequency_hz: Number(event.target.value),
+              })} />
+              <small>Drives the ADC simulator source</small></label>}
+            <label>Averaging cycles<input type="number" min="1" max="64"
+              value={configuration.averaging_cycles}
+              onChange={(event) => onChange({
+                ...configuration, averaging_cycles: Number(event.target.value),
+              })} /></label>
+            <label>Time window (ms)<input type="number" min="100" max="1000"
+              value={configuration.averaging_window_ms}
+              onChange={(event) => onChange({
+                ...configuration, averaging_window_ms: Number(event.target.value),
+              })} /></label>
+            <label>Minimum (Hz)<input type="number" min="10" max="200" step="0.001"
+              value={configuration.minimum_hz}
+              onChange={(event) => onChange({
+                ...configuration, minimum_hz: Number(event.target.value),
+              })} /></label>
+            <label>Maximum (Hz)<input type="number" min="10" max="200" step="0.001"
+              value={configuration.maximum_hz}
+              onChange={(event) => onChange({
+                ...configuration, maximum_hz: Number(event.target.value),
+              })} /></label>
+            <label>Hysteresis (V)<input type="number" min="0.001" max="100" step="0.001"
+              value={configuration.hysteresis_volts}
+              onChange={(event) => onChange({
+                ...configuration, hysteresis_volts: Number(event.target.value),
+              })} /></label>
+          </div>
+        </section>
+
+        <div className="frequency-actions"><button type="submit">Apply and save</button>
+          <span>{configurationStatus}</span></div>
+      </form>}</> : activeTab === 'waveform'
       ? <WaveformConfiguration />
       : activeTab === 'data-logging'
         ? <DeveloperDatabasePage onUnauthorized={onUnauthorized} />
@@ -1819,6 +1874,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [nominalFrequency, setNominalFrequency] = useState<number>()
   const [measurementTopology, setMeasurementTopology] = useState<MeasurementTopology>()
   const [systemNominalVoltage, setSystemNominalVoltage] = useState<number>()
+  const [demandConfiguration, setDemandConfiguration] =
+    useState<DemandConfiguration>()
   const [configurationStatus, setConfigurationStatus] = useState('')
   const [adcSource, setAdcSource] = useState<AdcSource>()
   const [simulator, setSimulator] = useState<AdcSimulatorConfiguration>()
@@ -1867,6 +1924,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             activeSettings.settings.metering.measurement_topology ?? 'wye')
           setSystemNominalVoltage(
             activeSettings.settings.metering.system_nominal_voltage_v ?? 120)
+          setDemandConfiguration(activeSettings.settings.metering.demand ?? {
+            method: 'sliding', window_seconds: 60,
+          })
         }
       })
       .catch((reason) => { if (active) handleError(reason) })
@@ -1917,6 +1977,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         }
         if (systemNominalVoltage !== undefined) {
           settings.metering.system_nominal_voltage_v = systemNominalVoltage
+        }
+        if (demandConfiguration !== undefined) {
+          settings.metering.demand = demandConfiguration
         }
         // The simulator signal frequency is edited on the Meter form but
         // persists through the same adc.simulator path the simulator pane
@@ -2368,7 +2431,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       : activeView === 'reading'
         ? <ReadingPage readings={readings} onUnauthorized={onUnauthorized}
             systemNominalVoltage={systemNominalVoltage ?? 120}
-            measurementTopology={measurementTopology ?? 'wye'} />
+            measurementTopology={measurementTopology ?? 'wye'}
+            canReset={session.role === 'admin'} />
       : activeView === 'history'
         ? <HistoryPage onUnauthorized={onUnauthorized} />
       : activeView === 'waveforms'
@@ -2385,6 +2449,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             onMeasurementTopologyChange={setMeasurementTopology}
             systemNominalVoltage={systemNominalVoltage}
             onSystemNominalVoltageChange={setSystemNominalVoltage}
+            demandConfiguration={demandConfiguration}
+            onDemandConfigurationChange={setDemandConfiguration}
             simulator={simulator}
             onSimulatorChange={setSimulator}
             onUnauthorized={onUnauthorized} />

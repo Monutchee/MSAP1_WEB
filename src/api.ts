@@ -675,6 +675,12 @@ export interface MqttStatus {
 
 /** Presentation topology for the three voltage measurement inputs. */
 export type MeasurementTopology = 'wye' | 'delta'
+export type DemandMethod = 'fixed_block' | 'sliding'
+
+export interface DemandConfiguration {
+  method: DemandMethod
+  window_seconds: 60 | 300 | 600 | 900 | 1800
+}
 
 export interface ProductSettings {
   schema_version: number
@@ -694,6 +700,7 @@ export interface ProductSettings {
     // the DISARMED state: the PL still measures half-cycle RMS but never
     // declares a sag, swell, or interruption.
     power_quality: PowerQualitySettings
+    demand: DemandConfiguration
     conversion: {
       profile_id: string
       adc_reference_volts: number
@@ -739,6 +746,7 @@ export interface DatabaseSettings {
   harmonic_cycles_150_180: DatasetStorageSettings
   harmonic_minutes_10: DatasetStorageSettings
   harmonic_hours_2: DatasetStorageSettings
+  demand: DatasetStorageSettings
 }
 
 export interface DatabaseConsumerCursor {
@@ -781,7 +789,7 @@ export interface DatabaseStatus {
 }
 
 export type HistorianDataset =
-  | 'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2'
+  | 'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2' | 'demand'
   | 'harmonic_cycles_150_180' | 'harmonic_minutes_10'
   | 'harmonic_hours_2'
 
@@ -812,14 +820,79 @@ export interface HistoryPoint {
   measured_at_nanoseconds: number
   source_sequence: number
   attribute: string
-  value: number
+  /** Exact signed int64 decimal; charts convert only their display copy. */
+  value: string
   quality: string
+  /** Present for energy/demand so plots can break administrative reset epochs. */
+  reset_epoch?: string
 }
 
 export interface HistoryResponse {
   period: string
   points: HistoryPoint[]
   truncated: boolean
+}
+
+/** Decimal strings are deliberate: these values may exceed JavaScript's safe
+ * integer range and must never pass through Number. */
+export interface PhaseTotalDecimalStrings {
+  phase_a: string
+  phase_b: string
+  phase_c: string
+  total: string
+}
+
+export interface MeterEnergy {
+  active_import_uwh: PhaseTotalDecimalStrings
+  active_export_uwh: PhaseTotalDecimalStrings
+  apparent_uvah: PhaseTotalDecimalStrings
+  reactive_quadrant_i_uvarh: PhaseTotalDecimalStrings
+  reactive_quadrant_ii_uvarh: PhaseTotalDecimalStrings
+  reactive_quadrant_iii_uvarh: PhaseTotalDecimalStrings
+  reactive_quadrant_iv_uvarh: PhaseTotalDecimalStrings
+  session_id: string
+  last_sample_index: string
+  accepted_samples: string
+  skipped_samples: string
+  accepted_blocks: number
+  skipped_blocks: number
+  reset_epoch: string
+  last_durable_update_nanoseconds: string
+  quality: MeterReadingQuality
+  incomplete_accumulation: boolean
+  saturated: boolean
+  discontinuity: boolean
+}
+
+export interface MeterDemand {
+  current_active_uw: PhaseTotalDecimalStrings
+  import_peak_uw: PhaseTotalDecimalStrings
+  export_peak_uw: PhaseTotalDecimalStrings
+  import_peak_sample: PhaseTotalDecimalStrings
+  export_peak_sample: PhaseTotalDecimalStrings
+  session_id: string
+  last_sample_index: string
+  interval_anchor_sample: string
+  source_interval_count: number
+  source_status: number
+  method: DemandMethod
+  window_seconds: number
+  update_seconds: number
+  profile_generation: number
+  peak_reset_epoch: string
+  last_durable_update_nanoseconds: string
+  quality: MeterReadingQuality
+  time_aligned: boolean
+  contaminated: boolean
+  boundary_valid: boolean
+  incomplete_accumulation: boolean
+  saturated: boolean
+}
+
+export interface MeterResetResult {
+  reset_epoch: string
+  replayed: boolean
+  request_id: string
 }
 
 export interface SettingsDocument {
@@ -1017,6 +1090,18 @@ export const api = {
   meterTwoHour: () => request<MeterTwoHour>('/api/v1/meter/hours-2'),
   meterTenMinuteLive: () => request<MeterTenMinute>('/api/v1/meter/minutes-10/live'),
   meterTwoHourLive: () => request<MeterTwoHour>('/api/v1/meter/hours-2/live'),
+  meterEnergy: () => request<MeterEnergy>('/api/v1/meter/energy'),
+  meterDemand: () => request<MeterDemand>('/api/v1/meter/demand'),
+  resetMeterEnergy: (expected_epoch: string, idempotency_key: string) =>
+    request<MeterResetResult>('/api/v1/meter/energy/reset', {
+      method: 'POST',
+      body: JSON.stringify({ expected_epoch, idempotency_key }),
+    }),
+  resetMeterDemandPeaks: (expected_epoch: string, idempotency_key: string) =>
+    request<MeterResetResult>('/api/v1/meter/demand/peaks/reset', {
+      method: 'POST',
+      body: JSON.stringify({ expected_epoch, idempotency_key }),
+    }),
   frequencyConfiguration: () =>
     request<FrequencyConfiguration>('/api/v1/meter/configuration/frequency'),
   updateFrequencyConfiguration: (configuration: FrequencyConfiguration) =>

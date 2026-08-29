@@ -37,6 +37,17 @@
 - The Sequence reading view may display the backend's authoritative sequence
   magnitudes and unbalance ratios. Do not synthesize sequence angles or a polar
   sequence plot until those angles are explicitly published by the API.
+- The Energy & Demand reading view consumes only the authoritative
+  `/api/v1/meter/energy` and `/api/v1/meter/demand` models. Energy, demand,
+  session IDs, sample anchors, and reset epochs arrive as decimal strings;
+  format them with `BigInt` and never route authoritative values through
+  JavaScript `Number`. Keep quadrants I--IV explicit with their P/Q1 sign
+  labels. Reset controls are administrator-only, require confirmation, and
+  send the displayed expected epoch with a fresh idempotency key.
+- Historian energy/demand points retain an exact decimal string and reset
+  epoch. A plotting-only numeric copy is acceptable, but graph series must
+  break when the epoch changes so a reset is never rendered as consumption or
+  a continuous peak history.
 - Configuration -> Modbus edits `ProductSettings.modbus` through the same
   complete-document settings endpoint. Keep TCP/RTU validation aligned with
   the backend schema; the browser must never bind sockets or open serial ports.

@@ -9,6 +9,7 @@ import {
 } from '../api'
 import type { MeasurementTopology } from '../api'
 import { PowerView } from './PowerView'
+import { EnergyDemandView } from './EnergyDemandView'
 import { SequenceView, SEQUENCE_CONTEXT_KEYS } from './SequenceView'
 import {
   READING_INTERVAL_LABELS, aggregateReadingRecord, attribute, basicReadingRecord,
@@ -19,7 +20,7 @@ import {
 } from './readingModel'
 import './reading.css'
 
-type ReadingSubtab = 'overview' | 'power' | 'phasor' | 'sequence' | 'harmonics'
+type ReadingSubtab = 'overview' | 'power' | 'energy' | 'phasor' | 'sequence' | 'harmonics'
 type PhasorScope = 'voltage' | 'current' | 'all'
 type HarmonicGroup = 'voltage' | 'current'
 type HarmonicDisplay = 'magnitude' | 'percentage'
@@ -982,12 +983,13 @@ function PhasorUnbalanceView({
  * its seven channels and six chunks per channel.
  */
 export function ReadingPage({
-  readings, onUnauthorized, systemNominalVoltage, measurementTopology,
+  readings, onUnauthorized, systemNominalVoltage, measurementTopology, canReset = false,
 }: {
   readings: MeterReadings | undefined
   onUnauthorized: () => void
   systemNominalVoltage: number
   measurementTopology: MeasurementTopology
+  canReset?: boolean
 }) {
   const [activeSubtab, setActiveSubtab] = useState<ReadingSubtab>('overview')
   const [readingInterval, setReadingInterval] = useState<ReadingInterval>('basic')
@@ -1136,6 +1138,9 @@ export function ReadingPage({
       <button className={activeSubtab === 'power' ? 'active' : ''} type="button"
         aria-current={activeSubtab === 'power' ? 'page' : undefined}
         onClick={() => setActiveSubtab('power')}>Power</button>
+      <button className={activeSubtab === 'energy' ? 'active' : ''} type="button"
+        aria-current={activeSubtab === 'energy' ? 'page' : undefined}
+        onClick={() => setActiveSubtab('energy')}>Energy &amp; Demand</button>
       <button className={activeSubtab === 'phasor' ? 'active' : ''} type="button"
         aria-current={activeSubtab === 'phasor' ? 'page' : undefined}
         onClick={() => setActiveSubtab('phasor')}>Phasor &amp; Unbalance</button>
@@ -1147,7 +1152,8 @@ export function ReadingPage({
         onClick={() => setActiveSubtab('harmonics')}>Harmonics</button>
     </nav>
 
-    {activeSubtab !== 'harmonics' && <RecordContextBar interval={readingInterval}
+    {activeSubtab !== 'harmonics' && activeSubtab !== 'energy' &&
+      <RecordContextBar interval={readingInterval}
       record={committedRecord} section={activeSubtab} intervalError={intervalError}
       onIntervalChange={setReadingInterval} />}
 
@@ -1161,6 +1167,8 @@ export function ReadingPage({
             <strong>Waiting for {READING_INTERVAL_LABELS[readingInterval]} power data</strong>
             <span>Power cards, chart, and matrix commit together after all source sequences agree.</span>
           </div></section>
+        : activeSubtab === 'energy'
+          ? <EnergyDemandView canReset={canReset} onUnauthorized={onUnauthorized} />
         : activeSubtab === 'phasor'
           ? <PhasorUnbalanceView interval={readingInterval} record={committedRecord}
               nominalVoltage={Math.max(1, systemNominalVoltage)} scope={phasorScope}
