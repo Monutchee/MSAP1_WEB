@@ -21,6 +21,7 @@ import { HistoryPage } from './history/HistoryPage'
 import { ReadingPage } from './reading/ReadingPage'
 import { ModbusConfiguration } from './configuration/ModbusConfiguration'
 import { MqttConfiguration } from './configuration/MqttConfiguration'
+import { PowerQualityConfiguration } from './configuration/PowerQualityConfiguration'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -1687,7 +1688,7 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
   onUnauthorized: () => void
 }) {
   const [activeTab, setActiveTab] =
-    useState<'meter' | 'waveform' | 'data-logging' | 'modbus' | 'mqtt'>('meter')
+    useState<'meter' | 'power-quality' | 'waveform' | 'data-logging' | 'modbus' | 'mqtt'>('meter')
   const nominalVoltageReference = measurementTopology === 'delta' ? 'L-L' : 'L-N'
   return <section className="configuration-page">
     <div className="developer-heading">
@@ -1701,6 +1702,9 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
       <button className={activeTab === 'waveform' ? 'active' : ''} type="button"
         aria-current={activeTab === 'waveform' ? 'page' : undefined}
         onClick={() => setActiveTab('waveform')}>Waveform</button>
+      <button className={activeTab === 'power-quality' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'power-quality' ? 'page' : undefined}
+        onClick={() => setActiveTab('power-quality')}>Power Quality</button>
       <button className={activeTab === 'data-logging' ? 'active' : ''} type="button"
         aria-current={activeTab === 'data-logging' ? 'page' : undefined}
         onClick={() => setActiveTab('data-logging')}>Data Logging</button>
@@ -1831,8 +1835,10 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
 
         <div className="frequency-actions"><button type="submit">Apply and save</button>
           <span>{configurationStatus}</span></div>
-      </form>}</> : activeTab === 'waveform'
-      ? <WaveformConfiguration />
+      </form>}</> : activeTab === 'power-quality'
+      ? <PowerQualityConfiguration onUnauthorized={onUnauthorized} />
+      : activeTab === 'waveform'
+        ? <WaveformConfiguration />
       : activeTab === 'data-logging'
         ? <DeveloperDatabasePage onUnauthorized={onUnauthorized} />
         : activeTab === 'modbus'

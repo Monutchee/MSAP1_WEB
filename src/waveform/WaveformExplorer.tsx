@@ -40,25 +40,6 @@ function duration(session: WaveformSession) {
     session.sample_rate_hz).toFixed(3)} s`
 }
 
-/*
- * The mncwf layout is deterministic, so the size is computable from the
- * session metadata alone: 256-byte header, 7 channel descriptors of 32
- * bytes, 24 bytes per event, then 28 bytes (7 persisted channels x 4) per
- * stored frame — where sequences span acquisition frames and the file
- * stores one frame per decimation group.
- */
-function fileSize(session: WaveformSession) {
-  if (session.state !== 'complete' || !session.filename ||
-    session.last_sequence < session.first_sequence)
-    return undefined
-  const storedFrames = (session.last_sequence - session.first_sequence) /
-    Math.max(1, session.decimation) + 1
-  const bytes = 256 + 7 * 32 + session.event_count * 24 + storedFrames * 28
-  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`
-  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(0)} kB`
-  return `${bytes} B`
-}
-
 export function WaveformExplorer({ onUnauthorized, canDelete }: {
   onUnauthorized: () => void
   canDelete: boolean
@@ -253,8 +234,11 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
                   ` of ${count(session.last_sequence - session.first_sequence + 1)}`}
               </dd></div>
               <div><dt>Events</dt><dd>{session.event_count}</dd></div>
-              {fileSize(session) &&
-                <div><dt>File size</dt><dd>{fileSize(session)}</dd></div>}
+              <div><dt>Segment</dt><dd>{session.continuation_of_session_id
+                ? `Continuation of ${session.continuation_of_session_id}` : 'Master'}</dd></div>
+              <div><dt>Master</dt><dd>Session {session.master_session_id || session.id}</dd></div>
+              {session.capture_uuid && <div className="waveform-capture-uuid">
+                <dt>Capture UUID</dt><dd>{session.capture_uuid}</dd></div>}
             </dl>
             <code>{session.filename || 'Capture is not materialized'}</code>
             <div className="waveform-session-actions">

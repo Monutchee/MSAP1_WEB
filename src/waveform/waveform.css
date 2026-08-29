@@ -126,6 +126,14 @@
   font-size: .72rem;
 }
 
+.waveform-library-list .waveform-capture-uuid {
+  grid-column: span 2;
+}
+
+.waveform-library-list .waveform-capture-uuid dd {
+  overflow-wrap: anywhere;
+}
+
 .waveform-library-list > article > code {
   color: #91a9af;
   font-size: .68rem;

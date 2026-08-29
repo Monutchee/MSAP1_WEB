@@ -39,7 +39,7 @@ eligible basic blocks are needed. This is not an acquisition failure and does
 not degrade system health.
 
 The viewer-facing Reading workspace is organized as **Overview**, **Power**,
-**Phasor & Unbalance**, **Sequence**, and **Harmonics**. Overview is an operator
+**Phasor & Unbalance**, **Sequence**, **Harmonics**, and **Power Quality**. Overview is an operator
 summary of line-line voltage, authoritative total power, operating mode, and
 unbalance; raw dotted attribute names are reserved for collapsed Advanced
 tables. The first four tabs share one finalized interval context bar for Basic,
@@ -99,6 +99,14 @@ approximately 96 px, without reducing labels on narrow layouts. While a new
 profile is applying, the page keeps the previous family hidden until grid lock
 and all 42 replacement records agree.
 
+**Reading → Power Quality** reads the typed M18 APIs for independent live
+flicker Pinst, finalized Pst/Plt, mains-signalling carrier observations, and the
+durable event catalogue. Event rows mark intersecting sample windows and open a
+canonical UUID detail view. Linked capture UUIDs are joined to waveform
+sessions so master and continuation identity remains visible; completed
+segments offer an event-specific MNCWF export through the authenticated API.
+The browser does not read DMA, RPMsg, or raw storage.
+
 The aggregate grid frequency is **informative only**. Per
 IEC 61000-4-30:2025 the standardized frequency product is defined over its own
 10 s interval, which is not this tier, so the aggregate frequency card is
@@ -133,6 +141,12 @@ capacity, sequence continuity, and completed sessions, then trigger a manual
 pre/post capture. The browser sends only the trigger request; the acquisition
 daemon owns the dedicated waveform DMA, history, time correlation, and file
 materialization.
+
+**Configuration → Power Quality** edits complete event, flicker, and
+mains-signalling policy through the central settings authority. It also stores
+neutral station, site, circuit, device, and calibration identity in the MNCWF
+capture settings for later COMTRADE and PQDIF conversion. The form reloads the
+active document immediately before saving so unrelated settings are preserved.
 
 **Developer → Tweak** exposes the acquisition sample-rate selector (1 to
 128 kSPS from the APU's supported set, factory default 128 kSPS). Changing
