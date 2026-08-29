@@ -86,6 +86,7 @@ describe('Energy & Demand view', () => {
     expect(screen.getAllByText('kVAh').length).toBeGreaterThan(0)
     expect(screen.getAllByText('kvarh').length).toBeGreaterThan(0)
     expect(screen.queryByText('µWh')).not.toBeInTheDocument()
+    expect(screen.getByText('Accumulation complete')).toHaveClass('ok')
     fireEvent.change(unit, { target: { value: 'Wh' } })
     expect(screen.getByText('9,007,199,254.740993')).toBeInTheDocument()
     expect(screen.getAllByText('18,446,744,073,709,551,614')).toHaveLength(2)
