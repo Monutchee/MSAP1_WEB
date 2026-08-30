@@ -155,7 +155,7 @@ export interface MeterReadings {
   attributes?: MeterReadingAttribute[]
   /** True only after all derived siblings belong to `sequence`. */
   record_complete: boolean
-  // Present on every basic record since the MTR1-v3 format; kept
+  // Present on every basic record since BASIC-v3; kept
   // optional so a stale document renders gracefully.
   timing?: MeterBlockTiming
 }
