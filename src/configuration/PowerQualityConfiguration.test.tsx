@@ -69,8 +69,14 @@ describe('Power-quality configuration', () => {
 
     render(<PowerQualityConfiguration onUnauthorized={() => undefined} />)
 
+    const flickerTab = await screen.findByRole('tab', { name: /Flicker/ })
+    expect(flickerTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByLabelText('Carrier frequency (Hz)')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Mains signal/ }))
     const carrier = await screen.findByLabelText('Carrier frequency (Hz)')
     fireEvent.change(carrier, { target: { value: '1175.5' } })
+    fireEvent.click(screen.getByRole('tab', { name: /PQ Event profiles/ }))
+    expect(await screen.findByText('Voltage sag')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Station ID'), { target: { value: 'STN-04' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply and save' }))
 

@@ -4,8 +4,9 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
-  buildWaveformPyramid, convertedSample, ParsedWaveform, parseWaveform,
-  pyramidEnvelope, pyramidRange, rawSample,
+  buildWaveformPyramid, convertedSample, ParsedWaveform,
+  pyramidEnvelope, pyramidRange, rawSample, waveformDurationSeconds,
+  waveformFrameForSequence, waveformFrameTimeSeconds,
 } from './waveformFile'
 
 const PLOT_WIDTH = 1200
@@ -43,12 +44,11 @@ function captureTime(waveform: ParsedWaveform) {
     .toLocaleString()
 }
 
-export function WaveformViewer({ filename, buffer, onClose }: {
+export function WaveformViewer({ filename, waveform, onClose }: {
   filename: string
-  buffer: ArrayBuffer
+  waveform: ParsedWaveform
   onClose: () => void
 }) {
-  const waveform = useMemo(() => parseWaveform(buffer), [buffer])
   /*
    * One full pass over the samples at open builds the min/max pyramid;
    * every pan/zoom afterwards reads the pyramid instead of the samples, so
@@ -132,21 +132,16 @@ export function WaveformViewer({ filename, buffer, onClose }: {
       verticalScale === 'fixed' ? wholeCaptureRanges[index] : undefined,
     ),
   })), [waveform, pyramid, converted, viewport, verticalScale, wholeCaptureRanges])
-  const durationSeconds = waveform.effectiveSampleRateHz
-    ? waveform.frameCount / waveform.effectiveSampleRateHz
-    : 0
-  const triggerInCapture = waveform.triggerSequence >= waveform.firstSequence &&
-    waveform.triggerSequence <= waveform.lastSequence
-  /* Sequences are acquisition frames; stored frames are decimated. */
-  const triggerIndex = triggerInCapture
-    ? Math.round(Number(waveform.triggerSequence - waveform.firstSequence) /
-        waveform.decimation)
-    : 0
+  const durationSeconds = waveformDurationSeconds(waveform)
+  const triggerIndex = waveformFrameForSequence(
+    waveform, waveform.triggerSequence)
+  const triggerInCapture = triggerIndex !== undefined
+  const triggerFrame = triggerIndex ?? 0
   const visibleFrames = viewport.last - viewport.first
   const triggerInViewport = triggerInCapture &&
-    triggerIndex >= viewport.first && triggerIndex < viewport.last
+    triggerFrame >= viewport.first && triggerFrame < viewport.last
   const triggerPercent = visibleFrames > 1
-    ? clamp((triggerIndex - viewport.first) / (visibleFrames - 1) * 100, 0, 100)
+    ? clamp((triggerFrame - viewport.first) / (visibleFrames - 1) * 100, 0, 100)
     : 0
   const zoomLevel = waveform.frameCount / visibleFrames
   const cursorPercent = cursorFrame === undefined || visibleFrames <= 1
@@ -183,7 +178,7 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   }
 
   function centerOnTrigger() {
-    if (!triggerInCapture) return
+    if (triggerIndex === undefined) return
     const detailFrames = waveform.effectiveSampleRateHz
       ? Math.max(MIN_VISIBLE_FRAMES,
           Math.round(waveform.effectiveSampleRateHz / 4))
@@ -262,8 +257,9 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   }
 
   function relativeTime(frame: number) {
-    if (!waveform.effectiveSampleRateHz) return 'unknown'
-    const seconds = (frame - triggerIndex) / waveform.effectiveSampleRateHz
+    if (triggerIndex === undefined) return 'unknown'
+    const seconds = waveformFrameTimeSeconds(waveform, frame) -
+      waveformFrameTimeSeconds(waveform, triggerIndex)
     return `${seconds >= 0 ? '+' : ''}${seconds.toFixed(6)} s`
   }
 
@@ -384,7 +380,7 @@ export function WaveformViewer({ filename, buffer, onClose }: {
     </div>
     <footer className="waveform-viewer-footer">
       <span>{triggerInCapture
-        ? `Trigger at frame ${triggerIndex.toLocaleString()}${triggerInViewport
+        ? `Trigger at frame ${triggerFrame.toLocaleString()}${triggerInViewport
           ? ` (${triggerPercent.toFixed(2)}% of view)` : ' (outside view)'}`
         : 'Trigger is outside the stored frame range'}</span>
       <span>View {relativeTime(viewport.first)} … {relativeTime(viewport.last - 1)}

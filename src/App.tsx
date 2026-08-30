@@ -13,6 +13,7 @@ import {
   MeasurementTopology, DemandConfiguration,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
+  PowerQualityEvents,
 } from './api'
 import { WaveformExplorer } from './waveform/WaveformExplorer'
 import { DeveloperDatabasePage } from './developer/DeveloperDatabasePage'
@@ -1301,13 +1302,13 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
           tabIndex={simulatorCategory === 'power-quality' ? 0 : -1}
           onKeyDown={handleSimulatorTabKeyDown}
           onClick={() => setSimulatorCategory('power-quality')}>
-          <span>Power quality Urms</span><small>½-cycle events</small></button>
+          <span>PQ Event maker</span><small>½-cycle disturbances</small></button>
       </nav>
       {simulatorCategory === 'power-quality'
         ? <section id="simulator-panel-power-quality" role="tabpanel"
             aria-labelledby="simulator-tab-power-quality"
             className="simulator-form simulator-category-panel">
-            <PowerQualityPanel onUnauthorized={onUnauthorized} />
+            <PowerQualityPanel onUnauthorized={onUnauthorized} simulator={simulator} />
           </section>
         : simulator
           ? <form className="simulator-form" onSubmit={(event) => {
@@ -1433,19 +1434,82 @@ function SingleCycleReadout({ onUnauthorized }: {
   </section>
 }
 
+type PqDisturbancePreset =
+  | 'voltage_sag'
+  | 'voltage_swell'
+  | 'voltage_interruption'
+  | 'single_phase_sag'
+  | 'current_sag'
+  | 'current_swell'
+  | 'custom'
+
+const PQ_DISTURBANCE_PRESETS: Array<{
+  value: PqDisturbancePreset
+  label: string
+  channels: string
+  fallbackScale: number
+  profile?: Exclude<keyof ProductSettings['metering']['events'],
+    'reference_current_amperes'>
+}> = [
+  { value: 'voltage_sag', label: 'Voltage sag', channels: 'voltage',
+    fallbackScale: 70, profile: 'voltage_sag' },
+  { value: 'voltage_swell', label: 'Voltage swell', channels: 'voltage',
+    fallbackScale: 120, profile: 'voltage_swell' },
+  { value: 'voltage_interruption', label: 'Voltage interruption', channels: 'voltage',
+    fallbackScale: 0, profile: 'voltage_interruption' },
+  { value: 'single_phase_sag', label: 'Single-phase sag / unbalance', channels: 'va',
+    fallbackScale: 70, profile: 'voltage_sag' },
+  { value: 'current_sag', label: 'Current sag', channels: 'current',
+    fallbackScale: 70, profile: 'current_sag' },
+  { value: 'current_swell', label: 'Current swell', channels: 'current',
+    fallbackScale: 120, profile: 'current_swell' },
+  { value: 'custom', label: 'Custom amplitude burst', channels: 'voltage',
+    fallbackScale: 100 },
+]
+
+function eventPresetScale(
+  preset: typeof PQ_DISTURBANCE_PRESETS[number],
+  settings: ProductSettings | undefined,
+) {
+  if (!preset.profile || !settings) return preset.fallbackScale
+  const profile = settings.metering.events[preset.profile]
+  if (preset.value === 'voltage_interruption') return 0
+  const margin = Math.max(5, profile.hysteresis_percent)
+  const scale = preset.value.endsWith('swell')
+    ? profile.threshold_percent + margin
+    : profile.threshold_percent - margin
+  return Math.round(Math.max(0, Math.min(400, scale)) * 1000) / 1000
+}
+
+function eventTypeLabel(type: string) {
+  return type === 'unknown' ? 'Unknown event' : type.split('_')
+    .map((word) => word[0].toUpperCase() + word.slice(1)).join(' ')
+}
+
+function selectedEventChannels(channels: string, channel: number) {
+  if (channels === 'all') return channel < 7
+  if (channels === 'voltage') return channel >= 4 && channel < 7
+  if (channels === 'current') return channel < 4
+  return channels.split(',').includes(
+    SIMULATOR_CHANNEL_NAMES[channel]?.toLowerCase())
+}
+
 /**
- * Urms(1/2) readout and the simulator's event trigger, side by side. This
- * pairing IS the power-quality test: arm a sag here and the half-cycle RMS
- * beside it moves within one half cycle, with the resulting event edge and
- * its exact duration shown underneath.
+ * Named amplitude disturbances, live Urms(1/2), and the durable event
+ * catalogue form one end-to-end PQ EventEngine test surface.
  */
-function PowerQualityPanel({ onUnauthorized }: {
+export function PowerQualityPanel({ onUnauthorized, simulator }: {
   onUnauthorized: () => void
+  simulator: AdcSimulatorConfiguration | undefined
 }) {
   const [status, setStatus] = useState<PowerQualityStatus>()
   const [sequencer, setSequencer] = useState<AdcSimulatorEvent>()
+  const [canonicalEvents, setCanonicalEvents] = useState<PowerQualityEvents>()
+  const [productSettings, setProductSettings] = useState<ProductSettings>()
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [commandBusy, setCommandBusy] = useState(false)
+  const [preset, setPreset] = useState<PqDisturbancePreset>('voltage_sag')
   const [channels, setChannels] = useState('voltage')
   const [scalePercent, setScalePercent] = useState(70)
   const [durationHalfCycles, setDurationHalfCycles] = useState(20)
@@ -1462,11 +1526,13 @@ function PowerQualityPanel({ onUnauthorized }: {
 
   const load = useCallback(async () => {
     try {
-      const [quality, event] = await Promise.all([
+      const [quality, event, events] = await Promise.all([
         api.meterPowerQuality(), api.adcSimulatorEvent(),
+        api.powerQualityEvents({ limit: 5 }),
       ])
       setStatus(quality)
       setSequencer(event)
+      setCanonicalEvents(events)
       setError('')
     } catch (reason) {
       handle(reason, 'Unable to read power-quality state')
@@ -1481,8 +1547,28 @@ function PowerQualityPanel({ onUnauthorized }: {
     return () => { active = false; window.clearInterval(timer) }
   }, [load])
 
+  useEffect(() => {
+    let active = true
+    api.activeSettings().then((document) => {
+      if (active) setProductSettings(document.settings)
+    }).catch((reason) => {
+      if (active) handle(reason, 'Unable to read active PQ Event profiles')
+    })
+    return () => { active = false }
+  }, [handle])
+
+  function selectPreset(value: PqDisturbancePreset) {
+    setPreset(value)
+    const selected = PQ_DISTURBANCE_PRESETS.find(
+      (candidate) => candidate.value === value)
+    if (!selected || value === 'custom') return
+    setChannels(selected.channels)
+    setScalePercent(eventPresetScale(selected, productSettings))
+  }
+
   async function command(action: AdcSimulatorEventCommand['action']) {
     setMessage(action === 'arm' ? 'Arming…' : 'Sending…')
+    setCommandBusy(true)
     try {
       const next = await api.commandAdcSimulatorEvent(action === 'arm'
         ? {
@@ -1493,12 +1579,14 @@ function PowerQualityPanel({ onUnauthorized }: {
         : { action })
       setSequencer(next)
       setMessage(action === 'arm'
-        ? 'Armed — the burst starts at the next half-cycle boundary.'
+        ? 'PQ disturbance armed — it starts at the next half-cycle boundary.'
         : 'Done.')
       setError('')
     } catch (reason) {
       setMessage('')
       handle(reason, 'Unable to drive the event sequencer')
+    } finally {
+      setCommandBusy(false)
     }
   }
 
@@ -1507,89 +1595,142 @@ function PowerQualityPanel({ onUnauthorized }: {
   const state = sequencer?.running ? 'running'
     : sequencer?.holding ? 'holding'
     : sequencer?.armed ? 'armed' : 'idle'
+  const selectedPreset = PQ_DISTURBANCE_PRESETS.find(
+    (candidate) => candidate.value === preset)!
+  const selectedProfile = selectedPreset.profile && productSettings
+    ? productSettings.metering.events[selectedPreset.profile] : undefined
+  const expectedLevels = (simulator?.channels ?? [])
+    .filter((channel) => channel.channel < 7 &&
+      selectedEventChannels(channels, channel.channel))
+    .map((channel) => {
+      const name = SIMULATOR_CHANNEL_NAMES[channel.channel]
+      const unit = channel.channel < 4 ? 'A' : 'V'
+      return `${name} ${(channel.rms * scalePercent / 100).toFixed(3)} ${unit}`
+    })
+  const canonical = canonicalEvents?.events[0]
 
   return <section className="simulator-power-quality-panel">
-    <label>
-      Power quality — Urms(1/2)
-      <span className="simulator-note">
-        {status
+    <div className="simulator-form-heading">
+      <div><p className="eyebrow">End-to-end test</p><h3>PQ Event maker</h3></div>
+      <span>The simulator changes only amplitude at a half-cycle boundary; PQ EventEngine 0x0006 classifies the resulting samples.</span>
+    </div>
+    <ol className="simulator-event-test-guide">
+      <li><strong>Use PL simulator</strong><span>Select it above and keep the base voltage/current lanes at their nominal RMS values.</span></li>
+      <li><strong>Choose a disturbance</strong><span>The preset uses the active PQ Event threshold with a safe detection margin.</span></li>
+      <li><strong>Create and verify</strong><span>Watch the live Urms edge, then confirm the durable result here or under Reading → Power Quality.</span></li>
+    </ol>
+    {error && <div className="error-banner"><strong>PQ Event test unavailable</strong>
+      <span>{error}</span></div>}
+
+    <section className="simulator-event-maker" aria-labelledby="pq-event-maker-title">
+      <header><div><p className="eyebrow">Disturbance generator</p>
+        <h4 id="pq-event-maker-title">Create a sampled PQ event</h4></div>
+        <span className={`status-pill ${sequencer?.simulator_active ? 'ok' : 'bad'}`}><i />
+          {sequencer?.simulator_active ? 'PL simulator active' : 'Select PL simulator first'}
+        </span></header>
+      <div className="simulator-global-grid">
+        <label>Disturbance preset<select value={preset}
+          onChange={(event_) => selectPreset(event_.target.value as PqDisturbancePreset)}>
+          {PQ_DISTURBANCE_PRESETS.map((candidate) => <option
+            key={candidate.value} value={candidate.value}>{candidate.label}</option>)}
+        </select></label>
+        <label>Channels<select value={channels}
+          onChange={(event_) => setChannels(event_.target.value)}>
+          <option value="voltage">All voltages</option>
+          <option value="va">Va only</option>
+          <option value="vb">Vb only</option>
+          <option value="vc">Vc only</option>
+          <option value="va,vb">Va and Vb</option>
+          <option value="current">All currents</option>
+          <option value="ia">Ia only</option>
+          <option value="ib">Ib only</option>
+          <option value="ic">Ic only</option>
+          <option value="all">All channels</option>
+        </select></label>
+        <NumberField label="Amplitude (% of configured RMS)" min="0" max="400" step="0.1"
+          value={scalePercent} onValue={setScalePercent} />
+        <NumberField label="Duration (half cycles)" min="1" max="65535" step="1"
+          value={durationHalfCycles} onValue={setDurationHalfCycles} />
+        <NumberField label="Repeat period (half cycles)" min="0" max="65535"
+          step="1" value={periodHalfCycles} onValue={setPeriodHalfCycles} />
+        <label className="simulator-checkbox">
+          <input type="checkbox" checked={repeat}
+            onChange={(event_) => setRepeat(event_.target.checked)} />
+          Repeat until cancelled
+        </label>
+      </div>
+      <div className="simulator-event-preview">
+        <span><small>Selected profile</small><strong>{selectedPreset.label}</strong>
+          <em>{selectedProfile
+            ? `${selectedProfile.enabled ? 'enabled' : 'DISABLED'} · threshold ${selectedProfile.threshold_percent.toFixed(2)}% · hysteresis ${selectedProfile.hysteresis_percent.toFixed(2)}%`
+            : 'Custom burst; the enabled engines decide its classification'}</em></span>
+        <span><small>Expected event level</small><strong>{scalePercent.toFixed(1)}%</strong>
+          <em>{expectedLevels.join(' · ') || 'Load a simulator profile to preview engineering levels'}</em></span>
+        <span><small>Sequencer</small><strong>{state}</strong>
+          <em>{sequencer
+            ? `${formatCount(sequencer.completed)} completed` +
+              (sequencer.running
+                ? ` · ${sequencer.remaining_half_cycles} half cycles left` : '')
+            : 'Loading state…'}</em></span>
+      </div>
+      {selectedProfile && !selectedProfile.enabled &&
+        <p className="simulator-event-warning">This detector profile is disabled. Enable it under Meter settings → Power Quality → PQ Event profiles before running the test.</p>}
+      <div className="simulator-event-actions">
+        <button type="button" disabled={commandBusy || !sequencer?.simulator_active}
+          onClick={() => void command('arm')}>Create PQ event</button>
+        <button type="button" disabled={commandBusy}
+          onClick={() => void command('cancel')}>Cancel event</button>
+        <button type="button" disabled={commandBusy}
+          onClick={() => void command('clear')}>Clear counter</button>
+        <span>{message}</span>
+      </div>
+    </section>
+
+    <section className="simulator-event-observation" aria-labelledby="pq-urms-result-title">
+      <header><div><p className="eyebrow">Immediate response</p>
+        <h4 id="pq-urms-result-title">Live Urms(1/2) detector</h4></div>
+        <span className="simulator-note">{status
           ? latest
-            ? `${formatCount(status.records)} records, ` +
-              `${formatCount(status.events)} event(s)` +
+            ? `${formatCount(status.records)} records · ${formatCount(status.events)} edge(s)` +
               (latest.armed
-                ? ` — detection armed at ${latest.reference_volts.toFixed(1)} V`
-                : ' — detection DISARMED (set a reference voltage in settings)')
-            : 'no record yet (capture stopped or the sliding tier is priming)'
-          : 'loading…'}
-      </span>
-    </label>
-    {error && <span className="simulator-note">{error}</span>}
-    {latest && <div className="simulator-summary">
-      {latest.phases.map((phase) =>
-        <span key={phase.phase}>
-          U{phase.phase}: {phase.urms_half.toFixed(2)} V
-          {' '}(min {phase.urms_half_minimum.toFixed(2)},
-          {' '}max {phase.urms_half_maximum.toFixed(2)})
-        </span>)}
-      {latest.phases.map((phase) =>
-        <span key={`i-${phase.phase}`}>
-          I{phase.phase}: {phase.irms_half.toFixed(3)} A
-        </span>)}
-    </div>}
-    {event && <div className="simulator-summary">
-      <span>Last event: {event.event_type}</span>
-      <span>Kind: {event.kind === 'event_end' ? 'ended' : 'in progress'}</span>
-      <span>Phases: {event.affected_phases.join(', ') || 'none'}</span>
-      <span>Duration: {event.duration_ms.toFixed(1)} ms
-        {' '}({formatCount(event.duration_samples)} samples)</span>
-      <span>Residual/peak: {event.phases
-        .map((phase) => event.event_type === 'swell'
-          ? phase.urms_half_maximum.toFixed(2)
-          : phase.urms_half_minimum.toFixed(2))
-        .join(' / ')} V</span>
-    </div>}
-    <label>
-      Amplitude event
-      <span className="simulator-note">
-        {sequencer
-          ? `${state}, ${formatCount(sequencer.completed)} burst(s) completed` +
-            (sequencer.running
-              ? `, ${sequencer.remaining_half_cycles} half cycle(s) left`
-              : '') +
-            (sequencer.simulator_active ? '' : ' — simulator is not the active source')
-          : 'loading…'}
-      </span>
-    </label>
-    <div className="simulator-global-grid">
-      <label>Channels<select value={channels}
-        onChange={(event_) => setChannels(event_.target.value)}>
-        <option value="voltage">All voltages</option>
-        <option value="va">Va only</option>
-        <option value="vb">Vb only</option>
-        <option value="vc">Vc only</option>
-        <option value="va,vb">Va and Vb</option>
-        <option value="all">All channels</option>
-      </select></label>
-      <NumberField label="Amplitude (% of nominal)" min="0" max="400" step="0.1"
-        value={scalePercent} onValue={setScalePercent} />
-      <NumberField label="Duration (half cycles)" min="1" max="65535" step="1"
-        value={durationHalfCycles} onValue={setDurationHalfCycles} />
-      <NumberField label="Repeat period (half cycles)" min="0" max="65535"
-        step="1" value={periodHalfCycles} onValue={setPeriodHalfCycles} />
-      <label className="simulator-checkbox">
-        <input type="checkbox" checked={repeat}
-          onChange={(event_) => setRepeat(event_.target.checked)} />
-        Repeat until cancelled
-      </label>
-    </div>
-    <div className="simulator-event-actions">
-      <button type="button" onClick={() => void command('arm')}>Arm burst</button>
-      <button type="button" onClick={() => void command('cancel')}>Cancel</button>
-      <button type="button" onClick={() => void command('clear')}>
-        Clear counter
-      </button>
-      <span>{message}</span>
-    </div>
+                ? ` · armed at ${latest.reference_volts.toFixed(1)} V`
+                : ' · DISARMED (set the Urms reference in Meter settings)')
+            : 'No record yet; the sliding tier may still be priming'
+          : 'Loading…'}</span></header>
+      {latest && <div className="simulator-summary">
+        {latest.phases.map((phase) =>
+          <span key={phase.phase}>U{phase.phase}: {phase.urms_half.toFixed(2)} V
+            {' '}(min {phase.urms_half_minimum.toFixed(2)},
+            {' '}max {phase.urms_half_maximum.toFixed(2)})</span>)}
+        {latest.phases.map((phase) =>
+          <span key={`i-${phase.phase}`}>I{phase.phase}: {phase.irms_half.toFixed(3)} A</span>)}
+      </div>}
+      {event && <div className="simulator-summary simulator-event-edge">
+        <span>Last edge: {event.event_type}</span>
+        <span>{event.kind === 'event_end' ? 'ended' : 'in progress'}</span>
+        <span>Phases: {event.affected_phases.join(', ') || 'none'}</span>
+        <span>{event.duration_ms.toFixed(1)} ms ({formatCount(event.duration_samples)} samples)</span>
+        <span>Residual/peak: {event.phases
+          .map((phase) => event.event_type === 'swell'
+            ? phase.urms_half_maximum.toFixed(2)
+            : phase.urms_half_minimum.toFixed(2)).join(' / ')} V</span>
+      </div>}
+    </section>
+
+    <section className="simulator-event-observation" aria-labelledby="pq-event-engine-result-title">
+      <header><div><p className="eyebrow">Durable result</p>
+        <h4 id="pq-event-engine-result-title">PQ EventEngine 0x0006</h4></div>
+        <span className="simulator-note">{canonicalEvents
+          ? `${canonicalEvents.count.toLocaleString()} catalogued event(s)` : 'Loading…'}</span></header>
+      {canonical ? <div className="simulator-summary simulator-canonical-event">
+        <span><strong>{eventTypeLabel(canonical.type)}</strong></span>
+        <span>Lifecycle: {canonical.lifecycle}</span>
+        <span>Phases: {canonical.affected_phases.join(', ') || 'none'}</span>
+        <span>Duration: {canonical.duration_ms.toFixed(1)} ms</span>
+        <span>Profile generation: {canonical.profile_generation}</span>
+        <span>Waveforms: {canonical.waveform_capture_uuids.length}</span>
+      </div> : <p className="simulator-event-empty">No durable PQ event yet. Create a disturbance that crosses an enabled profile threshold.</p>}
+    </section>
   </section>
 }
 

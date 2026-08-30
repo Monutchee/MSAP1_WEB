@@ -4,6 +4,7 @@ import {
 } from '../api'
 import { WaveformTriggerPanel } from './WaveformTriggerPanel'
 import { WaveformViewer } from './WaveformViewer'
+import { parseWaveform, ParsedWaveform } from './waveformFile'
 import './waveform.css'
 
 /**
@@ -49,7 +50,10 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
   const [deletingSession, setDeletingSession] = useState(0)
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
-  const [viewer, setViewer] = useState<{ filename: string; buffer: ArrayBuffer }>()
+  const [viewer, setViewer] = useState<{
+    filename: string
+    waveform: ParsedWaveform
+  }>()
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
@@ -81,7 +85,10 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
     setError('')
     try {
       const buffer = await api.waveformFile(session.filename)
-      setViewer({ filename: session.filename, buffer })
+      // Parse before mounting the viewer so an unsupported or damaged file is
+      // reported inside this page instead of throwing through the React tree.
+      const waveform = parseWaveform(buffer)
+      setViewer({ filename: session.filename, waveform })
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 401) {
         onUnauthorized()
@@ -268,7 +275,7 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
       </div>
     </section>
     {viewer && <WaveformViewer key={viewer.filename}
-      filename={viewer.filename} buffer={viewer.buffer}
+      filename={viewer.filename} waveform={viewer.waveform}
       onClose={() => setViewer(undefined)} />}
   </section>
 }

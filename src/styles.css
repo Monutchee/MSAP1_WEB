@@ -163,11 +163,31 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 .simulator-note { color: var(--muted); font-size: .82rem; }
 .simulator-readout-panel, .simulator-power-quality-panel { display: grid; gap: .9rem; padding: 1rem; border: 1px solid var(--line); border-radius: 11px; background: rgba(7,17,22,.3); }
 .simulator-readout-panel .simulator-summary, .simulator-power-quality-panel .simulator-summary { margin: 0; }
+.simulator-event-test-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; margin: 0; padding: 0; counter-reset: pq-test-step; list-style: none; }
+.simulator-event-test-guide li { display: grid; grid-template-columns: auto 1fr; gap: .25rem .65rem; padding: .8rem .9rem; border: 1px solid var(--line); border-radius: 10px; background: #0a151a; counter-increment: pq-test-step; }
+.simulator-event-test-guide li::before { grid-row: 1 / span 2; display: grid; place-items: center; width: 1.6rem; height: 1.6rem; border: 1px solid rgba(84,226,164,.35); border-radius: 50%; color: var(--green); content: counter(pq-test-step); font: 700 .67rem var(--mono); }
+.simulator-event-test-guide strong { color: #dce8e9; font-size: .72rem; }
+.simulator-event-test-guide span { color: var(--muted); font-size: .65rem; line-height: 1.45; }
+.simulator-event-maker, .simulator-event-observation { display: grid; gap: .9rem; padding: 1rem; border: 1px solid var(--line); border-radius: 11px; background: rgba(7,17,22,.42); }
+.simulator-event-maker > header, .simulator-event-observation > header { display: flex; align-items: end; justify-content: space-between; gap: 1rem; }
+.simulator-event-maker h4, .simulator-event-observation h4 { margin: 0; color: #e4eeee; font-size: .9rem; }
+.simulator-event-maker .eyebrow, .simulator-event-observation .eyebrow { margin: 0 0 .2rem; }
+.simulator-event-maker .simulator-global-grid { margin: 0; }
+.simulator-event-preview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #0a151a; }
+.simulator-event-preview > span { display: grid; gap: .2rem; min-width: 0; padding: .8rem .9rem; border-right: 1px solid var(--line); }
+.simulator-event-preview > span:last-child { border-right: 0; }
+.simulator-event-preview small { color: var(--muted); font: .58rem var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.simulator-event-preview strong { color: #e1ebec; font-size: .78rem; }
+.simulator-event-preview em { overflow: hidden; color: var(--muted); font-size: .63rem; font-style: normal; line-height: 1.45; text-overflow: ellipsis; }
+.simulator-event-warning, .simulator-event-empty { margin: 0; padding: .7rem .8rem; border: 1px solid rgba(255,189,92,.28); border-radius: 8px; color: #dfc89f; background: rgba(255,189,92,.055); font-size: .7rem; line-height: 1.5; }
+.simulator-event-empty { border-color: var(--line); color: var(--muted); background: #0a151a; }
+.simulator-event-edge, .simulator-canonical-event { padding: .75rem .8rem; border: 1px solid var(--line); border-radius: 8px; background: #0a151a; }
 .simulator-event-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; padding-top: .9rem; border-top: 1px solid var(--line); }
 .simulator-event-actions button { width: auto; margin: 0; padding: .65rem 1rem; border: 1px solid var(--line); border-radius: 9px; color: #b9c8ca; background: #0a151a; font-weight: 750; }
 .simulator-event-actions button:first-child { border-color: transparent; color: #06120e; background: var(--green); }
 .simulator-event-actions button:hover { border-color: #4d6269; color: white; }
 .simulator-event-actions button:first-child:hover { border-color: transparent; color: #06120e; filter: brightness(1.05); }
+.simulator-event-actions button:disabled { cursor: not-allowed; opacity: .45; filter: none; }
 .simulator-event-actions span { color: var(--muted); font-size: .76rem; }
 .simulator-form-heading { display: flex; align-items: end; justify-content: space-between; gap: 1.5rem; padding-bottom: .85rem; border-bottom: 1px solid var(--line); }
 .simulator-form-heading.compact { margin-top: 1.25rem; }
@@ -753,6 +773,10 @@ form button.simulator-tone-add:hover { border-color: var(--green); background: r
   .simulator-tone-preview > span:nth-child(2) { border-right: 0; }
   .simulator-tone-preview > span:last-child { grid-column: auto; border-top: 0; border-bottom: 0; }
   .simulator-actions { align-items: flex-start; flex-direction: column; }
+  .simulator-event-test-guide, .simulator-event-preview { grid-template-columns: 1fr; }
+  .simulator-event-preview > span { border-right: 0; border-bottom: 1px solid var(--line); }
+  .simulator-event-preview > span:last-child { border-bottom: 0; }
+  .simulator-event-maker > header, .simulator-event-observation > header { align-items: flex-start; flex-direction: column; }
   .simulator-event-actions { align-items: stretch; flex-direction: column; }
   .simulator-event-actions button { width: 100%; }
   .temperature-panel-header { align-items: flex-start; flex-direction: column; }

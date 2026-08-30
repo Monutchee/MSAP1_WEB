@@ -1,4 +1,6 @@
-import { FormEvent, useEffect, useState } from 'react'
+import {
+  FormEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useState,
+} from 'react'
 import {
   api, ApiError, EventProfileSettings, FlickerSettings, MainsSignallingSettings,
   PowerQualityEventSettings, ProductSettings,
@@ -6,6 +8,7 @@ import {
 import './powerQuality.css'
 
 type EventProfileKey = Exclude<keyof PowerQualityEventSettings, 'reference_current_amperes'>
+type PowerQualityCategory = 'flicker' | 'mains' | 'events'
 type WaveformIdentity = Pick<ProductSettings['waveform'],
   | 'station_id' | 'station_name' | 'site_id' | 'site_name'
   | 'circuit_id' | 'circuit_name' | 'device_serial'
@@ -145,6 +148,7 @@ export function PowerQualityConfiguration({ onUnauthorized }: {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [category, setCategory] = useState<PowerQualityCategory>('flicker')
 
   useEffect(() => {
     let active = true
@@ -162,6 +166,21 @@ export function PowerQualityConfiguration({ onUnauthorized }: {
     setSettings((current) => current ? {
       ...current, events: { ...current.events, [key]: profile },
     } : current)
+  }
+
+  function handleCategoryTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const tabs = Array.from(event.currentTarget.parentElement
+      ?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+    const currentIndex = tabs.indexOf(event.currentTarget)
+    if (currentIndex < 0 || tabs.length === 0) return
+    const nextIndex = event.key === 'Home' ? 0
+      : event.key === 'End' ? tabs.length - 1
+        : event.key === 'ArrowRight' ? (currentIndex + 1) % tabs.length
+          : (currentIndex - 1 + tabs.length) % tabs.length
+    tabs[nextIndex].focus()
+    tabs[nextIndex].click()
   }
 
   async function save(event: FormEvent) {
@@ -198,89 +217,129 @@ export function PowerQualityConfiguration({ onUnauthorized }: {
       <span>{error}</span></div>}
     {!settings && !error && <div className="database-progress">Loading power-quality settings…</div>}
     {settings && <form className="power-quality-form" onSubmit={save}>
-      <fieldset className="power-quality-settings-group">
-        <legend>Flicker</legend>
-        <div className="power-quality-settings-fields">
-          <label className="toggle"><input type="checkbox" checked={settings.flicker.enabled}
-            onChange={(event) => setSettings({ ...settings, flicker: {
-              ...settings.flicker, enabled: event.target.checked,
-            } })} />Enable IEC flicker processing</label>
-          <label>Lamp model<select value={settings.flicker.lamp_voltage}
-            onChange={(event) => setSettings({ ...settings, flicker: {
-              ...settings.flicker, lamp_voltage: Number(event.target.value) as 120 | 230,
-            } })}><option value={120}>120 V</option><option value={230}>230 V</option></select></label>
-          <PhaseMask label="Measured phases" value={settings.flicker.phase_mask}
-            onChange={(phase_mask) => setSettings({ ...settings, flicker: {
-              ...settings.flicker, phase_mask,
-            } })} />
-        </div>
-        <p>Fixed product cadence: 1-second live Pinst, 10-minute Pst, and Plt over 12 Pst values.</p>
-      </fieldset>
+      <nav className="power-quality-category-tabs" role="tablist"
+        aria-orientation="horizontal" aria-label="Power-quality configuration sections">
+        <button id="power-quality-tab-flicker" role="tab" type="button"
+          className={category === 'flicker' ? 'active' : ''}
+          aria-selected={category === 'flicker'}
+          aria-controls="power-quality-panel-flicker"
+          tabIndex={category === 'flicker' ? 0 : -1}
+          onKeyDown={handleCategoryTabKeyDown}
+          onClick={() => setCategory('flicker')}>
+          <span>Flicker</span><small>IEC 61000-4-15 profile</small></button>
+        <button id="power-quality-tab-mains" role="tab" type="button"
+          className={category === 'mains' ? 'active' : ''}
+          aria-selected={category === 'mains'}
+          aria-controls="power-quality-panel-mains"
+          tabIndex={category === 'mains' ? 0 : -1}
+          onKeyDown={handleCategoryTabKeyDown}
+          onClick={() => setCategory('mains')}>
+          <span>Mains signal</span><small>Carrier observation profile</small></button>
+        <button id="power-quality-tab-events" role="tab" type="button"
+          className={category === 'events' ? 'active' : ''}
+          aria-selected={category === 'events'}
+          aria-controls="power-quality-panel-events"
+          tabIndex={category === 'events' ? 0 : -1}
+          onKeyDown={handleCategoryTabKeyDown}
+          onClick={() => setCategory('events')}>
+          <span>PQ Event profiles</span><small>{EVENT_PROFILES.length} detector profiles</small></button>
+      </nav>
 
-      <fieldset className="power-quality-settings-group">
-        <legend>Mains signalling</legend>
-        <div className="power-quality-settings-fields">
-          <label className="toggle"><input type="checkbox" checked={settings.mains.enabled}
-            onChange={(event) => setSettings({ ...settings, mains: {
-              ...settings.mains, enabled: event.target.checked,
-            } })} />Enable carrier detection</label>
-          <label>Carrier frequency (Hz)<input type="number" min="0.001" max="12499"
-            step="0.001" value={settings.mains.carrier_frequency_hz}
-            onChange={(event) => setSettings({ ...settings, mains: {
-              ...settings.mains, carrier_frequency_hz: Number(event.target.value),
-            } })} /></label>
-          <label>Bandwidth (Hz)<input type="number" min="0.004" max="12499"
-            step="0.001" value={settings.mains.bandwidth_hz}
-            onChange={(event) => setSettings({ ...settings, mains: {
-              ...settings.mains, bandwidth_hz: Number(event.target.value),
-            } })} /></label>
-          <label>Detection threshold (%)<input type="number" min="0" max="655.35"
-            step="0.01" value={settings.mains.threshold_percent}
-            onChange={(event) => setSettings({ ...settings, mains: {
-              ...settings.mains, threshold_percent: Number(event.target.value),
-            } })} /></label>
-          <PhaseMask label="Measured phases" value={settings.mains.phase_mask}
-            onChange={(phase_mask) => setSettings({ ...settings, mains: {
-              ...settings.mains, phase_mask,
-            } })} />
-        </div>
-        <p>Each carrier magnitude uses the fixed 200 ms observation window and persisted voltage reference.</p>
-      </fieldset>
+      {category === 'flicker' && <section id="power-quality-panel-flicker"
+        role="tabpanel" aria-labelledby="power-quality-tab-flicker"
+        className="power-quality-category-panel">
+        <fieldset className="power-quality-settings-group">
+          <legend>Flicker profile</legend>
+          <div className="power-quality-settings-fields">
+            <label className="toggle"><input type="checkbox" checked={settings.flicker.enabled}
+              onChange={(event) => setSettings({ ...settings, flicker: {
+                ...settings.flicker, enabled: event.target.checked,
+              } })} />Enable IEC flicker processing</label>
+            <label>Lamp model<select value={settings.flicker.lamp_voltage}
+              onChange={(event) => setSettings({ ...settings, flicker: {
+                ...settings.flicker, lamp_voltage: Number(event.target.value) as 120 | 230,
+              } })}><option value={120}>120 V</option><option value={230}>230 V</option></select></label>
+            <PhaseMask label="Measured phases" value={settings.flicker.phase_mask}
+              onChange={(phase_mask) => setSettings({ ...settings, flicker: {
+                ...settings.flicker, phase_mask,
+              } })} />
+          </div>
+          <p>Fixed product cadence: 1-second live Pinst, 10-minute Pst, and Plt over 12 Pst values.</p>
+        </fieldset>
+      </section>}
 
-      <fieldset className="power-quality-settings-group">
-        <legend>Event profiles</legend>
-        <label className="power-quality-current-reference">Current reference (A)
-          <input type="number" min="0" max="4294.967295" step="0.000001"
-            value={settings.events.reference_current_amperes}
-            onChange={(event) => setSettings({ ...settings, events: {
-              ...settings.events, reference_current_amperes: Number(event.target.value),
-            } })} />
-          <small>A zero reference keeps current-relative alarms disarmed.</small></label>
-        <div className="power-quality-profile-list">
-          {EVENT_PROFILES.map(({ key, label, classification }) => <EventProfile key={key}
-            profileKey={key} label={label} classification={classification}
-            profile={settings.events[key]}
-            onChange={(profile) => updateProfile(key, profile)} />)}
-        </div>
-      </fieldset>
+      {category === 'mains' && <section id="power-quality-panel-mains"
+        role="tabpanel" aria-labelledby="power-quality-tab-mains"
+        className="power-quality-category-panel">
+        <fieldset className="power-quality-settings-group">
+          <legend>Mains signal profile</legend>
+          <div className="power-quality-settings-fields">
+            <label className="toggle"><input type="checkbox" checked={settings.mains.enabled}
+              onChange={(event) => setSettings({ ...settings, mains: {
+                ...settings.mains, enabled: event.target.checked,
+              } })} />Enable carrier detection</label>
+            <label>Carrier frequency (Hz)<input type="number" min="0.001" max="12499"
+              step="0.001" value={settings.mains.carrier_frequency_hz}
+              onChange={(event) => setSettings({ ...settings, mains: {
+                ...settings.mains, carrier_frequency_hz: Number(event.target.value),
+              } })} /></label>
+            <label>Bandwidth (Hz)<input type="number" min="0.004" max="12499"
+              step="0.001" value={settings.mains.bandwidth_hz}
+              onChange={(event) => setSettings({ ...settings, mains: {
+                ...settings.mains, bandwidth_hz: Number(event.target.value),
+              } })} /></label>
+            <label>Detection threshold (%)<input type="number" min="0" max="655.35"
+              step="0.01" value={settings.mains.threshold_percent}
+              onChange={(event) => setSettings({ ...settings, mains: {
+                ...settings.mains, threshold_percent: Number(event.target.value),
+              } })} /></label>
+            <PhaseMask label="Measured phases" value={settings.mains.phase_mask}
+              onChange={(phase_mask) => setSettings({ ...settings, mains: {
+                ...settings.mains, phase_mask,
+              } })} />
+          </div>
+          <p>Each carrier magnitude uses the fixed 200 ms observation window and persisted voltage reference.</p>
+        </fieldset>
+      </section>}
 
-      <fieldset className="power-quality-settings-group">
-        <legend>MNCWF identity</legend>
-        <p>Neutral capture-time metadata retained for later COMTRADE and PQDIF conversion.</p>
-        <div className="power-quality-identity-grid">
-          {IDENTITY_FIELDS.map(({ key, label }) => <label key={key}>{label}
-            <input maxLength={128} value={settings.waveform[key]}
+      {category === 'events' && <section id="power-quality-panel-events"
+        role="tabpanel" aria-labelledby="power-quality-tab-events"
+        className="power-quality-category-panel">
+        <fieldset className="power-quality-settings-group">
+          <legend>PQ Event profiles</legend>
+          <label className="power-quality-current-reference">Current reference (A)
+            <input type="number" min="0" max="4294.967295" step="0.000001"
+              value={settings.events.reference_current_amperes}
+              onChange={(event) => setSettings({ ...settings, events: {
+                ...settings.events, reference_current_amperes: Number(event.target.value),
+              } })} />
+            <small>A zero reference keeps current-relative alarms disarmed.</small></label>
+          <div className="power-quality-profile-list">
+            {EVENT_PROFILES.map(({ key, label, classification }) => <EventProfile key={key}
+              profileKey={key} label={label} classification={classification}
+              profile={settings.events[key]}
+              onChange={(profile) => updateProfile(key, profile)} />)}
+          </div>
+        </fieldset>
+
+        <fieldset className="power-quality-settings-group">
+          <legend>MNCWF identity</legend>
+          <p>Neutral capture-time metadata retained for later COMTRADE and PQDIF conversion.</p>
+          <div className="power-quality-identity-grid">
+            {IDENTITY_FIELDS.map(({ key, label }) => <label key={key}>{label}
+              <input maxLength={128} value={settings.waveform[key]}
+                onChange={(event) => setSettings({ ...settings, waveform: {
+                  ...settings.waveform, [key]: event.target.value,
+                } })} /></label>)}
+            <label>Calibration status<select value={settings.waveform.calibration_status}
               onChange={(event) => setSettings({ ...settings, waveform: {
-                ...settings.waveform, [key]: event.target.value,
-              } })} /></label>)}
-          <label>Calibration status<select value={settings.waveform.calibration_status}
-            onChange={(event) => setSettings({ ...settings, waveform: {
-              ...settings.waveform,
-              calibration_status: event.target.value as WaveformIdentity['calibration_status'],
-            } })}><option value="unknown">Unknown</option><option value="valid">Valid</option>
-              <option value="expired">Expired</option><option value="invalid">Invalid</option></select></label>
-        </div>
-      </fieldset>
+                ...settings.waveform,
+                calibration_status: event.target.value as WaveformIdentity['calibration_status'],
+              } })}><option value="unknown">Unknown</option><option value="valid">Valid</option>
+                <option value="expired">Expired</option><option value="invalid">Invalid</option></select></label>
+          </div>
+        </fieldset>
+      </section>}
 
       <div className="power-quality-actions"><button type="submit" disabled={busy}>
         {busy ? 'Applying…' : 'Apply and save'}</button><span>{message}</span></div>

@@ -1,4 +1,51 @@
 .power-quality-form { display: grid; gap: 1rem; }
+.power-quality-category-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .45rem;
+  padding: .35rem;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #0a151a;
+}
+.power-quality-category-tabs button {
+  display: grid;
+  justify-items: start;
+  gap: .25rem;
+  min-width: 0;
+  padding: .8rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #8ba0a6;
+  background: transparent;
+  text-align: left;
+}
+.power-quality-category-tabs button:hover {
+  color: #dbe7e8;
+  background: rgba(255,255,255,.025);
+}
+.power-quality-category-tabs button:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+.power-quality-category-tabs button.active {
+  border-color: rgba(84,226,164,.28);
+  color: var(--green);
+  background: rgba(84,226,164,.085);
+  box-shadow: inset 0 -2px var(--green);
+}
+.power-quality-category-tabs button span {
+  overflow: hidden;
+  font-size: .78rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.power-quality-category-tabs button small {
+  color: var(--muted);
+  font: .61rem var(--mono);
+}
+.power-quality-category-panel { display: grid; gap: 1rem; min-width: 0; }
 .power-quality-settings-group {
   display: grid;
   gap: 1rem;
@@ -105,6 +152,8 @@
 }
 
 @media (max-width: 560px) {
+  .power-quality-category-tabs { display: flex; overflow-x: auto; }
+  .power-quality-category-tabs button { flex: 0 0 11.5rem; }
   .power-quality-capture-policy { grid-template-columns: 1fr; }
   .power-quality-profile > header { align-items: start; flex-direction: column; }
 }
