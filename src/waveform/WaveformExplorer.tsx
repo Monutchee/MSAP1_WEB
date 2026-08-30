@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   api, ApiError, waveformDownloadPath, WaveformSession, WaveformStatus,
 } from '../api'
@@ -42,12 +42,10 @@ function duration(session: WaveformSession) {
 }
 
 export function WaveformExplorer({
-  onUnauthorized, canDelete, initialFilename, onInitialFilenameConsumed,
+  onUnauthorized, canDelete,
 }: {
   onUnauthorized: () => void
   canDelete: boolean
-  initialFilename?: string
-  onInitialFilenameConsumed?: () => void
 }) {
   const [status, setStatus] = useState<WaveformStatus>()
   const [loadingFile, setLoadingFile] = useState('')
@@ -59,7 +57,6 @@ export function WaveformExplorer({
     waveform: ParsedWaveform
   }>()
   const [error, setError] = useState('')
-  const handledInitialFilename = useRef('')
 
   const load = useCallback(async () => {
     try {
@@ -105,23 +102,6 @@ export function WaveformExplorer({
     }
   }, [onUnauthorized])
 
-  useEffect(() => {
-    if (!initialFilename) {
-      handledInitialFilename.current = ''
-      return
-    }
-    if (!status || handledInitialFilename.current === initialFilename) return
-    handledInitialFilename.current = initialFilename
-    const session = status.sessions.find((candidate) =>
-      candidate.filename === initialFilename)
-    if (!session) {
-      setError(`Waveform ${initialFilename} is no longer in the capture catalogue`)
-      onInitialFilenameConsumed?.()
-      return
-    }
-    void open(session).finally(() => onInitialFilenameConsumed?.())
-  }, [initialFilename, onInitialFilenameConsumed, open, status])
-
   async function remove(session: WaveformSession) {
     if (session.state === 'capturing' ||
       !window.confirm(`Delete waveform session ${session.id}? This cannot be undone.`))
@@ -143,7 +123,11 @@ export function WaveformExplorer({
     }
   }
 
-  const sessions = status?.sessions ?? []
+  // PQ-only evidence is browsed from History → PQ Event catalogue. A mixed
+  // session remains here because it contains an explicit manual trigger too;
+  // legacy files predate origin metadata and stay visible for compatibility.
+  const sessions = (status?.sessions ?? []).filter(
+    (session) => session.origin !== 'power_quality')
   // A capture still being written cannot be deleted, so it never selects.
   const deletable = sessions.filter((session) => session.state !== 'capturing')
   const allSelected = deletable.length > 0 &&
@@ -219,7 +203,8 @@ export function WaveformExplorer({
       <header>
         <div><p className="eyebrow">Persistent storage</p><h2>Saved captures</h2></div>
         <div className="waveform-library-tools">
-          <span>{status?.completed_sessions ?? 0} complete · {status?.incomplete_sessions ?? 0} incomplete</span>
+          <span>{sessions.filter((session) => session.state === 'complete').length} complete ·
+            {' '}{sessions.filter((session) => session.state === 'incomplete').length} incomplete</span>
           {canDelete && deletable.length > 0 && <>
             <label className="waveform-select-all">
               <input type="checkbox" checked={allSelected}
@@ -289,10 +274,10 @@ export function WaveformExplorer({
           </article>)}
         {sessions.length === 0 &&
           <div className="waveform-library-empty">
-            <strong>No persistent waveform captures</strong>
+            <strong>No manual waveform captures</strong>
             <span>{canDelete
               ? 'Trigger a capture with the form above.'
-              : 'An administrator can trigger a capture from this page.'}</span>
+              : 'An administrator can trigger a manual capture from this page. PQ evidence is under History.'}</span>
           </div>}
       </div>
     </section>

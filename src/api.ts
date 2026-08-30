@@ -845,6 +845,7 @@ export interface DatabaseStatus {
     lag_records: number
     block_count: number
     storage_bytes: number
+    power_quality_event_count: number
     datasets: DatabaseDatasetStatus[]
   }
 }
@@ -1054,6 +1055,7 @@ export interface WaveformSession {
   trigger_realtime_nanoseconds: number
   sample_rate_hz: number
   event_count: number
+  origin: 'manual' | 'power_quality' | 'mixed' | 'legacy'
   decimation: number
   filename: string
   continuation_of_session_id: number
@@ -1140,6 +1142,10 @@ export interface PowerQualityEvents {
   count: number
   export_formats: string[]
   events: PowerQualityEvent[]
+}
+
+export interface PowerQualityEventDeleteResult {
+  deleted: number
 }
 
 export interface PowerQualityEventQuery {
@@ -1337,6 +1343,16 @@ export const api = {
     const suffix = parameters.size === 0 ? '' : `?${parameters.toString()}`
     return request<PowerQualityEvents>(`/api/v1/meter/power-quality/events${suffix}`)
   },
+  deletePowerQualityEvents: (event_ids: string[]) =>
+    request<PowerQualityEventDeleteResult>('/api/v1/meter/power-quality/events', {
+      method: 'DELETE',
+      body: JSON.stringify({ event_ids, all: false, confirmed: true }),
+    }),
+  clearPowerQualityEvents: () =>
+    request<PowerQualityEventDeleteResult>('/api/v1/meter/power-quality/events', {
+      method: 'DELETE',
+      body: JSON.stringify({ event_ids: [], all: true, confirmed: true }),
+    }),
   meterFlicker: () => request<FlickerStatus>('/api/v1/meter/flicker'),
   meterMainsSignalling: () =>
     request<MainsSignalStatus>('/api/v1/meter/mains-signalling'),
@@ -1377,6 +1393,11 @@ export const api = {
     request<WaveformStatus>('/api/v1/waveforms', {
       method: 'DELETE',
       body: JSON.stringify({ session_id }),
+    }),
+  clearWaveforms: () =>
+    request<WaveformStatus>('/api/v1/waveforms', {
+      method: 'DELETE',
+      body: JSON.stringify({ session_id: 0, all: true, confirmed: true }),
     }),
   developerLogs: (query: DeveloperLogQuery = {}) => {
     const parameters = new URLSearchParams()

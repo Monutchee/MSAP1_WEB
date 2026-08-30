@@ -100,12 +100,15 @@ profile is applying, the page keeps the previous family hidden until grid lock
 and all 42 replacement records agree.
 
 **Reading → Power Quality** reads the typed M18 APIs for independent live
-flicker Pinst, finalized Pst/Plt, mains-signalling carrier observations, and the
-durable event catalogue. Event rows mark intersecting sample windows and open a
-canonical UUID detail view. Linked capture UUIDs are joined to waveform
-sessions so master and continuation identity remains visible; completed
-segments offer an event-specific MNCWF export through the authenticated API.
-The browser does not read DMA, RPMsg, or raw storage.
+flicker Pinst, finalized Pst/Plt, and mains-signalling carrier observations.
+The durable catalogue lives under **History → PQ Event catalogue**. Intersecting
+sample windows are grouped into one expandable incident row while the child
+events retain their canonical UUID detail. Linked capture UUIDs are joined to
+waveform sessions so master and continuation identity remains visible;
+completed segments open the shared waveform viewer in place or offer an
+event-specific MNCWF export. Administrators can select one or several events
+for confirmed deletion without deleting the shared MNCWF files. The browser
+does not read DMA, RPMsg, or raw storage.
 
 The aggregate grid frequency is **informative only**. Per
 IEC 61000-4-30:2025 the standardized frequency product is defined over its own
@@ -136,10 +139,12 @@ updates using journald cursors. Journal access is provided only through the
 authenticated backend API; the browser never reads the system journal
 directly.
 
-Administrators can open **Configuration → Waveform** to inspect raw history
-capacity, sequence continuity, and completed sessions, then trigger a manual
-pre/post capture. The browser sends only the trigger request; the acquisition
-daemon owns the dedicated waveform DMA, history, time correlation, and file
+The top-level **Waveforms** page triggers and lists manual captures only;
+PQ-only evidence remains in the event catalogue even though both paths share
+the same MNCWF-v4 storage and viewer. The viewer can render separate channel
+lanes, shared-scale voltage and current overlays, or one normalized all-channel
+overlay. The browser sends only the trigger request; the acquisition daemon
+owns the dedicated waveform DMA, history, time correlation, and file
 materialization.
 
 **Configuration → Power Quality** edits complete event, flicker, and
@@ -147,6 +152,14 @@ mains-signalling policy through the central settings authority. It also stores
 neutral station, site, circuit, device, and calibration identity in the MNCWF
 capture settings for later COMTRADE and PQDIF conversion. The form reloads the
 active document immediately before saving so unrelated settings are preserved.
+
+**Configuration → Data Logging** is a read-only health summary. Storage
+backend, retention, and maximum-size controls are restricted to
+**Developer → Database**. The administrator-only top-level **Management** page
+owns destructive actions: clearing historian projections while retaining the
+raw spool, clearing the PQ event catalogue while retaining MNCWF files, and
+clearing waveform files while retaining event rows. Every action has a scoped
+confirmation dialog.
 
 **Developer → Tweak** exposes the acquisition sample-rate selector (1 to
 128 kSPS from the APU's supported set, factory default 128 kSPS). Changing

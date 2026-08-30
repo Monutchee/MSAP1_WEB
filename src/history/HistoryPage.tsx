@@ -411,9 +411,9 @@ function MeasurementHistory({ onUnauthorized }: { onUnauthorized: () => void }) 
 const HISTORY_SECTIONS = ['measurements', 'events'] as const
 type HistorySection = typeof HISTORY_SECTIONS[number]
 
-export function HistoryPage({ onUnauthorized, onViewWaveform }: {
+export function HistoryPage({ onUnauthorized, canDelete }: {
   onUnauthorized: () => void
-  onViewWaveform: (filename: string) => void
+  canDelete: boolean
 }) {
   const [section, setSection] = useState<HistorySection>('measurements')
 
@@ -457,7 +457,7 @@ export function HistoryPage({ onUnauthorized, onViewWaveform }: {
     {section === 'events' && <div id="history-panel-events" role="tabpanel"
       aria-labelledby="history-tab-events">
       <PowerQualityEventCatalogue onUnauthorized={onUnauthorized}
-        onViewWaveform={onViewWaveform} />
+        canDelete={canDelete} />
     </div>}
   </section>
 }

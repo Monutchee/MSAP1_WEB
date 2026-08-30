@@ -23,6 +23,8 @@ import { ReadingPage } from './reading/ReadingPage'
 import { ModbusConfiguration } from './configuration/ModbusConfiguration'
 import { MqttConfiguration } from './configuration/MqttConfiguration'
 import { PowerQualityConfiguration } from './configuration/PowerQualityConfiguration'
+import { DataLoggingStatusPage } from './configuration/DataLoggingStatusPage'
+import { ManagementPage } from './management/ManagementPage'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -1203,7 +1205,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   onSimulatorSubmit: (activate: boolean) => void
 }) {
   const [activeTab, setActiveTab] =
-    useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'waveform' | 'about' | 'logs'>('overview')
+    useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'database' | 'waveform' | 'about' | 'logs'>('overview')
   const [simulatorCategory, setSimulatorCategory] =
     useState<SimulatorCategory>('measurement')
   const handleSimulatorTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -1247,6 +1249,9 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       <button className={activeTab === 'recorder' ? 'active' : ''} type="button"
         aria-current={activeTab === 'recorder' ? 'page' : undefined}
         onClick={() => setActiveTab('recorder')}>Data recorder</button>
+      <button className={activeTab === 'database' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'database' ? 'page' : undefined}
+        onClick={() => setActiveTab('database')}>Database</button>
       <button className={activeTab === 'waveform' ? 'active' : ''} type="button"
         aria-current={activeTab === 'waveform' ? 'page' : undefined}
         onClick={() => setActiveTab('waveform')}>Waveform</button>
@@ -1344,6 +1349,8 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
     </>
       : activeTab === 'recorder'
         ? <DeveloperDataRecorderPage onUnauthorized={onUnauthorized} />
+      : activeTab === 'database'
+        ? <DeveloperDatabasePage onUnauthorized={onUnauthorized} />
       : activeTab === 'waveform'
         ? <DeveloperWaveformStatus onUnauthorized={onUnauthorized} />
       : activeTab === 'about'
@@ -1981,7 +1988,7 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
       : activeTab === 'waveform'
         ? <WaveformConfiguration />
       : activeTab === 'data-logging'
-        ? <DeveloperDatabasePage onUnauthorized={onUnauthorized} />
+        ? <DataLoggingStatusPage onUnauthorized={onUnauthorized} />
         : activeTab === 'modbus'
           ? <ModbusConfiguration onUnauthorized={onUnauthorized} />
           : <MqttConfiguration onUnauthorized={onUnauthorized} />}
@@ -1994,8 +2001,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   onUnauthorized: () => void
 }) {
   const [activeView, setActiveView] =
-    useState<'dashboard' | 'reading' | 'history' | 'waveforms' | 'configuration' | 'about' | 'developer'>('dashboard')
-  const [initialWaveformFilename, setInitialWaveformFilename] = useState<string>()
+    useState<'dashboard' | 'reading' | 'history' | 'waveforms' | 'management' | 'configuration' | 'about' | 'developer'>('dashboard')
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
@@ -2553,6 +2559,10 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         aria-current={activeView === 'waveforms' ? 'page' : undefined}
         onClick={() => setActiveView('waveforms')}>Waveforms</button>
       {session.role === 'admin' && <button type="button"
+        className={activeView === 'management' ? 'active' : ''}
+        aria-current={activeView === 'management' ? 'page' : undefined}
+        onClick={() => setActiveView('management')}>Management</button>}
+      {session.role === 'admin' && <button type="button"
         className={activeView === 'configuration' ? 'active' : ''}
         aria-current={activeView === 'configuration' ? 'page' : undefined}
         onClick={() => setActiveView('configuration')}>Configuration</button>}
@@ -2576,6 +2586,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           onSimulatorSubmit={saveSimulator} />
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
+      : activeView === 'management'
+        ? <ManagementPage onUnauthorized={onUnauthorized} />
       : activeView === 'reading'
         ? <ReadingPage readings={readings} onUnauthorized={onUnauthorized}
             systemNominalVoltage={systemNominalVoltage ?? 120}
@@ -2583,15 +2595,10 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             canReset={session.role === 'admin'} />
       : activeView === 'history'
         ? <HistoryPage onUnauthorized={onUnauthorized}
-            onViewWaveform={(filename) => {
-              setInitialWaveformFilename(filename)
-              setActiveView('waveforms')
-            }} />
+            canDelete={session.role === 'admin'} />
       : activeView === 'waveforms'
         ? <WaveformExplorer onUnauthorized={onUnauthorized}
-            canDelete={session.role === 'admin'}
-            initialFilename={initialWaveformFilename}
-            onInitialFilenameConsumed={() => setInitialWaveformFilename(undefined)} />
+            canDelete={session.role === 'admin'} />
       : activeView === 'configuration'
         ? <ConfigurationPage configuration={frequencyConfiguration}
             configurationStatus={configurationStatus}

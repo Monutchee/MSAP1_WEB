@@ -175,11 +175,7 @@
 
 .waveform-viewer-controls {
   display: grid;
-  grid-template-columns:
-    minmax(210px, .7fr)
-    minmax(360px, 1.25fr)
-    minmax(220px, .75fr)
-    minmax(300px, .9fr);
+  grid-template-columns: repeat(5, minmax(180px, 1fr));
   gap: 1.5rem;
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--line);
@@ -258,13 +254,13 @@
   border-bottom: 0;
 }
 
-.waveform-plot.channel-0 { --waveform-color: #5fa8ff; }
-.waveform-plot.channel-1 { --waveform-color: #ff8d4d; }
-.waveform-plot.channel-2 { --waveform-color: #54d4af; }
-.waveform-plot.channel-3 { --waveform-color: #ffbd5c; }
-.waveform-plot.channel-4 { --waveform-color: #e06da9; }
-.waveform-plot.channel-5 { --waveform-color: #64d467; }
-.waveform-plot.channel-6 { --waveform-color: #9c8cff; }
+.channel-color-0 { --waveform-color: #5fa8ff; }
+.channel-color-1 { --waveform-color: #ff8d4d; }
+.channel-color-2 { --waveform-color: #54d4af; }
+.channel-color-3 { --waveform-color: #ffbd5c; }
+.channel-color-4 { --waveform-color: #e06da9; }
+.channel-color-5 { --waveform-color: #64d467; }
+.channel-color-6 { --waveform-color: #9c8cff; }
 
 .waveform-plot-label {
   display: grid;
@@ -323,6 +319,57 @@
   opacity: .72;
 }
 
+.waveform-overlay-plot {
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 168px;
+  padding: .8rem 0;
+}
+
+.waveform-overlay-plot .waveform-plot-canvas { height: 150px; }
+
+.waveform-overlay-label {
+  display: grid;
+  align-content: start;
+  gap: .25rem;
+  min-width: 0;
+}
+
+.waveform-overlay-label > strong { color: #e3eded; font-size: .8rem; }
+.waveform-overlay-label > span { color: var(--muted); font-size: .62rem; }
+.waveform-overlay-legend {
+  display: grid;
+  gap: .28rem;
+  margin-top: .35rem;
+}
+.waveform-overlay-legend > span {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: .1rem .4rem;
+  align-items: center;
+  min-width: 0;
+  color: var(--waveform-color);
+}
+.waveform-overlay-legend i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--waveform-color);
+}
+.waveform-overlay-legend b { color: #cad7d9; font-size: .64rem; }
+.waveform-overlay-legend code,
+.waveform-overlay-legend output {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: .58rem;
+}
+.waveform-overlay-legend output { color: var(--waveform-color); }
+.waveform-series { fill: var(--waveform-color); stroke: var(--waveform-color); }
+.waveform-overlay-plot .waveform-series { opacity: .42; }
+.waveform-overlay-plot .waveform-cursor-marker {
+  background: #e8f1f1;
+  box-shadow: 0 0 5px rgba(255, 255, 255, .4);
+}
+
 .waveform-trigger-marker {
   position: absolute;
   top: 0;
@@ -365,7 +412,7 @@
   }
 
   .waveform-viewer-controls {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -383,6 +430,8 @@
   .waveform-plot {
     grid-template-columns: 1fr;
   }
+
+  .waveform-viewer-controls { grid-template-columns: 1fr; }
 
   .waveform-plot-label {
     grid-template-columns: repeat(3, auto);
