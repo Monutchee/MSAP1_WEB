@@ -8,12 +8,13 @@ const profile = (enabled = true) => ({
   hysteresis_percent: 2,
   phase_mask: 7,
   phase_policy: 'per_phase',
-  waveform: { enabled: true, pretrigger_ms: 3000, posttrigger_ms: 3000, decimation: 1 },
+  waveform: { enabled: true, pretrigger_ms: 3000, posttrigger_ms: 3000, decimation: 8 },
 })
 
 const product = {
   schema_version: 4,
   metering: {
+    sample_rate_hz: 128_000,
     unrelated_meter_setting: 'preserve-me',
     events: {
       reference_current_amperes: 5,
@@ -77,6 +78,8 @@ describe('Power-quality configuration', () => {
     fireEvent.change(carrier, { target: { value: '1175.5' } })
     fireEvent.click(screen.getByRole('tab', { name: /PQ Event profiles/ }))
     expect(await screen.findByText('Voltage sag')).toBeInTheDocument()
+    expect(screen.getAllByLabelText(/Decimation/)[0]).toHaveValue('8')
+    expect(screen.getAllByRole('option', { name: '÷ 8 — 16,000 samples/s' })).toHaveLength(9)
     fireEvent.change(screen.getByLabelText('Station ID'), { target: { value: 'STN-04' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply and save' }))
 

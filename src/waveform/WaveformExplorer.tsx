@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   api, ApiError, waveformDownloadPath, WaveformSession, WaveformStatus,
 } from '../api'
@@ -41,9 +41,13 @@ function duration(session: WaveformSession) {
     session.sample_rate_hz).toFixed(3)} s`
 }
 
-export function WaveformExplorer({ onUnauthorized, canDelete }: {
+export function WaveformExplorer({
+  onUnauthorized, canDelete, initialFilename, onInitialFilenameConsumed,
+}: {
   onUnauthorized: () => void
   canDelete: boolean
+  initialFilename?: string
+  onInitialFilenameConsumed?: () => void
 }) {
   const [status, setStatus] = useState<WaveformStatus>()
   const [loadingFile, setLoadingFile] = useState('')
@@ -55,6 +59,7 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
     waveform: ParsedWaveform
   }>()
   const [error, setError] = useState('')
+  const handledInitialFilename = useRef('')
 
   const load = useCallback(async () => {
     try {
@@ -79,7 +84,7 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
     return () => { active = false; window.clearInterval(timer) }
   }, [load])
 
-  async function open(session: WaveformSession) {
+  const open = useCallback(async (session: WaveformSession) => {
     if (!session.filename) return
     setLoadingFile(session.filename)
     setError('')
@@ -98,7 +103,24 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
     } finally {
       setLoadingFile('')
     }
-  }
+  }, [onUnauthorized])
+
+  useEffect(() => {
+    if (!initialFilename) {
+      handledInitialFilename.current = ''
+      return
+    }
+    if (!status || handledInitialFilename.current === initialFilename) return
+    handledInitialFilename.current = initialFilename
+    const session = status.sessions.find((candidate) =>
+      candidate.filename === initialFilename)
+    if (!session) {
+      setError(`Waveform ${initialFilename} is no longer in the capture catalogue`)
+      onInitialFilenameConsumed?.()
+      return
+    }
+    void open(session).finally(() => onInitialFilenameConsumed?.())
+  }, [initialFilename, onInitialFilenameConsumed, open, status])
 
   async function remove(session: WaveformSession) {
     if (session.state === 'capturing' ||

@@ -1,4 +1,47 @@
 .power-quality-view { display: grid; gap: 1rem; }
+.power-quality-reading-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .45rem;
+  padding: .35rem;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #0a151a;
+}
+.power-quality-reading-tabs button {
+  display: grid;
+  justify-items: start;
+  gap: .25rem;
+  min-width: 0;
+  padding: .8rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #8ba0a6;
+  background: transparent;
+  text-align: left;
+}
+.power-quality-reading-tabs button:hover {
+  color: #dbe7e8;
+  background: rgba(255,255,255,.025);
+}
+.power-quality-reading-tabs button:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+.power-quality-reading-tabs button.active {
+  border-color: rgba(84,226,164,.28);
+  color: var(--green);
+  background: rgba(84,226,164,.085);
+  box-shadow: inset 0 -2px var(--green);
+}
+.power-quality-reading-tabs button span {
+  overflow: hidden;
+  font-size: .78rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.power-quality-reading-tabs button small { color: var(--muted); font: .61rem var(--mono); }
 .power-quality-live-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -26,6 +69,7 @@
   border-bottom: 1px solid var(--line);
 }
 .power-quality-live-panel h3,
+.power-quality-events h2,
 .power-quality-events h3,
 .power-quality-event-detail h3,
 .power-quality-waveforms h4 { margin: 0; }
@@ -79,6 +123,27 @@
 .power-quality-carrier-summary div { padding: .8rem 1rem; }
 .power-quality-carrier-summary span { display: block; color: var(--muted); font-size: .63rem; }
 .power-quality-carrier-summary strong { display: block; margin-top: .25rem; font: .8rem var(--mono); }
+.power-quality-engine-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line);
+}
+.power-quality-engine-summary div { padding: .9rem 1rem; }
+.power-quality-engine-summary span,
+.power-quality-last-edge > div > span { display: block; color: var(--muted); font-size: .63rem; }
+.power-quality-engine-summary strong,
+.power-quality-last-edge > div > strong { display: block; margin-top: .25rem; font: .8rem var(--mono); }
+.power-quality-phase-grid.event-engine { border-bottom: 1px solid var(--line); }
+.power-quality-last-edge { padding: 1rem 1.15rem; }
+.power-quality-last-edge > dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .8rem;
+  margin: .8rem 0 0;
+}
+.power-quality-last-edge dt { color: var(--muted); font-size: .63rem; text-transform: uppercase; }
+.power-quality-last-edge dd { margin: .2rem 0 0; font: .7rem var(--mono); }
+.power-quality-last-edge p { margin: .8rem 0 0; color: var(--muted); font-size: .7rem; }
 .power-quality-phase-grid.mains article { position: relative; }
 .carrier-detected {
   position: absolute;
@@ -182,16 +247,25 @@
   gap: .6rem;
 }
 .power-quality-capture-link dd { font: .66rem var(--mono); }
-.power-quality-capture-link > a {
+.power-quality-capture-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: .45rem;
+}
+.power-quality-capture-actions > a,
+.power-quality-capture-actions > button {
   padding: .55rem .7rem;
   border: 1px solid rgba(84, 226, 164, .4);
   border-radius: 7px;
   color: var(--green);
+  background: transparent;
   font-size: .68rem;
   font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
 }
+.power-quality-capture-actions > button { color: #dce8e9; border-color: var(--line); }
 .power-quality-capture-pending { color: var(--muted); font-size: .66rem; }
 .power-quality-empty {
   display: grid;
@@ -213,9 +287,14 @@
 }
 
 @media (max-width: 720px) {
+  .power-quality-reading-tabs { display: flex; overflow-x: auto; }
+  .power-quality-reading-tabs button { flex: 0 0 11rem; }
   .power-quality-phase-grid,
-  .power-quality-carrier-summary { grid-template-columns: 1fr; }
+  .power-quality-carrier-summary,
+  .power-quality-engine-summary { grid-template-columns: 1fr; }
   .power-quality-event-facts { grid-template-columns: 1fr; }
   .power-quality-capture-link { grid-template-columns: 1fr; }
   .power-quality-capture-link dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .power-quality-capture-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .power-quality-last-edge > dl { grid-template-columns: 1fr; }
 }

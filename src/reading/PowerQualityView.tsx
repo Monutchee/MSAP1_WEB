@@ -1,177 +1,37 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useState,
+} from 'react'
 import {
   api, ApiError, FlickerRecord, FlickerStatus, MainsSignalStatus,
-  PowerQualityEvent, WaveformSession, WaveformStatus, waveformEventExportPath,
+  PowerQualityRecord, PowerQualityStatus,
 } from '../api'
 import './powerQuality.css'
 
 const PHASES = ['A', 'B', 'C'] as const
+const CATEGORIES = ['flicker', 'mains', 'events'] as const
+type PowerQualityCategory = typeof CATEGORIES[number]
 
 function formatNumber(value: number | undefined, digits = 3) {
   if (value === undefined || !Number.isFinite(value)) return '—'
   return value.toLocaleString('en-US', { maximumFractionDigits: digits })
 }
 
-function formatUtc(nanoseconds: number | undefined) {
-  if (nanoseconds === undefined) return 'UTC unavailable'
-  const milliseconds = nanoseconds / 1_000_000
-  const date = new Date(milliseconds)
-  return Number.isNaN(date.valueOf()) ? 'UTC unavailable' : date.toLocaleString()
-}
-
-function eventLabel(type: PowerQualityEvent['type']) {
-  return type === 'unknown' ? 'Unknown event' : type.split('_')
-    .map((word) => word[0].toUpperCase() + word.slice(1)).join(' ')
-}
-
-function eventUnit(event: PowerQualityEvent) {
-  return event.type.startsWith('current_') ? 'A' : 'V'
-}
-
-function microValue(value: number, unit: string) {
-  return `${formatNumber(value / 1_000_000, 6)} ${unit}`
-}
-
 function recordPhase(record: FlickerRecord | undefined, phase: string) {
   return record?.phases.find((candidate) => candidate.phase === phase)
 }
 
-export function overlappingEventCount(
-  event: PowerQualityEvent,
-  events: readonly PowerQualityEvent[],
-) {
-  return events.filter((candidate) => candidate.event_id !== event.event_id &&
-    candidate.first_sample <= event.last_sample &&
-    candidate.last_sample >= event.first_sample).length
-}
-
-function EventTimeline({ events, selectedEventId, onSelect }: {
-  events: PowerQualityEvent[]
-  selectedEventId: string | undefined
-  onSelect: (eventId: string) => void
-}) {
-  if (events.length === 0) return <div className="power-quality-empty">
-    <strong>No durable power-quality events</strong>
-    <span>The catalogue will populate when an enabled profile starts.</span>
-  </div>
-
-  const first = Math.min(...events.map((event) => event.first_sample))
-  const last = Math.max(...events.map((event) => event.last_sample))
-  const span = Math.max(1, last - first + 1)
-
-  return <ul className="power-quality-timeline"
-    aria-label="Power-quality event timeline">
-    {events.map((event) => {
-      const left = ((event.first_sample - first) / span) * 100
-      const width = Math.max(.7, ((event.last_sample - event.first_sample + 1) / span) * 100)
-      const overlaps = overlappingEventCount(event, events)
-      return <li key={event.event_id}><button type="button"
-        className={selectedEventId === event.event_id ? 'selected' : ''}
-        onClick={() => onSelect(event.event_id)}>
-        <span className="power-quality-event-summary">
-          <strong>{eventLabel(event.type)}</strong>
-          <small>{event.affected_phases.join(', ') || 'No phase'} · {event.lifecycle}</small>
-        </span>
-        <span className="power-quality-event-track" aria-hidden="true">
-          <i style={{ left: `${left}%`, width: `${Math.min(100 - left, width)}%` }} />
-        </span>
-        <span className="power-quality-event-time">{formatNumber(event.duration_ms)} ms</span>
-        {overlaps > 0 && <span className="power-quality-overlap">
-          Overlaps {overlaps} {overlaps === 1 ? 'event' : 'events'}
-        </span>}
-      </button></li>
-    })}
-  </ul>
-}
-
-function CaptureLink({ captureUuid, event, session }: {
-  captureUuid: string
-  event: PowerQualityEvent
-  session: WaveformSession | undefined
-}) {
-  return <article className="power-quality-capture-link">
-    <div>
-      <strong>{session ? `Session ${session.id}` : 'Capture pending in session catalogue'}</strong>
-      <code>{captureUuid}</code>
-    </div>
-    {session && <dl>
-      <div><dt>State</dt><dd>{session.state}</dd></div>
-      <div><dt>Master</dt><dd>Session {session.master_session_id || session.id}</dd></div>
-      <div><dt>Continuation</dt><dd>{session.continuation_of_session_id
-        ? `After session ${session.continuation_of_session_id}` : 'Master segment'}</dd></div>
-    </dl>}
-    {session?.state === 'complete' && session.filename
-      ? <a href={waveformEventExportPath(session.id, event.event_id)} download>
-        Download event MNCWF
-      </a>
-      : <span className="power-quality-capture-pending">Materialization pending</span>}
-  </article>
-}
-
-function EventDetail({ event, waveforms }: {
-  event: PowerQualityEvent | undefined
-  waveforms: WaveformStatus | undefined
-}) {
-  if (!event) return <div className="power-quality-empty">
-    <strong>Select an event</strong><span>Its lifecycle snapshot and linked captures appear here.</span>
-  </div>
-
-  const sessionByCapture = new Map(
-    waveforms?.sessions.map((session) => [session.capture_uuid, session]) ?? [],
-  )
-  const unit = eventUnit(event)
-  return <div className="power-quality-event-detail">
-    <header>
-      <div><p className="eyebrow">Canonical event</p><h3>{eventLabel(event.type)}</h3></div>
-      <span className={`session-state ${event.lifecycle === 'abort' ? 'incomplete' : 'complete'}`}>
-        {event.lifecycle}
-      </span>
-    </header>
-    <code className="power-quality-event-id">{event.event_id}</code>
-    <dl className="power-quality-event-facts">
-      <div><dt>Started</dt><dd>{formatUtc(event.start_utc_nanoseconds)}</dd></div>
-      <div><dt>Last update</dt><dd>{formatUtc(event.last_utc_nanoseconds)}</dd></div>
-      <div><dt>Duration</dt><dd>{formatNumber(event.duration_ms)} ms</dd></div>
-      <div><dt>Phases</dt><dd>{event.affected_phases.join(', ') || 'None'}</dd></div>
-      <div><dt>Classification</dt><dd>{event.taxonomy === 'iec_61000_4_30'
-        ? 'IEC 61000-4-30' : 'MSAP1 product alarm'}</dd></div>
-      <div><dt>Phase policy</dt><dd>{event.per_phase ? 'Per phase' : 'Polyphase'}</dd></div>
-      <div><dt>Threshold</dt><dd>{formatNumber(event.threshold_e4 / 100)} %</dd></div>
-      <div><dt>Hysteresis</dt><dd>{formatNumber(event.hysteresis_e4 / 100)} %</dd></div>
-      <div><dt>Reference</dt><dd>{microValue(event.reference_micro_units, unit)}</dd></div>
-      <div><dt>Minimum A / B / C</dt><dd>{event.minimum_micro_units
-        .map((value) => microValue(value, unit)).join(' · ')}</dd></div>
-      <div><dt>Maximum A / B / C</dt><dd>{event.maximum_micro_units
-        .map((value) => microValue(value, unit)).join(' · ')}</dd></div>
-      <div><dt>Samples</dt><dd>{event.first_sample.toLocaleString()}–{event.last_sample.toLocaleString()}</dd></div>
-      <div><dt>Time quality</dt><dd>{event.time_quality}</dd></div>
-      <div><dt>Discontinuities</dt><dd>{event.discontinuities}</dd></div>
-      <div><dt>Profile generation</dt><dd>{event.profile_generation}</dd></div>
-      <div><dt>Settings digest</dt><dd><code>{event.settings_digest}</code></dd></div>
-    </dl>
-    <section className="power-quality-waveforms" aria-labelledby="event-waveforms-title">
-      <header><div><p className="eyebrow">Evidence</p><h4 id="event-waveforms-title">Linked waveforms</h4></div>
-        <span>MNCWF is the master record</span></header>
-      {event.waveform_capture_uuids.map((captureUuid) => <CaptureLink
-        key={captureUuid} captureUuid={captureUuid} event={event}
-        session={sessionByCapture.get(captureUuid)} />)}
-      {event.waveform_capture_uuids.length === 0 && <div className="power-quality-empty compact">
-        <strong>No linked capture</strong><span>{event.waveform.enabled
-          ? 'The capture coordinator has not linked a materialized session yet.'
-          : 'Waveform capture was disabled in this event snapshot.'}</span>
-      </div>}
-    </section>
-  </div>
+function eventLabel(record: PowerQualityRecord | undefined) {
+  if (!record || record.event_type === 'none') return 'No event edge recorded'
+  const label = record.event_type[0].toUpperCase() + record.event_type.slice(1)
+  return `${label} ${record.kind === 'event_end' ? 'ended' : 'started'}`
 }
 
 export function PowerQualityView({ onUnauthorized }: { onUnauthorized: () => void }) {
+  const [category, setCategory] = useState<PowerQualityCategory>('flicker')
   const [flicker, setFlicker] = useState<FlickerStatus>()
   const [mains, setMains] = useState<MainsSignalStatus>()
-  const [events, setEvents] = useState<PowerQualityEvent[]>([])
-  const [waveforms, setWaveforms] = useState<WaveformStatus>()
-  const [selectedEventId, setSelectedEventId] = useState<string>()
-  const [signalError, setSignalError] = useState('')
-  const [eventError, setEventError] = useState('')
+  const [events, setEvents] = useState<PowerQualityStatus>()
+  const [error, setError] = useState('')
 
   const handleFailure = useCallback((reason: unknown, fallback: string) => {
     if (reason instanceof ApiError && reason.status === 401) {
@@ -181,138 +41,186 @@ export function PowerQualityView({ onUnauthorized }: { onUnauthorized: () => voi
     return reason instanceof Error ? reason.message : fallback
   }, [onUnauthorized])
 
-  const loadSignals = useCallback(async () => {
-    const [nextFlicker, nextMains] = await Promise.allSettled([
-      api.meterFlicker(), api.meterMainsSignalling(),
+  const load = useCallback(async () => {
+    const [nextFlicker, nextMains, nextEvents] = await Promise.allSettled([
+      api.meterFlicker(), api.meterMainsSignalling(), api.meterPowerQuality(),
     ])
     const failures: string[] = []
     if (nextFlicker.status === 'fulfilled') setFlicker(nextFlicker.value)
     else failures.push(handleFailure(nextFlicker.reason, 'Unable to read flicker'))
     if (nextMains.status === 'fulfilled') setMains(nextMains.value)
     else failures.push(handleFailure(nextMains.reason, 'Unable to read mains signalling'))
-    setSignalError(failures.filter((failure) => failure !== 'unauthorized').join(' · '))
-  }, [handleFailure])
-
-  const loadEvents = useCallback(async () => {
-    const [nextEvents, nextWaveforms] = await Promise.allSettled([
-      api.powerQualityEvents({ limit: 100 }), api.waveforms(),
-    ])
-    const failures: string[] = []
-    if (nextEvents.status === 'fulfilled') {
-      setEvents(nextEvents.value.events)
-      setSelectedEventId((current) => nextEvents.value.events.some(
-        (event) => event.event_id === current) ? current : nextEvents.value.events[0]?.event_id)
-    } else failures.push(handleFailure(nextEvents.reason, 'Unable to read event catalogue'))
-    if (nextWaveforms.status === 'fulfilled') setWaveforms(nextWaveforms.value)
-    else failures.push(handleFailure(nextWaveforms.reason, 'Unable to read waveform catalogue'))
-    setEventError(failures.filter((failure) => failure !== 'unauthorized').join(' · '))
+    if (nextEvents.status === 'fulfilled') setEvents(nextEvents.value)
+    else failures.push(handleFailure(nextEvents.reason, 'Unable to read PQ Event state'))
+    setError(failures.filter((failure) => failure !== 'unauthorized').join(' · '))
   }, [handleFailure])
 
   useEffect(() => {
     let active = true
-    let signalPending = false
-    let eventPending = false
-    const refreshSignals = async () => {
-      if (!active || signalPending) return
-      signalPending = true
-      await loadSignals()
-      signalPending = false
+    let pending = false
+    const refresh = async () => {
+      if (!active || pending) return
+      pending = true
+      await load()
+      pending = false
     }
-    const refreshEvents = async () => {
-      if (!active || eventPending) return
-      eventPending = true
-      await loadEvents()
-      eventPending = false
-    }
-    void refreshSignals()
-    void refreshEvents()
-    const signalTimer = window.setInterval(refreshSignals, 1000)
-    const eventTimer = window.setInterval(refreshEvents, 2000)
+    void refresh()
+    const timer = window.setInterval(refresh, 1000)
     return () => {
       active = false
-      window.clearInterval(signalTimer)
-      window.clearInterval(eventTimer)
+      window.clearInterval(timer)
     }
-  }, [loadEvents, loadSignals])
+  }, [load])
 
-  const selectedEvent = useMemo(() => events.find(
-    (event) => event.event_id === selectedEventId), [events, selectedEventId])
+  function handleCategoryTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' &&
+        event.key !== 'Home' && event.key !== 'End') return
+    event.preventDefault()
+    const current = CATEGORIES.indexOf(category)
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? CATEGORIES.length - 1
+        : (current + (event.key === 'ArrowRight' ? 1 : -1) + CATEGORIES.length) %
+          CATEGORIES.length
+    setCategory(CATEGORIES[next])
+    document.getElementById(`power-quality-reading-tab-${CATEGORIES[next]}`)?.focus()
+  }
+
+  const latest = events?.has_latest ? events.latest : undefined
+  const edge = events?.has_event ? events.event : undefined
 
   return <section className="power-quality-view" aria-labelledby="power-quality-title">
     <div className="reading-section-heading compact">
-      <div><p className="eyebrow">Power quality</p><h2 id="power-quality-title">Events and signalling</h2>
-        <p>Independent flicker, carrier detection, and durable event evidence.</p></div>
+      <div><p className="eyebrow">Power quality</p><h2 id="power-quality-title">Live product status</h2>
+        <p>Inspect flicker, mains signalling, and the half-cycle PQ Event detector independently.</p></div>
     </div>
-    {signalError && <div className="error-banner"><strong>Live products unavailable</strong>
-      <span>{signalError}</span></div>}
-    <div className="power-quality-live-grid">
-      <section className="power-quality-live-panel" aria-labelledby="flicker-title">
-        <header><div><p className="eyebrow">IEC flicker</p><h3 id="flicker-title">Flicker severity</h3></div>
-          <span className={`status-pill ${flicker?.running ? 'ok' : 'bad'}`}><i />
-            {flicker?.running ? 'Running' : 'Stopped'}</span></header>
-        <div className="power-quality-phase-grid">
-          {PHASES.map((phase) => {
-            const live = recordPhase(flicker?.live, phase)
-            const pst = recordPhase(flicker?.pst, phase)
-            const plt = recordPhase(flicker?.plt, phase)
-            return <article key={phase} className={live?.valid ? 'valid' : 'invalid'}>
-              <strong>Phase {phase}</strong>
-              <dl>
-                <div><dt>Pinst</dt><dd>{live?.valid ? formatNumber(live.pinst, 4) : '—'}</dd></div>
-                <div><dt>Pst</dt><dd>{pst?.valid ? formatNumber(pst.pst, 4) : '—'}</dd></div>
-                <div><dt>Plt</dt><dd>{plt?.valid ? formatNumber(plt.plt, 4) : '—'}</dd></div>
-              </dl>
-            </article>
-          })}
-        </div>
-        <footer>{flicker
-          ? `${flicker.records.toLocaleString()} records · ${flicker.sequence_gaps.toLocaleString()} gaps`
-          : 'Waiting for the flicker engine'}</footer>
-      </section>
+    <nav className="power-quality-reading-tabs" role="tablist"
+      aria-orientation="horizontal" aria-label="Power-quality reading sections">
+      <button id="power-quality-reading-tab-flicker" role="tab" type="button"
+        className={category === 'flicker' ? 'active' : ''}
+        aria-selected={category === 'flicker'}
+        aria-controls="power-quality-reading-panel-flicker"
+        tabIndex={category === 'flicker' ? 0 : -1}
+        onKeyDown={handleCategoryTabKeyDown} onClick={() => setCategory('flicker')}>
+        <span>Flicker</span><small>Pinst, Pst, and Plt</small>
+      </button>
+      <button id="power-quality-reading-tab-mains" role="tab" type="button"
+        className={category === 'mains' ? 'active' : ''}
+        aria-selected={category === 'mains'}
+        aria-controls="power-quality-reading-panel-mains"
+        tabIndex={category === 'mains' ? 0 : -1}
+        onKeyDown={handleCategoryTabKeyDown} onClick={() => setCategory('mains')}>
+        <span>Mains signal</span><small>Carrier observation</small>
+      </button>
+      <button id="power-quality-reading-tab-events" role="tab" type="button"
+        className={category === 'events' ? 'active' : ''}
+        aria-selected={category === 'events'}
+        aria-controls="power-quality-reading-panel-events"
+        tabIndex={category === 'events' ? 0 : -1}
+        onKeyDown={handleCategoryTabKeyDown} onClick={() => setCategory('events')}>
+        <span>PQ Event</span><small>Urms(1/2) detector</small>
+      </button>
+    </nav>
 
-      <section className="power-quality-live-panel" aria-labelledby="mains-title">
-        <header><div><p className="eyebrow">Mains signalling</p><h3 id="mains-title">Carrier observation</h3></div>
-          <span className={`status-pill ${mains?.running ? 'ok' : 'bad'}`}><i />
-            {mains?.running ? 'Running' : 'Stopped'}</span></header>
-        <div className="power-quality-carrier-summary">
-          <div><span>Configured</span><strong>{formatNumber(mains?.configured_hz)} Hz</strong></div>
-          <div><span>Measured</span><strong>{mains?.available
-            ? `${formatNumber(mains.measured_hz)} Hz` : '—'}</strong></div>
-          <div><span>Bandwidth</span><strong>{formatNumber(mains?.bandwidth_hz)} Hz</strong></div>
-          <div><span>Threshold</span><strong>{formatNumber(mains?.threshold_percent)} %</strong></div>
-        </div>
-        <div className="power-quality-phase-grid mains">
-          {PHASES.map((phase) => {
-            const reading = mains?.phases.find((candidate) => candidate.phase === phase)
-            return <article key={phase} className={reading?.valid ? 'valid' : 'invalid'}>
-              <strong>Phase {phase}</strong>
-              <span className={`carrier-detected ${reading?.detected ? 'active' : ''}`}>
-                {reading?.detected ? 'Detected' : 'Clear'}</span>
-              <dl>
-                <div><dt>Carrier</dt><dd>{reading?.valid
-                  ? `${formatNumber(reading.magnitude_volts, 6)} V` : '—'}</dd></div>
-                <div><dt>Background</dt><dd>{reading?.valid
-                  ? `${formatNumber(reading.background_volts, 6)} V` : '—'}</dd></div>
-              </dl>
-            </article>
-          })}
-        </div>
-        <footer>{mains
-          ? `${mains.records.toLocaleString()} records · ${mains.sequence_gaps.toLocaleString()} gaps`
-          : 'Waiting for the mains-signalling engine'}</footer>
-      </section>
-    </div>
+    {error && <div className="error-banner"><strong>Live product unavailable</strong>
+      <span>{error}</span></div>}
 
-    {eventError && <div className="error-banner"><strong>Event evidence unavailable</strong>
-      <span>{eventError}</span></div>}
-    <section className="power-quality-events" aria-labelledby="event-catalogue-title">
-      <header><div><p className="eyebrow">Historian</p><h3 id="event-catalogue-title">Event catalogue</h3></div>
-        <span>{events.length} most recent events</span></header>
-      <div className="power-quality-event-workspace">
-        <EventTimeline events={events} selectedEventId={selectedEventId}
-          onSelect={setSelectedEventId} />
-        <EventDetail event={selectedEvent} waveforms={waveforms} />
+    {category === 'flicker' && <section id="power-quality-reading-panel-flicker"
+      role="tabpanel" aria-labelledby="power-quality-reading-tab-flicker"
+      className="power-quality-live-panel">
+      <header><div><p className="eyebrow">IEC flicker</p><h3 id="flicker-title">Flicker severity</h3></div>
+        <span className={`status-pill ${flicker?.running ? 'ok' : 'bad'}`}><i />
+          {flicker?.running ? 'Running' : 'Stopped'}</span></header>
+      <div className="power-quality-phase-grid">
+        {PHASES.map((phase) => {
+          const live = recordPhase(flicker?.live, phase)
+          const pst = recordPhase(flicker?.pst, phase)
+          const plt = recordPhase(flicker?.plt, phase)
+          return <article key={phase} className={live?.valid ? 'valid' : 'invalid'}>
+            <strong>Phase {phase}</strong>
+            <dl>
+              <div><dt>Pinst</dt><dd>{live?.valid ? formatNumber(live.pinst, 4) : '—'}</dd></div>
+              <div><dt>Pst</dt><dd>{pst?.valid ? formatNumber(pst.pst, 4) : '—'}</dd></div>
+              <div><dt>Plt</dt><dd>{plt?.valid ? formatNumber(plt.plt, 4) : '—'}</dd></div>
+            </dl>
+          </article>
+        })}
       </div>
-    </section>
+      <footer>{flicker
+        ? `${flicker.records.toLocaleString()} records · ${flicker.sequence_gaps.toLocaleString()} gaps`
+        : 'Waiting for the flicker engine'}</footer>
+    </section>}
+
+    {category === 'mains' && <section id="power-quality-reading-panel-mains"
+      role="tabpanel" aria-labelledby="power-quality-reading-tab-mains"
+      className="power-quality-live-panel">
+      <header><div><p className="eyebrow">Mains signalling</p><h3 id="mains-title">Carrier observation</h3></div>
+        <span className={`status-pill ${mains?.running ? 'ok' : 'bad'}`}><i />
+          {mains?.running ? 'Running' : 'Stopped'}</span></header>
+      <div className="power-quality-carrier-summary">
+        <div><span>Configured</span><strong>{formatNumber(mains?.configured_hz)} Hz</strong></div>
+        <div><span>Measured</span><strong>{mains?.available
+          ? `${formatNumber(mains.measured_hz)} Hz` : '—'}</strong></div>
+        <div><span>Bandwidth</span><strong>{formatNumber(mains?.bandwidth_hz)} Hz</strong></div>
+        <div><span>Threshold</span><strong>{formatNumber(mains?.threshold_percent)} %</strong></div>
+      </div>
+      <div className="power-quality-phase-grid mains">
+        {PHASES.map((phase) => {
+          const reading = mains?.phases.find((candidate) => candidate.phase === phase)
+          return <article key={phase} className={reading?.valid ? 'valid' : 'invalid'}>
+            <strong>Phase {phase}</strong>
+            <span className={`carrier-detected ${reading?.detected ? 'active' : ''}`}>
+              {reading?.detected ? 'Detected' : 'Clear'}</span>
+            <dl>
+              <div><dt>Carrier</dt><dd>{reading?.valid
+                ? `${formatNumber(reading.magnitude_volts, 6)} V` : '—'}</dd></div>
+              <div><dt>Background</dt><dd>{reading?.valid
+                ? `${formatNumber(reading.background_volts, 6)} V` : '—'}</dd></div>
+            </dl>
+          </article>
+        })}
+      </div>
+      <footer>{mains
+        ? `${mains.records.toLocaleString()} records · ${mains.sequence_gaps.toLocaleString()} gaps`
+        : 'Waiting for the mains-signalling engine'}</footer>
+    </section>}
+
+    {category === 'events' && <section id="power-quality-reading-panel-events"
+      role="tabpanel" aria-labelledby="power-quality-reading-tab-events"
+      className="power-quality-live-panel">
+      <header><div><p className="eyebrow">IEC voltage events</p><h3 id="pq-events-title">PQ Event detector</h3></div>
+        <span className={`status-pill ${events?.running ? 'ok' : 'bad'}`}><i />
+          {events?.running ? 'Running' : 'Stopped'}</span></header>
+      <div className="power-quality-engine-summary">
+        <div><span>Records</span><strong>{events?.records.toLocaleString() ?? '—'}</strong></div>
+        <div><span>Edges</span><strong>{events?.events.toLocaleString() ?? '—'}</strong></div>
+        <div><span>Detector</span><strong>{latest?.armed ? 'Armed' : 'Disarmed'}</strong></div>
+        <div><span>Reference</span><strong>{latest
+          ? `${formatNumber(latest.reference_volts, 3)} V` : '—'}</strong></div>
+      </div>
+      {latest ? <div className="power-quality-phase-grid event-engine">
+        {latest.phases.map((phase) => <article key={phase.phase}
+          className={phase.quality === 1 ? 'valid' : 'invalid'}>
+          <strong>Phase {phase.phase}</strong>
+          <dl>
+            <div><dt>Urms(1/2)</dt><dd>{formatNumber(phase.urms_half, 3)} V</dd></div>
+            <div><dt>Minimum</dt><dd>{formatNumber(phase.urms_half_minimum, 3)} V</dd></div>
+            <div><dt>Maximum</dt><dd>{formatNumber(phase.urms_half_maximum, 3)} V</dd></div>
+            <div><dt>Irms(1/2)</dt><dd>{formatNumber(phase.irms_half, 4)} A</dd></div>
+          </dl>
+        </article>)}
+      </div> : <div className="power-quality-empty">
+        <strong>Waiting for the half-cycle detector</strong>
+        <span>The event engine may still be priming its first Urms(1/2) window.</span>
+      </div>}
+      <div className="power-quality-last-edge">
+        <div><span>Last detector edge</span><strong>{eventLabel(edge)}</strong></div>
+        {edge && <dl>
+          <div><dt>Phases</dt><dd>{edge.affected_phases.join(', ') || 'None'}</dd></div>
+          <div><dt>Duration</dt><dd>{formatNumber(edge.duration_ms, 3)} ms</dd></div>
+          <div><dt>Samples</dt><dd>{edge.duration_samples.toLocaleString()}</dd></div>
+        </dl>}
+        <p>Durable lifecycle records and linked waveform evidence are under History → PQ Event catalogue.</p>
+      </div>
+    </section>}
   </section>
 }

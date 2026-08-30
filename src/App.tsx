@@ -1617,7 +1617,7 @@ export function PowerQualityPanel({ onUnauthorized, simulator }: {
     <ol className="simulator-event-test-guide">
       <li><strong>Use PL simulator</strong><span>Select it above and keep the base voltage/current lanes at their nominal RMS values.</span></li>
       <li><strong>Choose a disturbance</strong><span>The preset uses the active PQ Event threshold with a safe detection margin.</span></li>
-      <li><strong>Create and verify</strong><span>Watch the live Urms edge, then confirm the durable result here or under Reading → Power Quality.</span></li>
+      <li><strong>Create and verify</strong><span>Watch the live Urms edge, then confirm the durable result here or under History → PQ Event catalogue.</span></li>
     </ol>
     {error && <div className="error-banner"><strong>PQ Event test unavailable</strong>
       <span>{error}</span></div>}
@@ -1995,6 +1995,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
 }) {
   const [activeView, setActiveView] =
     useState<'dashboard' | 'reading' | 'history' | 'waveforms' | 'configuration' | 'about' | 'developer'>('dashboard')
+  const [initialWaveformFilename, setInitialWaveformFilename] = useState<string>()
   const [health, setHealth] = useState<SystemHealth>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
@@ -2581,10 +2582,16 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             measurementTopology={measurementTopology ?? 'wye'}
             canReset={session.role === 'admin'} />
       : activeView === 'history'
-        ? <HistoryPage onUnauthorized={onUnauthorized} />
+        ? <HistoryPage onUnauthorized={onUnauthorized}
+            onViewWaveform={(filename) => {
+              setInitialWaveformFilename(filename)
+              setActiveView('waveforms')
+            }} />
       : activeView === 'waveforms'
         ? <WaveformExplorer onUnauthorized={onUnauthorized}
-            canDelete={session.role === 'admin'} />
+            canDelete={session.role === 'admin'}
+            initialFilename={initialWaveformFilename}
+            onInitialFilenameConsumed={() => setInitialWaveformFilename(undefined)} />
       : activeView === 'configuration'
         ? <ConfigurationPage configuration={frequencyConfiguration}
             configurationStatus={configurationStatus}

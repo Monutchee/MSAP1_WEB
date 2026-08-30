@@ -15,6 +15,7 @@ type WaveformIdentity = Pick<ProductSettings['waveform'],
   | 'calibration_id' | 'calibration_status'>
 
 interface PowerQualityDraft {
+  sampleRateHz: number
   events: PowerQualityEventSettings
   flicker: FlickerSettings
   mains: MainsSignallingSettings
@@ -60,6 +61,7 @@ function identity(settings: ProductSettings): WaveformIdentity {
 
 function draft(settings: ProductSettings): PowerQualityDraft {
   return {
+    sampleRateHz: settings.metering.sample_rate_hz,
     events: structuredClone(settings.metering.events),
     flicker: structuredClone(settings.metering.flicker),
     mains: structuredClone(settings.metering.mains_signalling),
@@ -85,11 +87,12 @@ function PhaseMask({ value, onChange, label }: {
   </fieldset>
 }
 
-function EventProfile({ profileKey, label, classification, profile, onChange }: {
+function EventProfile({ profileKey, label, classification, profile, sampleRateHz, onChange }: {
   profileKey: EventProfileKey
   label: string
   classification: string
   profile: EventProfileSettings
+  sampleRateHz: number
   onChange: (profile: EventProfileSettings) => void
 }) {
   const unavailable = profileKey === 'transient_voltage'
@@ -136,7 +139,10 @@ function EventProfile({ profileKey, label, classification, profile, onChange }: 
           ...profile.waveform,
           decimation: Number(event.target.value) as EventProfileSettings['waveform']['decimation'],
         } })}>{[1, 2, 4, 8, 16, 32].map((value) =>
-          <option key={value} value={value}>÷ {value}</option>)}</select></label>
+          <option key={value} value={value}>÷ {value} — {
+            Math.round(sampleRateHz / value).toLocaleString('en-US')} samples/s</option>)}</select>
+        <small>÷8 is the factory evidence default: 16,000 samples/s at the 128 kSPS ADC profile.</small>
+      </label>
     </fieldset>
   </article>
 }
@@ -317,7 +323,7 @@ export function PowerQualityConfiguration({ onUnauthorized }: {
           <div className="power-quality-profile-list">
             {EVENT_PROFILES.map(({ key, label, classification }) => <EventProfile key={key}
               profileKey={key} label={label} classification={classification}
-              profile={settings.events[key]}
+              profile={settings.events[key]} sampleRateHz={settings.sampleRateHz}
               onChange={(profile) => updateProfile(key, profile)} />)}
           </div>
         </fieldset>
