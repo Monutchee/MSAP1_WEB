@@ -23,7 +23,7 @@ import { ReadingPage } from './reading/ReadingPage'
 import { ModbusConfiguration } from './configuration/ModbusConfiguration'
 import { MqttConfiguration } from './configuration/MqttConfiguration'
 import { PowerQualityConfiguration } from './configuration/PowerQualityConfiguration'
-import { DataLoggingStatusPage } from './configuration/DataLoggingStatusPage'
+import { DataLoggingPage } from './configuration/dataLogging/DataLoggingPage'
 import { ManagementPage } from './management/ManagementPage'
 
 const HISTORY = 80
@@ -1988,7 +1988,7 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
       : activeTab === 'waveform'
         ? <WaveformConfiguration />
       : activeTab === 'data-logging'
-        ? <DataLoggingStatusPage onUnauthorized={onUnauthorized} />
+        ? <DataLoggingPage onUnauthorized={onUnauthorized} />
         : activeTab === 'modbus'
           ? <ModbusConfiguration onUnauthorized={onUnauthorized} />
           : <MqttConfiguration onUnauthorized={onUnauthorized} />}

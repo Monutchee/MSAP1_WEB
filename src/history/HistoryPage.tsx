@@ -4,8 +4,10 @@ import {
 } from 'react'
 import uPlot, { AlignedData, Options, Series } from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { api, ApiError, HistoryCapabilities, HistoryPoint } from '../api'
+import { api, ApiError, HistoryCapabilities, HistoryPoint, MeterAttributeCatalog } from '../api'
+import { AttributePicker } from '../components/AttributePicker'
 import { PowerQualityEventCatalogue } from './PowerQualityEventCatalogue'
+import { GeneratedFiles } from './GeneratedFiles'
 import './history.css'
 
 function scaleValue(value: string, unit: string) {
@@ -295,6 +297,7 @@ function HistoryPlot({ points, capabilities, attributes }: {
 
 function MeasurementHistory({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [capabilities, setCapabilities] = useState<HistoryCapabilities>()
+  const [catalog, setCatalog] = useState<MeterAttributeCatalog>()
   const [period, setPeriod] = useState('basic')
   const [attributes, setAttributes] = useState<string[]>(['voltage.ln.a.rms'])
   // The picker is a user-facing local-time control. Its values are converted
@@ -305,11 +308,16 @@ function MeasurementHistory({ onUnauthorized }: { onUnauthorized: () => void }) 
     localDateTimeValue(new Date(Date.now() + 60 * 60 * 1000)))
   const [points, setPoints] = useState<HistoryPoint[]>([])
   const [truncated, setTruncated] = useState(false)
+  const [nextCursor, setNextCursor] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    api.historyCapabilities().then(setCapabilities).catch((reason) => {
+    Promise.all([api.historyCapabilities(), api.meterAttributes('historian')])
+      .then(([nextCapabilities, nextCatalog]) => {
+        setCapabilities(nextCapabilities)
+        setCatalog(nextCatalog)
+      }).catch((reason) => {
       if (reason instanceof ApiError && reason.status === 401) onUnauthorized()
       else setError(reason instanceof Error ? reason.message : 'Unable to read historian capabilities')
     })
@@ -319,53 +327,16 @@ function MeasurementHistory({ onUnauthorized }: { onUnauthorized: () => void }) 
     if (!capabilities || attributes.length === 0) return
     setBusy(true); setError('')
     try {
-      const requestedStart = new Date(start).getTime() * 1_000_000
-      // Repeat the last timestamp on continuation.  The merge below removes
-      // duplicates and prevents losing attributes if a bounded page ended in
-      // the middle of one measurement block.
-      const pageStart = append && points.length > 0
-        ? Math.max(...points.map((point) => point.measured_at_nanoseconds))
-        : requestedStart
       const result = await api.historyQuery({
         period, attributes,
-        start_nanoseconds: pageStart,
+        start_nanoseconds: new Date(start).getTime() * 1_000_000,
         end_nanoseconds: new Date(end).getTime() * 1_000_000,
         limit: Math.min(10000, capabilities.maximum_points),
+        after: append ? nextCursor : undefined,
       })
-      if (append) {
-        setPoints((current) => {
-          if (current.length === 0) return result.points
-          /*
-           * A continuation restarts at the newest timestamp already held, so
-           * that single timestamp is the only one that can appear in both
-           * pages. Deduplicating just that boundary replaces the previous
-           * approach of rebuilding a keyed Map over every accumulated point
-           * and re-sorting the whole set on each page: that cost grew with the
-           * total, so the work to load N pages grew quadratically and the tab
-           * stalled long before a large range finished.
-           *
-           * The backend orders by measured_at_ns, and the continuation starts
-           * at the boundary, so appending keeps the series ordered.
-           */
-          const boundary =
-            current[current.length - 1].measured_at_nanoseconds
-          const held = new Set<string>()
-          for (let index = current.length - 1; index >= 0; index -= 1) {
-            const point = current[index]
-            if (point.measured_at_nanoseconds !== boundary) break
-            held.add(`${point.source_sequence}:${point.attribute}`)
-          }
-          /* Keeps the attributes of a block the previous page cut in half,
-           * which is why the overlap exists in the first place. */
-          const fresh = result.points.filter((point) =>
-            point.measured_at_nanoseconds !== boundary ||
-            !held.has(`${point.source_sequence}:${point.attribute}`))
-          return fresh.length === 0 ? current : current.concat(fresh)
-        })
-      } else {
-        setPoints(result.points)
-      }
+	  setPoints((current) => append ? current.concat(result.points) : result.points)
       setTruncated(result.truncated)
+      setNextCursor(result.next_cursor)
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 401) onUnauthorized()
       else setError(reason instanceof Error ? reason.message : 'History query failed')
@@ -377,23 +348,31 @@ function MeasurementHistory({ onUnauthorized }: { onUnauthorized: () => void }) 
     void fetchPage(false)
   }
 
-  function toggle(attribute: string) {
-    setAttributes((current) => current.includes(attribute)
-      ? current.filter((item) => item !== attribute)
-      : [...current, attribute])
+  function changePeriod(next: string) {
+    if (!catalog) return
+    const available = new Set(catalog.periods.find((entry) => entry.id === next)?.attributes ?? [])
+    const invalid = attributes.filter((attribute) => !available.has(attribute))
+    if (invalid.length > 0 && !window.confirm(
+      `${invalid.length} selected attribute${invalid.length === 1 ? '' : 's'} ` +
+      `cannot be queried for this period. Remove ${invalid.length === 1 ? 'it' : 'them'} and continue?`)) return
+    setPeriod(next)
+    if (invalid.length > 0)
+      setAttributes((current) => current.filter((attribute) => available.has(attribute)))
+    setPoints([])
+    setTruncated(false)
+    setNextCursor(undefined)
   }
 
   return <>
     {error && <div className="error-banner"><strong>History unavailable</strong><span>{error}</span></div>}
-    {capabilities && <form className="history-query" onSubmit={query}>
-      <label>Measurement period<select value={period} onChange={(event) => setPeriod(event.target.value)}>
-        {capabilities.periods.map((value) => <option value={value} key={value}>{value.replaceAll('_', ' ')}</option>)}
+    {capabilities && catalog && <form className="history-query" onSubmit={query}>
+      <label>Measurement period<select value={period} onChange={(event) => changePeriod(event.target.value)}>
+        {catalog.periods.map((value) => <option value={value.id} key={value.id}>{value.label}</option>)}
       </select></label>
       <label>Start<input type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></label>
       <label>End<input type="datetime-local" value={end} onChange={(event) => setEnd(event.target.value)} /></label>
-      <fieldset><legend>Attributes</legend>{capabilities.attributes.map((attribute) =>
-        <label key={attribute.id}><input type="checkbox" checked={attributes.includes(attribute.id)}
-          onChange={() => toggle(attribute.id)} />{attribute.id} ({displayUnit(attribute.unit)})</label>)}</fieldset>
+	  <AttributePicker catalog={catalog} period={period} selected={attributes}
+	    onChange={setAttributes} />
       <button type="submit" disabled={busy || attributes.length === 0}>{busy ? 'Loading…' : 'Query history'}</button>
     </form>}
     {truncated && <div className="history-pagination">
@@ -408,7 +387,7 @@ function MeasurementHistory({ onUnauthorized }: { onUnauthorized: () => void }) 
   </>
 }
 
-const HISTORY_SECTIONS = ['measurements', 'events'] as const
+const HISTORY_SECTIONS = ['measurements', 'generated', 'events'] as const
 type HistorySection = typeof HISTORY_SECTIONS[number]
 
 export function HistoryPage({ onUnauthorized, canDelete }: {
@@ -432,7 +411,7 @@ export function HistoryPage({ onUnauthorized, canDelete }: {
 
   return <section className="history-page">
     <div className="developer-heading"><div><p className="eyebrow">Historian</p>
-      <h1>History</h1><p>Query retained meter products or inspect durable power-quality events.</p></div></div>
+      <h1>History</h1><p>Query meter history, inspect generated files, or review durable power-quality events.</p></div></div>
     <nav className="history-section-tabs" role="tablist" aria-orientation="horizontal"
       aria-label="History sections">
       <button id="history-tab-measurements" role="tab" type="button"
@@ -441,6 +420,13 @@ export function HistoryPage({ onUnauthorized, canDelete }: {
         tabIndex={section === 'measurements' ? 0 : -1}
         onKeyDown={handleTabKeyDown} onClick={() => setSection('measurements')}>
         <span>Meter data</span><small>Measurement-period records</small>
+      </button>
+      <button id="history-tab-generated" role="tab" type="button"
+        className={section === 'generated' ? 'active' : ''}
+        aria-selected={section === 'generated'} aria-controls="history-panel-generated"
+        tabIndex={section === 'generated' ? 0 : -1}
+        onKeyDown={handleTabKeyDown} onClick={() => setSection('generated')}>
+        <span>Generated Files</span><small>Queued, delivered, and Local-only files</small>
       </button>
       <button id="history-tab-events" role="tab" type="button"
         className={section === 'events' ? 'active' : ''}
@@ -458,6 +444,10 @@ export function HistoryPage({ onUnauthorized, canDelete }: {
       aria-labelledby="history-tab-events">
       <PowerQualityEventCatalogue onUnauthorized={onUnauthorized}
         canDelete={canDelete} />
+    </div>}
+    {section === 'generated' && <div id="history-panel-generated" role="tabpanel"
+      aria-labelledby="history-tab-generated">
+      <GeneratedFiles onUnauthorized={onUnauthorized} canDelete={canDelete} />
     </div>}
   </section>
 }

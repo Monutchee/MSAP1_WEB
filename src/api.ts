@@ -673,6 +673,206 @@ export interface MqttStatus {
   publications: Record<string, MqttPublicationStatus>
 }
 
+export type MeterAttributeUsage = 'snapshot' | 'historian'
+export type MeterAttributeCalculation =
+  | 'minimum' | 'maximum' | 'average' | 'last'
+  | 'circular_average' | 'first' | 'delta'
+
+export interface MeterAttributeDescriptor {
+  id: string
+  label: string
+  group: string
+  unit: string
+  value_kind: 'linear' | 'circular_angle' | 'cumulative_counter' | 'peak' | 'categorical'
+  search_aliases: string[]
+  calculations: MeterAttributeCalculation[]
+  periods: string[]
+}
+
+export interface MeterAttributePeriod {
+  id: string
+  label: string
+  attributes: string[]
+}
+
+export interface MeterAttributeCatalog {
+  usage: MeterAttributeUsage
+  periods: MeterAttributePeriod[]
+  attributes: MeterAttributeDescriptor[]
+}
+
+export type DataChannelProtocol = 'http' | 'https' | 'ftp' | 'sftp'
+export type DataChannelAuthentication =
+  | 'none' | 'basic' | 'bearer' | 'mtls' | 'password' | 'private_key'
+
+export interface DataChannelSettings {
+  id: string
+  name: string
+  enabled: boolean
+  protocol: DataChannelProtocol
+  host: string
+  port: number
+  http_path: string
+  remote_directory: string
+  authentication: DataChannelAuthentication
+  username: string
+  connect_timeout_seconds: number
+  transfer_timeout_seconds: number
+  use_system_ca: boolean
+  use_uploaded_ca: boolean
+  use_client_certificate: boolean
+  insecure_transport_acknowledged: boolean
+}
+
+export interface DataLoggingSelectionSettings {
+  attribute: string
+  calculation: MeterAttributeCalculation
+}
+
+export interface DataLoggingJobSettings {
+  id: string
+  name: string
+  enabled: boolean
+  revision: number
+  source_period: string
+  generation_interval_seconds: number
+  row_interval_seconds: number
+  selections: DataLoggingSelectionSettings[]
+  format: 'json' | 'csv'
+  destination: 'remote' | 'local_only'
+  channel_ids: string[]
+}
+
+export interface DataLoggingStorageSettings {
+  maximum_bytes: number
+  minimum_free_bytes: number
+  completed_metadata_retention_days: number
+}
+
+export interface DataLoggingSettings {
+  channels: DataChannelSettings[]
+  jobs: DataLoggingJobSettings[]
+  storage: DataLoggingStorageSettings
+}
+
+export interface DataChannelMaterialStatus {
+  channel_id: string
+  password_configured: boolean
+  bearer_token_configured: boolean
+  private_key_passphrase_configured: boolean
+  ca_configured: boolean
+  client_certificate_configured: boolean
+  client_key_configured: boolean
+  sftp_private_key_configured: boolean
+  known_hosts_configured: boolean
+}
+
+export interface DataLoggingConfigurationDocument {
+  settings: DataLoggingSettings
+  materials: DataChannelMaterialStatus[]
+  demand_window_seconds: number
+}
+
+export interface DataLoggingJobStatus {
+  id: string
+  revision: number
+  enabled: boolean
+  next_start_nanoseconds?: number
+  next_end_nanoseconds?: number
+  last_start_nanoseconds?: number
+  last_end_nanoseconds?: number
+  last_generated_at_nanoseconds: number
+  last_error: string
+}
+
+export interface DataChannelStatus {
+  id: string
+  name: string
+  protocol: DataChannelProtocol
+  enabled: boolean
+  ready: boolean
+  readiness_error: string
+  last_test_state: string
+  last_test_message: string
+  last_test_at_nanoseconds: number
+}
+
+export interface DataLoggingStatus {
+  health: string
+  message: string
+  artifact_count: number
+  outbox_count: number
+  outbox_bytes: number
+  archive_count: number
+  archive_bytes: number
+  completed_metadata_count: number
+  missing_payload_count: number
+  pending_delivery_count: number
+  blocked_delivery_count: number
+  oldest_pending_created_at_nanoseconds?: number
+  maximum_bytes: number
+  available_bytes: number
+  minimum_free_bytes: number
+  generation_allowed: boolean
+  storage_blocking_reason: string
+  jobs: DataLoggingJobStatus[]
+  channels: DataChannelStatus[]
+}
+
+export interface GeneratedArtifactSummary {
+  id: string
+  job_id: string
+  job_revision: number
+  filename: string
+  mime_type: string
+  sha256: string
+  size_bytes: number
+  source_start_nanoseconds: number
+  source_end_nanoseconds: number
+  generated_at_nanoseconds: number
+  created_at_nanoseconds: number
+  state: string
+  local_only: boolean
+  payload_present: boolean
+  delivery_count: number
+  succeeded_count: number
+  blocked_count: number
+  recovery_error: string
+}
+
+export interface GeneratedArtifactList {
+  artifacts: GeneratedArtifactSummary[]
+  offset: number
+  returned: number
+}
+
+export interface GeneratedDeliveryDetail {
+  channel_id: string
+  state: string
+  attempt_count: number
+  next_attempt_nanoseconds: number
+  last_attempt_nanoseconds: number
+  remote_result: string
+  last_error: string
+}
+
+export interface GeneratedArtifactDetail {
+  artifact: GeneratedArtifactSummary
+  deliveries: GeneratedDeliveryDetail[]
+}
+
+export interface GeneratedFileDeletionResult {
+  deleted: number
+  discarded_deliveries: number
+}
+
+export interface DataChannelTestResult {
+  channel_id: string
+  state: string
+  message: string
+  tested_at_nanoseconds: number
+}
+
 /** Presentation topology for the three voltage measurement inputs. */
 export type MeasurementTopology = 'wye' | 'delta'
 export type DemandMethod = 'fixed_block' | 'sliding'
@@ -787,6 +987,7 @@ export interface ProductSettings {
   database: DatabaseSettings
   modbus: ModbusSettings
   mqtt: MqttSettings
+  data_logging: DataLoggingSettings
 }
 
 export type StorageBackend = 'memory' | 'persistent'
@@ -876,6 +1077,7 @@ export interface HistoryQuery {
   start_nanoseconds: number
   end_nanoseconds: number
   limit: number
+  after?: string
 }
 
 export interface HistoryPoint {
@@ -893,6 +1095,7 @@ export interface HistoryResponse {
   period: string
   points: HistoryPoint[]
   truncated: boolean
+  next_cursor?: string
 }
 
 /** Decimal strings are deliberate: these values may exceed JavaScript's safe
@@ -1252,7 +1455,7 @@ async function requestBinary(path: string): Promise<ArrayBuffer> {
   return response.arrayBuffer()
 }
 
-async function uploadFile(path: string, file: File): Promise<MqttCredentialStatus> {
+async function uploadFile<T = MqttCredentialStatus>(path: string, file: File): Promise<T> {
   const response = await fetch(path, {
     method: 'PUT',
     credentials: 'same-origin',
@@ -1265,7 +1468,7 @@ async function uploadFile(path: string, file: File): Promise<MqttCredentialStatu
   const payload = await response.json().catch(() => ({}))
   if (!response.ok)
     throw new ApiError(response.status, payload.error ?? `Upload failed (${response.status})`)
-  return payload as MqttCredentialStatus
+  return payload as T
 }
 
 export function waveformViewPath(filename: string) {
@@ -1296,6 +1499,8 @@ export const api = {
   health: () => request<SystemHealth>('/api/v1/health'),
   about: () => request<SystemAbout>('/api/v1/about'),
   meterReadings: () => request<MeterReadings>('/api/v1/meter/readings'),
+  meterAttributes: (usage: MeterAttributeUsage) =>
+    request<MeterAttributeCatalog>(`/api/v1/meter/attributes?usage=${usage}`),
   meterAggregate: () => request<MeterAggregate>('/api/v1/meter/aggregate'),
   meterTenMinute: () => request<MeterTenMinute>('/api/v1/meter/minutes-10'),
   meterTwoHour: () => request<MeterTwoHour>('/api/v1/meter/hours-2'),
@@ -1432,6 +1637,66 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(query),
     }),
+  dataLoggingConfiguration: () =>
+    request<DataLoggingConfigurationDocument>('/api/v1/data-logging/configuration'),
+  updateDataLoggingConfiguration: (settings: DataLoggingSettings) =>
+    request<DataLoggingConfigurationDocument>('/api/v1/data-logging/configuration', {
+      method: 'PUT', body: JSON.stringify(settings),
+    }),
+  dataLoggingStatus: () =>
+    request<DataLoggingStatus>('/api/v1/data-logging/status'),
+  dataLoggingArtifacts: (query: {
+    offset?: number; limit?: number; job_id?: string; state?: string
+    start_nanoseconds?: number; end_nanoseconds?: number
+  } = {}) => {
+    const parameters = new URLSearchParams()
+    for (const [key, value] of Object.entries(query))
+      if (value !== undefined && value !== '') parameters.set(key, String(value))
+    const suffix = parameters.size > 0 ? `?${parameters.toString()}` : ''
+    return request<GeneratedArtifactList>(`/api/v1/data-logging/artifacts${suffix}`)
+  },
+  dataLoggingArtifact: (id: string) =>
+    request<GeneratedArtifactDetail>(`/api/v1/data-logging/artifact?id=${encodeURIComponent(id)}`),
+  dataLoggingPreview: async (id: string, limit = 16384) => {
+    const response = await fetch(`/api/v1/data-logging/artifacts/preview?id=${encodeURIComponent(id)}&limit=${limit}`, {
+      credentials: 'same-origin',
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}))
+      throw new ApiError(response.status, payload.error ?? `Preview failed (${response.status})`)
+    }
+    return response.text()
+  },
+  retryDataLoggingArtifacts: (ids: string[]) =>
+    request<DataLoggingStatus>('/api/v1/data-logging/artifacts/retry', {
+      method: 'POST', body: JSON.stringify({ ids }),
+    }),
+  deleteDataLoggingArtifacts: (requestBody: {
+    ids?: string[]; all?: boolean; confirmed: true; discard_unsent: boolean
+  }) => request<GeneratedFileDeletionResult>('/api/v1/data-logging/artifacts', {
+    method: 'DELETE', body: JSON.stringify({ ids: [], all: false, ...requestBody }),
+  }),
+  testDataChannel: (channel_id: string) =>
+    request<DataChannelTestResult>('/api/v1/data-logging/channels/test', {
+      method: 'POST', body: JSON.stringify({ channel_id }),
+    }),
+  setDataChannelCredential: (channel_id: string, kind: string, value: string) =>
+    request<DataChannelMaterialStatus>('/api/v1/data-logging/channel-credential', {
+      method: 'PUT', body: JSON.stringify({ channel_id, kind, value }),
+    }),
+  deleteDataChannelCredential: (channel_id: string, kind: string) =>
+    request<DataChannelMaterialStatus>('/api/v1/data-logging/channel-credential', {
+      method: 'DELETE', body: JSON.stringify({ channel_id, kind }),
+    }),
+  uploadDataChannelAsset: (channel_id: string, kind: string, file: File) => {
+    const parameters = new URLSearchParams({ channel_id, kind })
+    return uploadFile<DataChannelMaterialStatus>(
+      `/api/v1/data-logging/channel-asset?${parameters.toString()}`, file)
+  },
+  deleteDataChannelAsset: (channel_id: string, kind: string) =>
+    request<DataChannelMaterialStatus>('/api/v1/data-logging/channel-asset', {
+      method: 'DELETE', body: JSON.stringify({ channel_id, kind }),
+    }),
   mqttCapabilities: () =>
     request<MqttPeriodCapability[]>('/api/v1/mqtt/capabilities'),
   mqttConfiguration: () =>
@@ -1474,3 +1739,7 @@ export const api = {
 export const mqttCaDownloadPath = '/api/v1/mqtt/tls/ca'
 export const mqttClientCertificateDownloadPath =
   '/api/v1/mqtt/tls/client-certificate'
+
+export function dataLoggingArtifactDownloadPath(id: string) {
+  return `/api/v1/data-logging/artifacts/download?id=${encodeURIComponent(id)}`
+}

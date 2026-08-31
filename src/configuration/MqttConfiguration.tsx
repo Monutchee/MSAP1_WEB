@@ -3,7 +3,9 @@ import {
   api, ApiError, mqttCaDownloadPath, mqttClientCertificateDownloadPath,
   MqttConfigurationDocument, MqttCredentialStatus, MqttPeriodCapability,
   MqttPublicationSettings, MqttSettings, MqttStatus, MqttTransport,
+  MeterAttributeCatalog,
 } from '../api'
+import { AttributePicker } from '../components/AttributePicker'
 import './mqtt.css'
 
 const DEFAULT_PORT: Record<MqttTransport, number> = {
@@ -54,6 +56,7 @@ function CredentialAsset({ label, configured, downloadable, downloadPath, onUplo
 export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [document, setDocument] = useState<MqttConfigurationDocument>()
   const [capabilities, setCapabilities] = useState<MqttPeriodCapability[]>([])
+  const [catalog, setCatalog] = useState<MeterAttributeCatalog>()
   const [runtime, setRuntime] = useState<MqttStatus>()
   const [configurationLoading, setConfigurationLoading] = useState(true)
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(true)
@@ -90,7 +93,11 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
   const loadCapabilities = useCallback(async () => {
     setCapabilitiesLoading(true)
     try {
-      setCapabilities(await api.mqttCapabilities())
+      const [nextCapabilities, nextCatalog] = await Promise.all([
+        api.mqttCapabilities(), api.meterAttributes('snapshot'),
+      ])
+      setCapabilities(nextCapabilities)
+      setCatalog(nextCatalog)
       setCapabilitiesError('')
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 401) onUnauthorized()
@@ -335,9 +342,16 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
                 <label>Topic<input value={publication.topic}
                   onChange={(event) => editPublication(index, { topic: event.target.value })} /></label>
                 <label>Measurement period<select value={publication.period}
-                  onChange={(event) => editPublication(index, {
-                    period: event.target.value, attributes: [],
-                  })}>{capabilities.map((period) => <option key={period.id} value={period.id}>{period.id}</option>)}</select></label>
+                  onChange={(event) => {
+                    const next = event.target.value
+                    const availableNext = new Set(catalog?.periods.find((entry) => entry.id === next)?.attributes ?? [])
+                    const invalid = publication.attributes.filter((attribute) => !availableNext.has(attribute))
+                    if (invalid.length > 0 && !window.confirm(
+                      `${invalid.length} selected attribute${invalid.length === 1 ? '' : 's'} ` +
+                      `cannot be published for this period. Remove ${invalid.length === 1 ? 'it' : 'them'} and continue?`)) return
+                    editPublication(index, { period: next,
+                      attributes: publication.attributes.filter((attribute) => availableNext.has(attribute)) })
+                  }}>{capabilities.map((period) => <option key={period.id} value={period.id}>{catalog?.periods.find((entry) => entry.id === period.id)?.label ?? period.id}</option>)}</select></label>
                 <label>Interval (ms)<input type="number" min="100" max="86400000"
                   value={publication.interval_ms}
                   onChange={(event) => editPublication(index, { interval_ms: Number(event.target.value) })} /></label>
@@ -348,16 +362,12 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
                 <label className="toggle"><input type="checkbox" checked={publication.retain}
                   onChange={(event) => editPublication(index, { retain: event.target.checked })} />Retain latest payload</label>
               </div>
-              <fieldset className="mqtt-attributes"><legend>Meter attributes</legend>
-                {available.length === 0 && <span>No attributes are currently available for this period.</span>}
-                {available.map((attribute) => <label key={attribute.id} className="toggle">
-                  <input type="checkbox" checked={publication.attributes.includes(attribute.id)}
-                    onChange={(event) => editPublication(index, {
-                      attributes: event.target.checked
-                        ? [...publication.attributes, attribute.id]
-                        : publication.attributes.filter((value) => value !== attribute.id),
-                    })} />{attribute.id} <small>({attribute.unit})</small></label>)}
-              </fieldset>
+              {catalog ? <AttributePicker catalog={catalog} period={publication.period}
+                selected={publication.attributes}
+                onChange={(attributes) => editPublication(index, { attributes })} />
+                : <fieldset className="mqtt-attributes"><legend>Meter attributes</legend>
+                  {available.length === 0 && <span>No attributes are currently available for this period.</span>}
+                </fieldset>}
               {runtime?.publications[publication.id] && <p className="mqtt-statistics">
                 Attempts {runtime.publications[publication.id].attempts ?? 0} · successful {runtime.publications[publication.id].successes ?? 0} · failures {runtime.publications[publication.id].failures ?? 0}
 				{runtime.publications[publication.id].last_successful_publish_unix_ms > 0 &&

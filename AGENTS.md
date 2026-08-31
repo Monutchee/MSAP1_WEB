@@ -51,6 +51,26 @@
 - Configuration -> Modbus edits `ProductSettings.modbus` through the same
   complete-document settings endpoint. Keep TCP/RTU validation aligned with
   the backend schema; the browser must never bind sockets or open serial ports.
+- Use the backend's canonical `/api/v1/meter/attributes` descriptors for every
+  selectable meter field. `AttributePicker` is the shared History, MQTT, and
+  Data Logging control; do not add page-local ID/key/unit lists. Filter by
+  usage and selected historian period, search label/key/group/unit, and make
+  invalidated selections visible before removing them.
+- Configuration -> Data Logging edits typed jobs and Data Channels through the
+  dedicated `/api/v1/data-logging` API. Keep Local-only mutually exclusive
+  with remote channels, show HTTP/FTP insecure-transport acknowledgement, and
+  expose only protocol-relevant authentication and verification fields. A save
+  must never contact an endpoint; channel testing is an explicit zero-data
+  action.
+- History -> Generated Files uses bounded status/list/detail/preview/download
+  responses from the Data Sender. Downloads remain authenticated and
+  manifest-authorized by the backend; the browser must never construct or
+  expose a target filesystem path. Distinguish retained payloads from completed
+  metadata and surface missing/damaged payload health as critical.
+- Keep historian cleanup and generated-file cleanup separate in Management.
+  Discarding any incomplete artifact requires an additional explicit
+  confirmation and `discard_unsent`; never silently broaden one cleanup action
+  to another persistence domain.
 - The authenticated Waveforms explorer lists persisted sessions returned by
   `GET /api/v1/waveforms`. View/download requests use the WebEngine-protected
   `/protected/waveforms/` nginx routes. Keep binary parsing and plotting in the

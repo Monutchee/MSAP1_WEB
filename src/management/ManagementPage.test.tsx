@@ -46,9 +46,10 @@ function waveformStatus(sessionCount: number) {
 describe('Management page', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('confirms and separates historian, event, and waveform deletion', async () => {
+  it('confirms and separates historian, generated-file, event, and waveform deletion', async () => {
     let eventCount = 3
     let waveformCount = 2
+    let generatedCount = 2
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url === '/api/v1/developer/database/maintenance')
@@ -72,6 +73,28 @@ describe('Management page', () => {
           },
           policies: {},
         }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url === '/api/v1/data-logging/status')
+        return new Response(JSON.stringify({ health: 'ready', message: 'ready',
+          artifact_count: generatedCount ? 2 : 0,
+          outbox_count: generatedCount ? 1 : 0, outbox_bytes: generatedCount ? 100 : 0,
+          archive_count: generatedCount ? 1 : 0, archive_bytes: generatedCount ? 100 : 0,
+          completed_metadata_count: 0, missing_payload_count: 0,
+          pending_delivery_count: generatedCount ? 1 : 0, blocked_delivery_count: 0,
+          maximum_bytes: 1024, available_bytes: 4096, minimum_free_bytes: 256,
+          generation_allowed: true, storage_blocking_reason: '', jobs: [], channels: [],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url === '/api/v1/data-logging/artifacts' && init?.method === 'DELETE') {
+        const body = JSON.parse(String(init.body))
+        if (!body.discard_unsent)
+          return new Response(JSON.stringify({ error: 'unsent confirmation required' }), {
+            status: 409, headers: { 'Content-Type': 'application/json' },
+          })
+        const deleted = generatedCount
+        generatedCount = 0
+        return new Response(JSON.stringify({ deleted, discarded_deliveries: 1 }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      }
       if (url === '/api/v1/meter/power-quality/events' && init?.method === 'DELETE') {
         const deleted = eventCount
         eventCount = 0
@@ -96,12 +119,23 @@ describe('Management page', () => {
     render(<ManagementPage onUnauthorized={() => undefined} />)
     expect(await screen.findByText('3')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear all data logs' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Clear historian data' }))
     let dialog = screen.getByRole('alertdialog')
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Clear all data logs' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Clear historian data' }))
     await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) =>
       String(url) === '/api/v1/developer/database/maintenance' &&
       init?.method === 'POST')).toBe(true))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear generated files' }))
+    dialog = screen.getByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Clear generated files' }))
+    await waitFor(() => expect(within(screen.getByRole('alertdialog'))
+      .getByRole('button', { name: 'Discard unsent and clear' })).toBeInTheDocument())
+    fireEvent.click(within(screen.getByRole('alertdialog'))
+      .getByRole('button', { name: 'Discard unsent and clear' }))
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url, init]) =>
+      String(url) === '/api/v1/data-logging/artifacts' && init?.method === 'DELETE'))
+      .toHaveLength(2))
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear all PQ events' }))
     dialog = screen.getByRole('alertdialog')
