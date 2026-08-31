@@ -5,7 +5,9 @@ export interface WaveformChannel {
   name: string
   unit: string
   kind: WaveformChannelKind
-  scaleMicroUnitsQ16: number
+  /** Affine conversion from a stored ADC word to the declared SI unit. */
+  conversionScale: number
+  conversionOffset: number
   conversionValid: boolean
 }
 
@@ -13,6 +15,17 @@ export interface WaveformEvent {
   sequence: bigint
   taiNanoseconds: bigint
   source: number
+}
+
+export interface WaveformTimebaseSegment {
+  firstFrame: number
+  frameCount: number
+  firstSequence: bigint
+  sequenceStep: bigint
+  sourceFrameCount: bigint
+  acquisitionRateHz: number
+  persistedRateHz: number
+  decimation: number
 }
 
 export interface ParsedWaveform {
@@ -37,12 +50,35 @@ export interface ParsedWaveform {
   frameDataOffset: number
   channels: WaveformChannel[]
   events: WaveformEvent[]
+  timebaseSegments: WaveformTimebaseSegment[]
   data: DataView
 }
 
 const MAGIC = [0x4d, 0x4e, 0x43, 0x57, 0x46, 0x31, 0, 0]
 const CHANNEL_DESCRIPTOR_BYTES = 32
 const EVENT_BYTES = 24
+const V4_HEADER_BYTES = 64
+const V4_DIRECTORY_ENTRY_BYTES = 56
+const V4_SECTION_HEADER_BYTES = 48
+const V4_REQUIRED_SECTION_COUNT = 7
+const V4_SECTION_REQUIRED = 1
+
+interface V4Section {
+  type: number
+  version: number
+  flags: number
+  offset: number
+  storedBytes: number
+  itemCount: number
+  itemBytes: number
+  crc32c: number
+}
+
+interface V4SectionEnvelope {
+  recordsOffset: number
+  blobOffset: number
+  blobBytes: number
+}
 
 function requireRange(length: number, offset: number, bytes: number, label: string) {
   if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(bytes) ||
@@ -55,6 +91,37 @@ function safeNumber(value: bigint, label: string) {
   if (!Number.isSafeInteger(result))
     throw new Error(`${label} exceeds browser-safe range`)
   return result
+}
+
+function alignEight(value: number) {
+  return Math.ceil(value / 8) * 8
+}
+
+function bytes(data: DataView, offset: number, length: number) {
+  requireRange(data.byteLength, offset, length, 'byte')
+  return new Uint8Array(data.buffer, data.byteOffset + offset, length)
+}
+
+const CRC32C_TABLE = Uint32Array.from({ length: 256 }, (_, value) => {
+  let crc = value
+  for (let bit = 0; bit < 8; ++bit)
+    crc = (crc >>> 1) ^ ((crc & 1) ? 0x82f6_3b78 : 0)
+  return crc >>> 0
+})
+
+/** Reflected CRC-32C (Castagnoli), matching the normative MNCWF v4 reader. */
+function crc32c(octets: Uint8Array) {
+  let crc = 0xffff_ffff
+  for (const octet of octets)
+    crc = CRC32C_TABLE[(crc ^ octet) & 0xff] ^ (crc >>> 8)
+  return (crc ^ 0xffff_ffff) >>> 0
+}
+
+function finiteRatio(numerator: bigint, denominator: bigint, label: string) {
+  if (denominator === 0n) throw new Error(`Invalid ${label} denominator in waveform file`)
+  const value = Number(numerator) / Number(denominator)
+  if (!Number.isFinite(value)) throw new Error(`Invalid ${label} in waveform file`)
+  return value
 }
 
 function fixedString(data: DataView, offset: number, bytes: number) {
@@ -76,9 +143,317 @@ function legacyChannels(): WaveformChannel[] {
     name: `CH${index}`,
     unit: 'count',
     kind: index < 4 ? 'current' : index < 7 ? 'voltage' : 'debug',
-    scaleMicroUnitsQ16: 0,
+    conversionScale: 0,
+    conversionOffset: 0,
     conversionValid: false,
   }))
+}
+
+function parseV4SectionEnvelope(
+  data: DataView,
+  section: V4Section,
+  expectedItemBytes: number,
+  minimumCount: number,
+  maximumCount: number,
+  allowBlob: boolean,
+): V4SectionEnvelope {
+  if (section.version !== 1 || section.flags !== V4_SECTION_REQUIRED ||
+      section.itemBytes !== expectedItemBytes ||
+      section.itemCount < minimumCount || section.itemCount > maximumCount)
+    throw new Error('Invalid MNCWF v4 mandatory-section geometry')
+  requireRange(data.byteLength, section.offset, section.storedBytes, 'v4 section')
+  if (section.storedBytes < V4_SECTION_HEADER_BYTES ||
+      data.getUint32(section.offset, true) !== section.type ||
+      data.getUint16(section.offset + 4, true) !== section.version ||
+      data.getUint16(section.offset + 6, true) !== V4_SECTION_HEADER_BYTES ||
+      data.getUint32(section.offset + 8, true) !== 0 ||
+      data.getUint32(section.offset + 12, true) !== section.itemBytes ||
+      safeNumber(data.getBigUint64(section.offset + 16, true), 'v4 record count') !==
+        section.itemCount ||
+      data.getBigUint64(section.offset + 40, true) !== 0n)
+    throw new Error('Invalid MNCWF v4 section envelope')
+
+  const recordsBytes = section.itemCount * section.itemBytes
+  if (!Number.isSafeInteger(recordsBytes))
+    throw new Error('MNCWF v4 section records exceed browser-safe range')
+  const recordsEnd = V4_SECTION_HEADER_BYTES + recordsBytes
+  const blobOffset = safeNumber(
+    data.getBigUint64(section.offset + 24, true), 'v4 section blob offset')
+  const blobBytes = safeNumber(
+    data.getBigUint64(section.offset + 32, true), 'v4 section blob bytes')
+  if (blobBytes === 0) {
+    if (blobOffset !== 0 || recordsEnd !== section.storedBytes)
+      throw new Error('Invalid MNCWF v4 section without a blob')
+  } else {
+    if (!allowBlob || blobOffset !== alignEight(recordsEnd) ||
+        blobOffset + blobBytes !== section.storedBytes)
+      throw new Error('Invalid MNCWF v4 section blob geometry')
+    for (const value of bytes(data, section.offset + recordsEnd,
+      blobOffset - recordsEnd))
+      if (value !== 0) throw new Error('Nonzero MNCWF v4 section padding')
+  }
+  requireRange(data.byteLength, section.offset + V4_SECTION_HEADER_BYTES,
+    recordsBytes, 'v4 section records')
+  if (blobBytes > 0)
+    requireRange(data.byteLength, section.offset + blobOffset, blobBytes,
+      'v4 section blob')
+  return {
+    recordsOffset: section.offset + V4_SECTION_HEADER_BYTES,
+    blobOffset: blobBytes ? section.offset + blobOffset : 0,
+    blobBytes,
+  }
+}
+
+function v4String(
+  data: DataView,
+  recordOffset: number,
+  referenceOffset: number,
+  section: V4SectionEnvelope,
+  label: string,
+) {
+  const offset = data.getUint32(recordOffset + referenceOffset, true)
+  const length = data.getUint32(recordOffset + referenceOffset + 4, true)
+  if (length > 64 * 1024 || (length === 0 && offset !== 0) ||
+      offset > section.blobBytes || length > section.blobBytes - offset)
+    throw new Error(`Invalid ${label} string in MNCWF v4 file`)
+  if (length === 0) return ''
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(
+      bytes(data, section.blobOffset + offset, length))
+  } catch {
+    throw new Error(`Invalid UTF-8 in MNCWF v4 ${label}`)
+  }
+}
+
+function parseWaveformV4(data: DataView): ParsedWaveform {
+  requireRange(data.byteLength, 0, V4_HEADER_BYTES, 'v4 header')
+  if (data.getUint32(12, true) !== V4_HEADER_BYTES ||
+      data.getUint32(16, true) !== V4_DIRECTORY_ENTRY_BYTES)
+    throw new Error('Unsupported MNCWF v4 header geometry')
+  const sectionCount = data.getUint32(20, true)
+  const directoryOffset = safeNumber(
+    data.getBigUint64(24, true), 'v4 directory offset')
+  const directoryBytes = safeNumber(
+    data.getBigUint64(32, true), 'v4 directory bytes')
+  const fileBytes = safeNumber(data.getBigUint64(40, true), 'v4 file bytes')
+  if (sectionCount < V4_REQUIRED_SECTION_COUNT || sectionCount > 64 ||
+      directoryOffset !== V4_HEADER_BYTES ||
+      directoryBytes !== sectionCount * V4_DIRECTORY_ENTRY_BYTES ||
+      fileBytes !== data.byteLength || data.getUint32(48, true) !== 0 ||
+      data.getUint32(60, true) !== 0)
+    throw new Error('Invalid MNCWF v4 file geometry')
+  requireRange(data.byteLength, directoryOffset, directoryBytes, 'v4 directory')
+
+  const header = bytes(data, 0, V4_HEADER_BYTES).slice()
+  header.fill(0, 56, 60)
+  if (crc32c(header) !== data.getUint32(56, true))
+    throw new Error('MNCWF v4 header CRC32C mismatch')
+  if (crc32c(bytes(data, directoryOffset, directoryBytes)) !==
+      data.getUint32(52, true))
+    throw new Error('MNCWF v4 directory CRC32C mismatch')
+
+  const sections: V4Section[] = []
+  const known = new Map<number, V4Section>()
+  for (let index = 0; index < sectionCount; ++index) {
+    const offset = directoryOffset + index * V4_DIRECTORY_ENTRY_BYTES
+    const section: V4Section = {
+      type: data.getUint32(offset, true),
+      version: data.getUint16(offset + 4, true),
+      flags: data.getUint16(offset + 6, true),
+      offset: safeNumber(data.getBigUint64(offset + 8, true), 'v4 section offset'),
+      storedBytes: safeNumber(
+        data.getBigUint64(offset + 16, true), 'v4 section bytes'),
+      itemCount: safeNumber(
+        data.getBigUint64(offset + 32, true), 'v4 section item count'),
+      itemBytes: data.getUint32(offset + 40, true),
+      crc32c: data.getUint32(offset + 44, true),
+    }
+    const logicalBytes = safeNumber(
+      data.getBigUint64(offset + 24, true), 'v4 logical bytes')
+    if (section.type === 0 || section.version === 0 ||
+        (section.flags & ~V4_SECTION_REQUIRED) !== 0 ||
+        section.storedBytes === 0 || logicalBytes !== section.storedBytes ||
+        (section.offset & 7) !== 0 || data.getBigUint64(offset + 48, true) !== 0n)
+      throw new Error('Invalid MNCWF v4 directory entry')
+    const isKnown = section.type >= 1 && section.type <= 7
+    if (!isKnown && (section.flags & V4_SECTION_REQUIRED) !== 0)
+      throw new Error('Unsupported required MNCWF v4 section')
+    if (isKnown) {
+      if (known.has(section.type) || section.flags !== V4_SECTION_REQUIRED)
+        throw new Error('Invalid duplicate or optional MNCWF v4 section')
+      known.set(section.type, section)
+    }
+    requireRange(data.byteLength, section.offset, section.storedBytes, 'v4 section')
+    if (crc32c(bytes(data, section.offset, section.storedBytes)) !== section.crc32c)
+      throw new Error('MNCWF v4 section CRC32C mismatch')
+    sections.push(section)
+  }
+  if (known.size !== V4_REQUIRED_SECTION_COUNT)
+    throw new Error('MNCWF v4 mandatory section is missing')
+
+  const extents = sections.map((section) => ({
+    first: section.offset, last: section.offset + section.storedBytes,
+  })).sort((left, right) => left.first - right.first)
+  let cursor = alignEight(directoryOffset + directoryBytes)
+  for (const extent of extents) {
+    if (extent.first !== cursor)
+      throw new Error('Invalid MNCWF v4 section coverage')
+    const aligned = alignEight(extent.last)
+    for (const value of bytes(data, extent.last, aligned - extent.last))
+      if (value !== 0) throw new Error('Nonzero MNCWF v4 alignment padding')
+    cursor = aligned
+  }
+  if (cursor !== data.byteLength)
+    throw new Error('Unreferenced bytes follow MNCWF v4 sections')
+
+  const captureSection = known.get(1)!
+  const capture = parseV4SectionEnvelope(
+    data, captureSection, 256, 1, 1, true)
+  const captureRecord = capture.recordsOffset
+  const createdTaiNanoseconds = data.getBigUint64(captureRecord + 96, true)
+  const createdUtcNanoseconds = data.getBigUint64(captureRecord + 104, true)
+
+  const timeSection = known.get(2)!
+  const time = parseV4SectionEnvelope(
+    data, timeSection, 128, 1, 65_536, false)
+  const timebaseSegments: WaveformTimebaseSegment[] = []
+  let expectedFirstFrame = 0
+  for (let index = 0; index < timeSection.itemCount; ++index) {
+    const record = time.recordsOffset + index * timeSection.itemBytes
+    const firstFrame = safeNumber(data.getBigUint64(record, true), 'v4 first frame')
+    const frameCount = safeNumber(data.getBigUint64(record + 8, true), 'v4 frame count')
+    const firstSequence = data.getBigUint64(record + 16, true)
+    const sequenceStep = data.getBigUint64(record + 24, true)
+    const acquisitionRateNumerator = data.getBigUint64(record + 32, true)
+    const acquisitionRateDenominator = data.getBigUint64(record + 40, true)
+    const persistedRateNumerator = data.getBigUint64(record + 48, true)
+    const persistedRateDenominator = data.getBigUint64(record + 56, true)
+    const decimation = data.getUint32(record + 104, true)
+    const sourceFrameCount = data.getBigUint64(record + 120, true)
+    if (firstFrame !== expectedFirstFrame || frameCount === 0 ||
+        sequenceStep === 0n || sourceFrameCount === 0n ||
+        decimation === 0 || decimation > 65_536)
+      throw new Error('Invalid MNCWF v4 timebase segment')
+    const acquisitionRateHz = finiteRatio(
+      acquisitionRateNumerator, acquisitionRateDenominator, 'acquisition rate')
+    const persistedRateHz = finiteRatio(
+      persistedRateNumerator, persistedRateDenominator, 'persisted rate')
+    if (acquisitionRateHz <= 0 || persistedRateHz <= 0)
+      throw new Error('Invalid MNCWF v4 sample rate')
+    timebaseSegments.push({
+      firstFrame, frameCount, firstSequence, sequenceStep, sourceFrameCount,
+      acquisitionRateHz, persistedRateHz, decimation,
+    })
+    expectedFirstFrame += frameCount
+  }
+
+  const channelSection = known.get(3)!
+  const channelEnvelope = parseV4SectionEnvelope(
+    data, channelSection, 208, 1, 64, true)
+  const channels: WaveformChannel[] = []
+  let expectedFrameBytes = 0
+  for (let index = 0; index < channelSection.itemCount; ++index) {
+    const record = channelEnvelope.recordsOffset + index * channelSection.itemBytes
+    const flags = data.getUint32(record + 20, true)
+    const quantity = data.getUint16(record + 26, true)
+    const unit = data.getUint16(record + 28, true)
+    const encoding = data.getUint16(record + 30, true)
+    const storageBits = data.getUint16(record + 32, true)
+    const validBits = data.getUint16(record + 34, true)
+    if ((flags & 1) === 0 || encoding !== 1 || storageBits !== 32 ||
+        validBits === 0 || validBits > storageBits)
+      throw new Error('The browser viewer supports only enabled signed 32-bit MNCWF v4 channels')
+    const conversionValid = (flags & 2) !== 0
+    const gainDenominator = data.getBigUint64(record + 48, true)
+    const offsetDenominator = data.getBigUint64(record + 64, true)
+    const conversionScale = conversionValid
+      ? finiteRatio(data.getBigInt64(record + 40, true), gainDenominator,
+          'channel gain')
+      : 0
+    const conversionOffset = conversionValid
+      ? finiteRatio(data.getBigInt64(record + 56, true), offsetDenominator,
+          'channel offset')
+      : 0
+    const fallbackUnit = unit === 1 ? 'A' : unit === 2 ? 'V' : unit === 3 ? 'Hz' : 'value'
+    channels.push({
+      sourceChannel: data.getUint32(record + 16, true),
+      kind: quantity === 1 ? 'current' : quantity === 2 ? 'voltage' : 'debug',
+      conversionScale,
+      conversionOffset,
+      conversionValid,
+      name: v4String(data, record, 168, channelEnvelope, 'channel name') || `CH${index}`,
+      unit: v4String(data, record, 176, channelEnvelope, 'channel unit') || fallbackUnit,
+    })
+    expectedFrameBytes += storageBits / 8
+  }
+
+  const eventSection = known.get(4)!
+  const eventEnvelope = parseV4SectionEnvelope(
+    data, eventSection, 256, 0, 4096, true)
+  const events: WaveformEvent[] = []
+  let primaryTrigger: { sequence: bigint; tai: bigint; utc: bigint } | undefined
+  let primaryHasTrigger = false
+  for (let index = 0; index < eventSection.itemCount; ++index) {
+    const record = eventEnvelope.recordsOffset + index * eventSection.itemBytes
+    const flags = data.getUint32(record + 24, true)
+    if ((flags & 1) === 0)
+      throw new Error('Invalid MNCWF v4 event without a start anchor')
+    const startSequence = data.getBigUint64(record + 48, true)
+    const hasTrigger = (flags & 8) !== 0
+    const sequence = hasTrigger
+      ? data.getBigUint64(record + 72, true) : startSequence
+    const tai = (flags & 16) !== 0
+      ? data.getBigUint64(record + (hasTrigger ? 104 : 80), true) : 0n
+    const utc = (flags & 32) !== 0
+      ? data.getBigUint64(record + (hasTrigger ? 136 : 112), true) : 0n
+    events.push({
+      sequence,
+      taiNanoseconds: tai,
+      source: data.getUint16(record + 36, true),
+    })
+    if (!primaryTrigger || (hasTrigger && !primaryHasTrigger))
+      primaryTrigger = { sequence, tai, utc }
+    primaryHasTrigger ||= hasTrigger
+  }
+
+  // These sections are not rendered yet, but their envelopes and CRCs remain
+  // part of accepting a complete v4 master record.
+  parseV4SectionEnvelope(data, known.get(5)!, 64, 0,
+    Math.floor(16 * 1024 * 1024 / 64), false)
+  parseV4SectionEnvelope(data, known.get(6)!, 64, 0, 4096, false)
+
+  const sampleSection = known.get(7)!
+  if (sampleSection.itemBytes !== expectedFrameBytes)
+    throw new Error('MNCWF v4 sample frame size disagrees with its channels')
+  const samples = parseV4SectionEnvelope(data, sampleSection,
+    expectedFrameBytes, 1, Math.floor(data.byteLength / expectedFrameBytes), false)
+  if (expectedFirstFrame !== sampleSection.itemCount)
+    throw new Error('MNCWF v4 timebase does not cover every stored frame')
+
+  const firstTimebase = timebaseSegments[0]
+  const lastTimebase = timebaseSegments[timebaseSegments.length - 1]
+  const firstSequence = firstTimebase.firstSequence
+  const lastSequence = lastTimebase.firstSequence + lastTimebase.sourceFrameCount - 1n
+  const triggerSequence = primaryTrigger?.sequence ?? firstSequence
+  return {
+    version: 4,
+    sessionId: 0n,
+    firstSequence,
+    lastSequence,
+    triggerSequence,
+    triggerTaiNanoseconds: primaryTrigger?.tai || createdTaiNanoseconds,
+    triggerRealtimeNanoseconds: primaryTrigger?.utc || createdUtcNanoseconds,
+    sampleRateHz: firstTimebase.acquisitionRateHz,
+    decimation: firstTimebase.decimation,
+    effectiveSampleRateHz: firstTimebase.persistedRateHz,
+    frameCount: sampleSection.itemCount,
+    frameBytes: expectedFrameBytes,
+    frameDataOffset: samples.recordsOffset,
+    channels,
+    events,
+    timebaseSegments,
+    data,
+  }
 }
 
 export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
@@ -91,6 +466,7 @@ export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
 
   const version = data.getUint32(8, true)
   const headerBytes = data.getUint32(12, true)
+  if (version === 4) return parseWaveformV4(data)
   if ((version === 1 && headerBytes !== 128) ||
       (version >= 2 && headerBytes !== 256))
     throw new Error(`Unsupported MNCWF header for version ${version}`)
@@ -141,7 +517,8 @@ export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
       return {
         sourceChannel: data.getUint32(offset, true),
         kind: channelKind(data.getUint32(offset + 4, true)),
-        scaleMicroUnitsQ16: data.getUint32(offset + 8, true),
+        conversionScale: data.getUint32(offset + 8, true) / 65536 / 1_000_000,
+        conversionOffset: 0,
         conversionValid: (flags & 1) !== 0,
         name: fixedString(data, offset + 16, 8) || `CH${index}`,
         unit: fixedString(data, offset + 24, 8) || 'count',
@@ -194,6 +571,16 @@ export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
     frameDataOffset,
     channels,
     events,
+    timebaseSegments: [{
+      firstFrame: 0,
+      frameCount,
+      firstSequence,
+      sequenceStep: BigInt(decimation),
+      sourceFrameCount: lastSequence - firstSequence + 1n,
+      acquisitionRateHz: sampleRateHz,
+      persistedRateHz: sampleRateHz / decimation,
+      decimation,
+    }],
     data,
   }
 }
@@ -210,9 +597,38 @@ export function rawSample(waveform: ParsedWaveform, frame: number, channel: numb
 
 export function convertedSample(raw: number, channel: WaveformChannel) {
   if (!channel.conversionValid) return undefined
-  // Divide the coefficient first so the intermediate stays below
-  // JavaScript's exact-integer limit for every signed 24-bit ADC value.
-  return raw * (channel.scaleMicroUnitsQ16 / 65536) / 1_000_000
+  return raw * channel.conversionScale + channel.conversionOffset
+}
+
+export function waveformFrameForSequence(
+  waveform: ParsedWaveform,
+  sequence: bigint,
+) {
+  for (const segment of waveform.timebaseSegments) {
+    const lastSequence = segment.firstSequence + segment.sourceFrameCount - 1n
+    if (sequence < segment.firstSequence || sequence > lastSequence) continue
+    const local = (sequence - segment.firstSequence) / segment.sequenceStep
+    return segment.firstFrame + Math.min(
+      segment.frameCount - 1, safeNumber(local, 'waveform frame index'))
+  }
+  return undefined
+}
+
+export function waveformFrameTimeSeconds(waveform: ParsedWaveform, frame: number) {
+  const target = Math.max(0, Math.min(waveform.frameCount, frame))
+  let seconds = 0
+  for (const segment of waveform.timebaseSegments) {
+    if (target <= segment.firstFrame)
+      return seconds
+    const frames = Math.min(segment.frameCount, target - segment.firstFrame)
+    seconds += frames / segment.persistedRateHz
+    if (frames < segment.frameCount) return seconds
+  }
+  return seconds
+}
+
+export function waveformDurationSeconds(waveform: ParsedWaveform) {
+  return waveformFrameTimeSeconds(waveform, waveform.frameCount)
 }
 
 export interface WaveformEnvelope {
@@ -283,10 +699,9 @@ function expandedRange(range: WaveformRange): WaveformRange {
  * coarsest level that still gives >= 2 entries per pixel bucket, so its cost
  * is proportional to the plot width, never to the visible frame count.
  *
- * The pyramid stores raw ADC counts only: unit conversion is a non-negative
- * linear scale (scaleMicroUnitsQ16 is unsigned), which preserves min/max
- * ordering, so converted views multiply at query time instead of needing a
- * second pyramid.
+ * The pyramid stores raw ADC counts only. Converted views apply each file's
+ * affine transform at query time (and swap the bounds for a negative gain),
+ * so the viewer does not need a second full-size pyramid.
  */
 export interface WaveformPyramidLevel {
   /** Frames covered by one entry. */
@@ -378,16 +793,23 @@ export function buildWaveformPyramid(
   return { samples, levels }
 }
 
-/** Non-negative factor mapping raw counts to display units (1 = raw). */
-function displayFactor(
+function displayTransform(
   waveform: ParsedWaveform,
   channelIndex: number,
   converted: boolean,
 ) {
   const channel = waveform.channels[channelIndex]
   return converted && channel.conversionValid
-    ? channel.scaleMicroUnitsQ16 / 65536 / 1_000_000
-    : 1
+    ? { scale: channel.conversionScale, offset: channel.conversionOffset }
+    : { scale: 1, offset: 0 }
+}
+
+function transformedRange(minimum: number, maximum: number, scale: number, offset: number) {
+  const first = minimum * scale + offset
+  const last = maximum * scale + offset
+  return first <= last
+    ? { minimum: first, maximum: last }
+    : { minimum: last, maximum: first }
 }
 
 /** Whole-capture range from the pyramid's coarsest level — O(entries). */
@@ -405,8 +827,8 @@ export function pyramidRange(
     if (top.minima[base + entry] < minimum) minimum = top.minima[base + entry]
     if (top.maxima[base + entry] > maximum) maximum = top.maxima[base + entry]
   }
-  const factor = displayFactor(waveform, channelIndex, converted)
-  return { minimum: minimum * factor, maximum: maximum * factor }
+  const transform = displayTransform(waveform, channelIndex, converted)
+  return transformedRange(minimum, maximum, transform.scale, transform.offset)
 }
 
 export function pyramidEnvelope(
@@ -430,7 +852,7 @@ export function pyramidEnvelope(
   const windowFrames = windowLast - windowFirst
   const bucketCount = Math.max(1, Math.min(width, windowFrames))
   const bucketSpan = windowFrames / bucketCount
-  const factor = displayFactor(waveform, channelIndex, converted)
+  const transform = displayTransform(waveform, channelIndex, converted)
 
   /*
    * Pick the coarsest level that still yields at least two entries per
@@ -474,12 +896,14 @@ export function pyramidEnvelope(
         if (value > maximum) maximum = value
       }
     }
-    const low = minimum * factor
-    const high = maximum * factor
-    minima[bucket] = low
-    maxima[bucket] = high
-    if (low < captureMinimum) captureMinimum = low
-    if (high > captureMaximum) captureMaximum = high
+    const convertedRange = transformedRange(
+      minimum, maximum, transform.scale, transform.offset)
+    minima[bucket] = convertedRange.minimum
+    maxima[bucket] = convertedRange.maximum
+    if (convertedRange.minimum < captureMinimum)
+      captureMinimum = convertedRange.minimum
+    if (convertedRange.maximum > captureMaximum)
+      captureMaximum = convertedRange.maximum
   }
 
   const scale = expandedRange(verticalRange ?? {

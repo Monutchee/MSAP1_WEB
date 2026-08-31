@@ -155,7 +155,7 @@ export interface MeterReadings {
   attributes?: MeterReadingAttribute[]
   /** True only after all derived siblings belong to `sequence`. */
   record_complete: boolean
-  // Present on every basic record since the MTR1-v3 format; kept
+  // Present on every basic record since BASIC-v3; kept
   // optional so a stale document renders gracefully.
   timing?: MeterBlockTiming
 }
@@ -682,6 +682,55 @@ export interface DemandConfiguration {
   window_seconds: 60 | 300 | 600 | 900 | 1800
 }
 
+export interface EventWaveformPolicy {
+  enabled: boolean
+  pretrigger_ms: number
+  posttrigger_ms: number
+  decimation: 1 | 2 | 4 | 8 | 16 | 32
+}
+
+export type EventPhasePolicy = 'per_phase' | 'polyphase'
+
+export interface EventProfileSettings {
+  enabled: boolean
+  threshold_percent: number
+  hysteresis_percent: number
+  phase_mask: number
+  phase_policy: EventPhasePolicy
+  waveform: EventWaveformPolicy
+}
+
+export interface PowerQualityEventSettings {
+  reference_current_amperes: number
+  voltage_sag: EventProfileSettings
+  voltage_swell: EventProfileSettings
+  voltage_interruption: EventProfileSettings
+  rapid_voltage_change: EventProfileSettings
+  voltage_unbalance: EventProfileSettings
+  current_sag: EventProfileSettings
+  current_swell: EventProfileSettings
+  current_unbalance: EventProfileSettings
+  transient_voltage: EventProfileSettings
+}
+
+export interface FlickerSettings {
+  enabled: boolean
+  phase_mask: number
+  lamp_voltage: 120 | 230
+  live_cadence_ms: 1000
+  pst_interval_seconds: 600
+  plt_pst_count: 12
+}
+
+export interface MainsSignallingSettings {
+  enabled: boolean
+  carrier_frequency_hz: number
+  bandwidth_hz: number
+  observation_ms: 200
+  phase_mask: number
+  threshold_percent: number
+}
+
 export interface ProductSettings {
   schema_version: number
   metering: {
@@ -700,6 +749,9 @@ export interface ProductSettings {
     // the DISARMED state: the PL still measures half-cycle RMS but never
     // declares a sag, swell, or interruption.
     power_quality: PowerQualitySettings
+    events: PowerQualityEventSettings
+    flicker: FlickerSettings
+    mains_signalling: MainsSignallingSettings
     demand: DemandConfiguration
     conversion: {
       profile_id: string
@@ -722,6 +774,15 @@ export interface ProductSettings {
     default_posttrigger_ms: number
     // Capture-file decimation divisor (1, 2, 4, 8, 16, or 32).
     default_decimation: number
+    station_id: string
+    station_name: string
+    site_id: string
+    site_name: string
+    circuit_id: string
+    circuit_name: string
+    device_serial: string
+    calibration_id: string
+    calibration_status: 'unknown' | 'valid' | 'expired' | 'invalid'
   }
   database: DatabaseSettings
   modbus: ModbusSettings
@@ -784,6 +845,7 @@ export interface DatabaseStatus {
     lag_records: number
     block_count: number
     storage_bytes: number
+    power_quality_event_count: number
     datasets: DatabaseDatasetStatus[]
   }
 }
@@ -993,8 +1055,12 @@ export interface WaveformSession {
   trigger_realtime_nanoseconds: number
   sample_rate_hz: number
   event_count: number
+  origin: 'manual' | 'power_quality' | 'mixed' | 'legacy'
   decimation: number
   filename: string
+  continuation_of_session_id: number
+  master_session_id: number
+  capture_uuid: string
 }
 
 export interface WaveformStatus {
@@ -1016,7 +1082,143 @@ export interface WaveformStatus {
   history_capacity_frames: number
   completed_sessions: number
   incomplete_sessions: number
+  export_formats: string[]
   sessions: WaveformSession[]
+}
+
+export type PowerQualityEventLifecycle = 'start' | 'update' | 'end' | 'abort' | 'unknown'
+export type PowerQualityEventType =
+  | 'voltage_sag'
+  | 'voltage_swell'
+  | 'voltage_interruption'
+  | 'rapid_voltage_change'
+  | 'voltage_unbalance'
+  | 'current_sag'
+  | 'current_swell'
+  | 'current_unbalance'
+  | 'transient_voltage'
+  | 'unknown'
+
+export interface PowerQualityEvent {
+  event_id: string
+  source_session: number
+  source_counter: number
+  lifecycle: PowerQualityEventLifecycle
+  type: PowerQualityEventType
+  taxonomy: 'iec_61000_4_30' | 'msap1_product_alarm'
+  affected_phases: string[]
+  trigger_source: number
+  sequence: number
+  configuration_generation: number
+  profile_generation: number
+  sample_rate_hz: number
+  first_sample: number
+  last_sample: number
+  trigger_sample: number
+  duration_samples: number
+  duration_ms: number
+  threshold_e4: number
+  hysteresis_e4: number
+  reference_micro_units: number
+  minimum_micro_units: [number, number, number]
+  maximum_micro_units: [number, number, number]
+  current_micro_units: [number, number, number]
+  per_phase: boolean
+  status: number
+  valid_mask: number
+  discontinuities: number
+  update_count: number
+  time_quality: 'unsynchronized' | 'synchronized' | 'holdover' | string
+  start_utc_nanoseconds?: number
+  last_utc_nanoseconds?: number
+  utc_uncertainty_nanoseconds?: number
+  settings_digest: string
+  waveform: EventWaveformPolicy
+  waveform_capture_uuids: string[]
+}
+
+export interface PowerQualityEvents {
+  limit: number
+  count: number
+  export_formats: string[]
+  events: PowerQualityEvent[]
+}
+
+export interface PowerQualityEventDeleteResult {
+  deleted: number
+}
+
+export interface PowerQualityEventQuery {
+  event_id?: string
+  start_utc_ns?: number
+  end_utc_ns?: number
+  limit?: number
+}
+
+export interface FlickerPhase {
+  phase: string
+  valid: boolean
+  pinst: number
+  pst: number
+  plt: number
+  valid_internal_samples: number
+}
+
+export interface FlickerRecord {
+  kind: 'live' | 'pst' | 'plt'
+  sequence: number
+  configuration_generation: number
+  profile_generation: number
+  sample_rate_hz: number
+  first_sample: number
+  last_sample: number
+  sample_count: number
+  interval_seconds: number
+  lamp_voltage: number
+  nominal_frequency_hz: number
+  status: number
+  source_status: number
+  phases: FlickerPhase[]
+}
+
+export interface FlickerStatus {
+  running: boolean
+  records: number
+  sequence_gaps: number
+  live?: FlickerRecord
+  pst?: FlickerRecord
+  plt?: FlickerRecord
+}
+
+export interface MainsSignalPhase {
+  phase: string
+  valid: boolean
+  detected: boolean
+  magnitude_volts: number
+  background_volts: number
+}
+
+export interface MainsSignalStatus {
+  running: boolean
+  records: number
+  sequence_gaps: number
+  available: boolean
+  sequence: number
+  configuration_generation: number
+  profile_generation: number
+  sample_rate_hz: number
+  first_sample: number
+  last_sample: number
+  sample_count: number
+  configured_hz: number
+  measured_hz: number
+  bandwidth_hz: number
+  observation_ms: number
+  threshold_percent: number
+  reference_volts: number
+  status: number
+  source_status: number
+  phases: MainsSignalPhase[]
 }
 
 export class ApiError extends Error {
@@ -1074,6 +1276,15 @@ export function waveformDownloadPath(filename: string) {
   return `/protected/waveforms/download/${encodeURIComponent(filename)}`
 }
 
+export function waveformEventExportPath(sessionId: number, eventId: string) {
+  const parameters = new URLSearchParams({
+    session_id: String(sessionId),
+    event_id: eventId,
+    format: 'mncwf',
+  })
+  return `/api/v1/waveforms/export?${parameters.toString()}`
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ status: string }>('/api/login', {
@@ -1121,6 +1332,30 @@ export const api = {
     request<SingleCycleStatus>('/api/v1/meter/single-cycle'),
   meterPowerQuality: () =>
     request<PowerQualityStatus>('/api/v1/meter/power-quality'),
+  powerQualityEvents: (query: PowerQualityEventQuery = {}) => {
+    const parameters = new URLSearchParams()
+    if (query.event_id) parameters.set('event_id', query.event_id)
+    if (query.start_utc_ns !== undefined)
+      parameters.set('start_utc_ns', String(query.start_utc_ns))
+    if (query.end_utc_ns !== undefined)
+      parameters.set('end_utc_ns', String(query.end_utc_ns))
+    if (query.limit !== undefined) parameters.set('limit', String(query.limit))
+    const suffix = parameters.size === 0 ? '' : `?${parameters.toString()}`
+    return request<PowerQualityEvents>(`/api/v1/meter/power-quality/events${suffix}`)
+  },
+  deletePowerQualityEvents: (event_ids: string[]) =>
+    request<PowerQualityEventDeleteResult>('/api/v1/meter/power-quality/events', {
+      method: 'DELETE',
+      body: JSON.stringify({ event_ids, all: false, confirmed: true }),
+    }),
+  clearPowerQualityEvents: () =>
+    request<PowerQualityEventDeleteResult>('/api/v1/meter/power-quality/events', {
+      method: 'DELETE',
+      body: JSON.stringify({ event_ids: [], all: true, confirmed: true }),
+    }),
+  meterFlicker: () => request<FlickerStatus>('/api/v1/meter/flicker'),
+  meterMainsSignalling: () =>
+    request<MainsSignalStatus>('/api/v1/meter/mains-signalling'),
   meterHarmonics: (period: HarmonicPeriod = 'cycles_150_180') =>
     request<HarmonicSpectrum>(`/api/v1/meter/harmonics?period=${encodeURIComponent(period)}`),
   adcSimulatorEvent: () =>
@@ -1158,6 +1393,11 @@ export const api = {
     request<WaveformStatus>('/api/v1/waveforms', {
       method: 'DELETE',
       body: JSON.stringify({ session_id }),
+    }),
+  clearWaveforms: () =>
+    request<WaveformStatus>('/api/v1/waveforms', {
+      method: 'DELETE',
+      body: JSON.stringify({ session_id: 0, all: true, confirmed: true }),
     }),
   developerLogs: (query: DeveloperLogQuery = {}) => {
     const parameters = new URLSearchParams()

@@ -4,6 +4,7 @@ import {
 } from '../api'
 import { WaveformTriggerPanel } from './WaveformTriggerPanel'
 import { WaveformViewer } from './WaveformViewer'
+import { parseWaveform, ParsedWaveform } from './waveformFile'
 import './waveform.css'
 
 /**
@@ -40,26 +41,9 @@ function duration(session: WaveformSession) {
     session.sample_rate_hz).toFixed(3)} s`
 }
 
-/*
- * The mncwf layout is deterministic, so the size is computable from the
- * session metadata alone: 256-byte header, 7 channel descriptors of 32
- * bytes, 24 bytes per event, then 28 bytes (7 persisted channels x 4) per
- * stored frame — where sequences span acquisition frames and the file
- * stores one frame per decimation group.
- */
-function fileSize(session: WaveformSession) {
-  if (session.state !== 'complete' || !session.filename ||
-    session.last_sequence < session.first_sequence)
-    return undefined
-  const storedFrames = (session.last_sequence - session.first_sequence) /
-    Math.max(1, session.decimation) + 1
-  const bytes = 256 + 7 * 32 + session.event_count * 24 + storedFrames * 28
-  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`
-  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(0)} kB`
-  return `${bytes} B`
-}
-
-export function WaveformExplorer({ onUnauthorized, canDelete }: {
+export function WaveformExplorer({
+  onUnauthorized, canDelete,
+}: {
   onUnauthorized: () => void
   canDelete: boolean
 }) {
@@ -68,7 +52,10 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
   const [deletingSession, setDeletingSession] = useState(0)
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
-  const [viewer, setViewer] = useState<{ filename: string; buffer: ArrayBuffer }>()
+  const [viewer, setViewer] = useState<{
+    filename: string
+    waveform: ParsedWaveform
+  }>()
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
@@ -94,13 +81,16 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
     return () => { active = false; window.clearInterval(timer) }
   }, [load])
 
-  async function open(session: WaveformSession) {
+  const open = useCallback(async (session: WaveformSession) => {
     if (!session.filename) return
     setLoadingFile(session.filename)
     setError('')
     try {
       const buffer = await api.waveformFile(session.filename)
-      setViewer({ filename: session.filename, buffer })
+      // Parse before mounting the viewer so an unsupported or damaged file is
+      // reported inside this page instead of throwing through the React tree.
+      const waveform = parseWaveform(buffer)
+      setViewer({ filename: session.filename, waveform })
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 401) {
         onUnauthorized()
@@ -110,7 +100,7 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
     } finally {
       setLoadingFile('')
     }
-  }
+  }, [onUnauthorized])
 
   async function remove(session: WaveformSession) {
     if (session.state === 'capturing' ||
@@ -133,7 +123,11 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
     }
   }
 
-  const sessions = status?.sessions ?? []
+  // PQ-only evidence is browsed from History → PQ Event catalogue. A mixed
+  // session remains here because it contains an explicit manual trigger too;
+  // legacy files predate origin metadata and stay visible for compatibility.
+  const sessions = (status?.sessions ?? []).filter(
+    (session) => session.origin !== 'power_quality')
   // A capture still being written cannot be deleted, so it never selects.
   const deletable = sessions.filter((session) => session.state !== 'capturing')
   const allSelected = deletable.length > 0 &&
@@ -209,7 +203,8 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
       <header>
         <div><p className="eyebrow">Persistent storage</p><h2>Saved captures</h2></div>
         <div className="waveform-library-tools">
-          <span>{status?.completed_sessions ?? 0} complete · {status?.incomplete_sessions ?? 0} incomplete</span>
+          <span>{sessions.filter((session) => session.state === 'complete').length} complete ·
+            {' '}{sessions.filter((session) => session.state === 'incomplete').length} incomplete</span>
           {canDelete && deletable.length > 0 && <>
             <label className="waveform-select-all">
               <input type="checkbox" checked={allSelected}
@@ -253,8 +248,11 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
                   ` of ${count(session.last_sequence - session.first_sequence + 1)}`}
               </dd></div>
               <div><dt>Events</dt><dd>{session.event_count}</dd></div>
-              {fileSize(session) &&
-                <div><dt>File size</dt><dd>{fileSize(session)}</dd></div>}
+              <div><dt>Segment</dt><dd>{session.continuation_of_session_id
+                ? `Continuation of ${session.continuation_of_session_id}` : 'Master'}</dd></div>
+              <div><dt>Master</dt><dd>Session {session.master_session_id || session.id}</dd></div>
+              {session.capture_uuid && <div className="waveform-capture-uuid">
+                <dt>Capture UUID</dt><dd>{session.capture_uuid}</dd></div>}
             </dl>
             <code>{session.filename || 'Capture is not materialized'}</code>
             <div className="waveform-session-actions">
@@ -276,15 +274,15 @@ export function WaveformExplorer({ onUnauthorized, canDelete }: {
           </article>)}
         {sessions.length === 0 &&
           <div className="waveform-library-empty">
-            <strong>No persistent waveform captures</strong>
+            <strong>No manual waveform captures</strong>
             <span>{canDelete
               ? 'Trigger a capture with the form above.'
-              : 'An administrator can trigger a capture from this page.'}</span>
+              : 'An administrator can trigger a manual capture from this page. PQ evidence is under History.'}</span>
           </div>}
       </div>
     </section>
     {viewer && <WaveformViewer key={viewer.filename}
-      filename={viewer.filename} buffer={viewer.buffer}
+      filename={viewer.filename} waveform={viewer.waveform}
       onClose={() => setViewer(undefined)} />}
   </section>
 }

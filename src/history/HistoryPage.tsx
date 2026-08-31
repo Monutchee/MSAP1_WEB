@@ -1,7 +1,11 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  FormEvent, type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect,
+  useMemo, useRef, useState,
+} from 'react'
 import uPlot, { AlignedData, Options, Series } from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { api, ApiError, HistoryCapabilities, HistoryPoint } from '../api'
+import { PowerQualityEventCatalogue } from './PowerQualityEventCatalogue'
 import './history.css'
 
 function scaleValue(value: string, unit: string) {
@@ -289,7 +293,7 @@ function HistoryPlot({ points, capabilities, attributes }: {
   </section>
 }
 
-export function HistoryPage({ onUnauthorized }: { onUnauthorized: () => void }) {
+function MeasurementHistory({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [capabilities, setCapabilities] = useState<HistoryCapabilities>()
   const [period, setPeriod] = useState('basic')
   const [attributes, setAttributes] = useState<string[]>(['voltage.ln.a.rms'])
@@ -379,9 +383,7 @@ export function HistoryPage({ onUnauthorized }: { onUnauthorized: () => void }) 
       : [...current, attribute])
   }
 
-  return <section className="history-page">
-    <div className="developer-heading"><div><p className="eyebrow">Historian</p>
-      <h1>Historical meter data</h1><p>Query PL-calculated values retained by measurement period.</p></div></div>
+  return <>
     {error && <div className="error-banner"><strong>History unavailable</strong><span>{error}</span></div>}
     {capabilities && <form className="history-query" onSubmit={query}>
       <label>Measurement period<select value={period} onChange={(event) => setPeriod(event.target.value)}>
@@ -403,5 +405,59 @@ export function HistoryPage({ onUnauthorized }: { onUnauthorized: () => void }) 
     {capabilities && points.length > 0
       ? <HistoryPlot points={points} capabilities={capabilities} attributes={attributes} />
       : <div className="history-empty">Select a time range and attributes, then query the historian.</div>}
+  </>
+}
+
+const HISTORY_SECTIONS = ['measurements', 'events'] as const
+type HistorySection = typeof HISTORY_SECTIONS[number]
+
+export function HistoryPage({ onUnauthorized, canDelete }: {
+  onUnauthorized: () => void
+  canDelete: boolean
+}) {
+  const [section, setSection] = useState<HistorySection>('measurements')
+
+  function handleTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' &&
+        event.key !== 'Home' && event.key !== 'End') return
+    event.preventDefault()
+    const current = HISTORY_SECTIONS.indexOf(section)
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? HISTORY_SECTIONS.length - 1
+        : (current + (event.key === 'ArrowRight' ? 1 : -1) + HISTORY_SECTIONS.length) %
+          HISTORY_SECTIONS.length
+    setSection(HISTORY_SECTIONS[next])
+    document.getElementById(`history-tab-${HISTORY_SECTIONS[next]}`)?.focus()
+  }
+
+  return <section className="history-page">
+    <div className="developer-heading"><div><p className="eyebrow">Historian</p>
+      <h1>History</h1><p>Query retained meter products or inspect durable power-quality events.</p></div></div>
+    <nav className="history-section-tabs" role="tablist" aria-orientation="horizontal"
+      aria-label="History sections">
+      <button id="history-tab-measurements" role="tab" type="button"
+        className={section === 'measurements' ? 'active' : ''}
+        aria-selected={section === 'measurements'} aria-controls="history-panel-measurements"
+        tabIndex={section === 'measurements' ? 0 : -1}
+        onKeyDown={handleTabKeyDown} onClick={() => setSection('measurements')}>
+        <span>Meter data</span><small>Measurement-period records</small>
+      </button>
+      <button id="history-tab-events" role="tab" type="button"
+        className={section === 'events' ? 'active' : ''}
+        aria-selected={section === 'events'} aria-controls="history-panel-events"
+        tabIndex={section === 'events' ? 0 : -1}
+        onKeyDown={handleTabKeyDown} onClick={() => setSection('events')}>
+        <span>PQ Event catalogue</span><small>Events and linked evidence</small>
+      </button>
+    </nav>
+    {section === 'measurements' && <div id="history-panel-measurements" role="tabpanel"
+      aria-labelledby="history-tab-measurements">
+      <MeasurementHistory onUnauthorized={onUnauthorized} />
+    </div>}
+    {section === 'events' && <div id="history-panel-events" role="tabpanel"
+      aria-labelledby="history-tab-events">
+      <PowerQualityEventCatalogue onUnauthorized={onUnauthorized}
+        canDelete={canDelete} />
+    </div>}
   </section>
 }

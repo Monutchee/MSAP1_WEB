@@ -4,8 +4,9 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
-  buildWaveformPyramid, convertedSample, ParsedWaveform, parseWaveform,
-  pyramidEnvelope, pyramidRange, rawSample,
+  buildWaveformPyramid, convertedSample, ParsedWaveform,
+  pyramidEnvelope, pyramidRange, rawSample, waveformDurationSeconds,
+  waveformFrameForSequence, waveformFrameTimeSeconds,
 } from './waveformFile'
 
 const PLOT_WIDTH = 1200
@@ -25,6 +26,33 @@ interface PanGesture {
 }
 
 type VerticalScale = 'auto' | 'fixed'
+export type WaveformPlotLayout = 'separate' | 'electrical' | 'overlay'
+
+interface PlotGroup {
+  id: string
+  label: string
+  indices: number[]
+}
+
+export function waveformPlotGroups(
+  channels: readonly { kind: 'current' | 'voltage' | 'debug' }[],
+  enabled: ReadonlySet<number>,
+  layout: WaveformPlotLayout,
+): PlotGroup[] {
+  const indices = channels.map((_, index) => index).filter((index) => enabled.has(index))
+  if (layout === 'separate') return indices.map((index) => ({
+    id: `channel-${index}`, label: `Channel ${index}`, indices: [index],
+  }))
+  if (layout === 'overlay') return indices.length === 0 ? [] : [{
+    id: 'all-channels', label: 'All channels', indices,
+  }]
+  const labels = { current: 'Current channels', voltage: 'Voltage channels', debug: 'Other channels' }
+  return (['current', 'voltage', 'debug'] as const).map((kind) => ({
+    id: kind,
+    label: labels[kind],
+    indices: indices.filter((index) => channels[index].kind === kind),
+  })).filter((group) => group.indices.length > 0)
+}
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, value))
@@ -43,12 +71,11 @@ function captureTime(waveform: ParsedWaveform) {
     .toLocaleString()
 }
 
-export function WaveformViewer({ filename, buffer, onClose }: {
+export function WaveformViewer({ filename, waveform, onClose }: {
   filename: string
-  buffer: ArrayBuffer
+  waveform: ParsedWaveform
   onClose: () => void
 }) {
-  const waveform = useMemo(() => parseWaveform(buffer), [buffer])
   /*
    * One full pass over the samples at open builds the min/max pyramid;
    * every pan/zoom afterwards reads the pyramid instead of the samples, so
@@ -66,6 +93,7 @@ export function WaveformViewer({ filename, buffer, onClose }: {
     () => ({ first: 0, last: waveform.frameCount }),
   )
   const [verticalScale, setVerticalScale] = useState<VerticalScale>('auto')
+  const [plotLayout, setPlotLayout] = useState<WaveformPlotLayout>('separate')
   const [cursorFrame, setCursorFrame] = useState<number>()
   const [dragging, setDragging] = useState(false)
   const plotsRef = useRef<HTMLDivElement>(null)
@@ -102,6 +130,7 @@ export function WaveformViewer({ filename, buffer, onClose }: {
     setViewport({ first: 0, last: waveform.frameCount })
     setEnabled(new Set(waveform.channels.map((_, index) => index)))
     setVerticalScale('auto')
+    setPlotLayout('separate')
     setCursorFrame(undefined)
     panGesture.current = undefined
     setDragging(false)
@@ -124,29 +153,55 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   const wholeCaptureRanges = useMemo(() => waveform.channels.map((_, index) =>
     pyramidRange(waveform, pyramid, index, converted),
   ), [waveform, pyramid, converted])
-  const envelopes = useMemo(() => waveform.channels.map((channel, index) => ({
+  const visibleEnvelopes = useMemo(() => waveform.channels.map((channel, index) => ({
     channel,
     envelope: pyramidEnvelope(
       waveform, pyramid, index, converted, PLOT_WIDTH, PLOT_HEIGHT,
       viewport.first, viewport.last,
-      verticalScale === 'fixed' ? wholeCaptureRanges[index] : undefined,
     ),
-  })), [waveform, pyramid, converted, viewport, verticalScale, wholeCaptureRanges])
-  const durationSeconds = waveform.effectiveSampleRateHz
-    ? waveform.frameCount / waveform.effectiveSampleRateHz
-    : 0
-  const triggerInCapture = waveform.triggerSequence >= waveform.firstSequence &&
-    waveform.triggerSequence <= waveform.lastSequence
-  /* Sequences are acquisition frames; stored frames are decimated. */
-  const triggerIndex = triggerInCapture
-    ? Math.round(Number(waveform.triggerSequence - waveform.firstSequence) /
-        waveform.decimation)
-    : 0
+  })), [waveform, pyramid, converted, viewport])
+  const plotGroups = useMemo(() => waveformPlotGroups(
+    waveform.channels, enabled, plotLayout,
+  ), [waveform.channels, enabled, plotLayout])
+  const plots = useMemo(() => plotGroups.map((group) => {
+    /* Voltage/current overlays share a scale within their electrical unit.
+     * "All channels" keeps an independent scale per channel because amperes
+     * and volts are not numerically comparable; otherwise current would be a
+     * nearly flat line beside nominal voltage. */
+    const sharedRange = plotLayout === 'electrical' ? {
+      minimum: Math.min(...group.indices.map((index) => verticalScale === 'fixed'
+        ? wholeCaptureRanges[index].minimum
+        : visibleEnvelopes[index].envelope.minimum)),
+      maximum: Math.max(...group.indices.map((index) => verticalScale === 'fixed'
+        ? wholeCaptureRanges[index].maximum
+        : visibleEnvelopes[index].envelope.maximum)),
+    } : undefined
+    return {
+      ...group,
+      sharedScale: plotLayout !== 'overlay' || group.indices.length === 1,
+      envelopes: group.indices.map((index) => ({
+        index,
+        channel: waveform.channels[index],
+        envelope: pyramidEnvelope(
+          waveform, pyramid, index, converted, PLOT_WIDTH, PLOT_HEIGHT,
+          viewport.first, viewport.last,
+          sharedRange ?? (verticalScale === 'fixed'
+            ? wholeCaptureRanges[index] : undefined),
+        ),
+      })),
+    }
+  }), [converted, pyramid, plotGroups, plotLayout, verticalScale, viewport,
+    visibleEnvelopes, waveform, wholeCaptureRanges])
+  const durationSeconds = waveformDurationSeconds(waveform)
+  const triggerIndex = waveformFrameForSequence(
+    waveform, waveform.triggerSequence)
+  const triggerInCapture = triggerIndex !== undefined
+  const triggerFrame = triggerIndex ?? 0
   const visibleFrames = viewport.last - viewport.first
   const triggerInViewport = triggerInCapture &&
-    triggerIndex >= viewport.first && triggerIndex < viewport.last
+    triggerFrame >= viewport.first && triggerFrame < viewport.last
   const triggerPercent = visibleFrames > 1
-    ? clamp((triggerIndex - viewport.first) / (visibleFrames - 1) * 100, 0, 100)
+    ? clamp((triggerFrame - viewport.first) / (visibleFrames - 1) * 100, 0, 100)
     : 0
   const zoomLevel = waveform.frameCount / visibleFrames
   const cursorPercent = cursorFrame === undefined || visibleFrames <= 1
@@ -183,7 +238,7 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   }
 
   function centerOnTrigger() {
-    if (!triggerInCapture) return
+    if (triggerIndex === undefined) return
     const detailFrames = waveform.effectiveSampleRateHz
       ? Math.max(MIN_VISIBLE_FRAMES,
           Math.round(waveform.effectiveSampleRateHz / 4))
@@ -262,8 +317,9 @@ export function WaveformViewer({ filename, buffer, onClose }: {
   }
 
   function relativeTime(frame: number) {
-    if (!waveform.effectiveSampleRateHz) return 'unknown'
-    const seconds = (frame - triggerIndex) / waveform.effectiveSampleRateHz
+    if (triggerIndex === undefined) return 'unknown'
+    const seconds = waveformFrameTimeSeconds(waveform, frame) -
+      waveformFrameTimeSeconds(waveform, triggerIndex)
     return `${seconds >= 0 ? '+' : ''}${seconds.toFixed(6)} s`
   }
 
@@ -309,6 +365,21 @@ export function WaveformViewer({ filename, buffer, onClose }: {
           </label>)}
       </fieldset>
       <fieldset>
+        <legend>Plot layout</legend>
+        <label><input type="radio" name="waveform-layout" value="separate"
+          checked={plotLayout === 'separate'}
+          onChange={() => setPlotLayout('separate')} />
+          Separate</label>
+        <label><input type="radio" name="waveform-layout" value="electrical"
+          checked={plotLayout === 'electrical'}
+          onChange={() => setPlotLayout('electrical')} />
+          Voltage / current overlays</label>
+        <label><input type="radio" name="waveform-layout" value="overlay"
+          checked={plotLayout === 'overlay'}
+          onChange={() => setPlotLayout('overlay')} />
+          All channels overlay</label>
+      </fieldset>
+      <fieldset>
         <legend>Vertical scale</legend>
         <label><input type="radio" name="waveform-scale" value="auto"
           checked={verticalScale === 'auto'}
@@ -337,20 +408,42 @@ export function WaveformViewer({ filename, buffer, onClose }: {
       </fieldset>
     </div>
     <div className="waveform-plots" ref={plotsRef}>
-      {envelopes.map(({ channel, envelope }, index) => enabled.has(index) &&
-        <article className={`waveform-plot channel-${index % 7}`}
-          key={channel.sourceChannel}>
-          <div className="waveform-plot-label">
-            <strong>CH{channel.sourceChannel} {channel.name}</strong>
-            <span>{converted && channel.conversionValid ? channel.unit : 'ADC count'}</span>
-            <code>{formatEngineering(envelope.minimum)} … {formatEngineering(envelope.maximum)}</code>
+      {plots.map((plot) => {
+        const firstEnvelope = plot.envelopes[0]?.envelope
+        return <article className={`waveform-plot ${plotLayout === 'separate'
+          ? `channel-color-${plot.envelopes[0].index % 7}` : 'waveform-overlay-plot'}`}
+          key={plot.id}>
+          {plotLayout === 'separate' ? <div className="waveform-plot-label">
+            <strong>CH{plot.envelopes[0].channel.sourceChannel} {plot.envelopes[0].channel.name}</strong>
+            <span>{converted && plot.envelopes[0].channel.conversionValid
+              ? plot.envelopes[0].channel.unit : 'ADC count'}</span>
+            <code>{formatEngineering(firstEnvelope.minimum)} … {formatEngineering(firstEnvelope.maximum)}</code>
             {cursorFrame !== undefined && <output>
-              {formatEngineering(converted && channel.conversionValid
-                ? convertedSample(rawSample(waveform, cursorFrame, index), channel) ?? 0
-                : rawSample(waveform, cursorFrame, index))}
-              {' '}{converted && channel.conversionValid ? channel.unit : 'count'}
+              {formatEngineering(converted && plot.envelopes[0].channel.conversionValid
+                ? convertedSample(rawSample(waveform, cursorFrame,
+                  plot.envelopes[0].index), plot.envelopes[0].channel) ?? 0
+                : rawSample(waveform, cursorFrame, plot.envelopes[0].index))}
+              {' '}{converted && plot.envelopes[0].channel.conversionValid
+                ? plot.envelopes[0].channel.unit : 'count'}
             </output>}
-          </div>
+          </div> : <div className="waveform-overlay-label">
+            <strong>{plot.label}</strong>
+            <span>{plot.sharedScale ? 'Shared electrical scale' : 'Independent channel scales'}</span>
+            <div className="waveform-overlay-legend">
+              {plot.envelopes.map(({ index, channel, envelope }) =>
+                <span className={`channel-color-${index % 7}`} key={channel.sourceChannel}>
+                  <i />
+                  <b>CH{channel.sourceChannel} {channel.name}</b>
+                  <code>{formatEngineering(envelope.minimum)} … {formatEngineering(envelope.maximum)}</code>
+                  {cursorFrame !== undefined && <output>
+                    {formatEngineering(converted && channel.conversionValid
+                      ? convertedSample(rawSample(waveform, cursorFrame, index), channel) ?? 0
+                      : rawSample(waveform, cursorFrame, index))}
+                    {' '}{converted && channel.conversionValid ? channel.unit : 'count'}
+                  </output>}
+                </span>)}
+            </div>
+          </div>}
           <div className="waveform-plot-canvas"
             data-dragging={dragging ? 'true' : 'false'}
             title="Wheel to zoom; drag horizontally to pan"
@@ -362,17 +455,20 @@ export function WaveformViewer({ filename, buffer, onClose }: {
             onPointerLeave={leavePlot}>
             <svg viewBox={`0 0 ${PLOT_WIDTH} ${PLOT_HEIGHT}`}
               preserveAspectRatio="none" aria-hidden="true">
-              {envelope.scaleMinimum <= 0 && envelope.scaleMaximum >= 0 &&
+              {plot.sharedScale && firstEnvelope.scaleMinimum <= 0 &&
+                firstEnvelope.scaleMaximum >= 0 &&
                 <line x1="0"
                   y1={PLOT_HEIGHT -
-                    (0 - envelope.scaleMinimum) /
-                    (envelope.scaleMaximum - envelope.scaleMinimum) * PLOT_HEIGHT}
+                    (0 - firstEnvelope.scaleMinimum) /
+                    (firstEnvelope.scaleMaximum - firstEnvelope.scaleMinimum) * PLOT_HEIGHT}
                   x2={PLOT_WIDTH}
                   y2={PLOT_HEIGHT -
-                    (0 - envelope.scaleMinimum) /
-                    (envelope.scaleMaximum - envelope.scaleMinimum) * PLOT_HEIGHT}
+                    (0 - firstEnvelope.scaleMinimum) /
+                    (firstEnvelope.scaleMaximum - firstEnvelope.scaleMinimum) * PLOT_HEIGHT}
                   className="waveform-zero-line" />}
-              <polygon points={envelope.points} className="waveform-envelope" />
+              {plot.envelopes.map(({ index, channel, envelope }) =>
+                <polygon key={channel.sourceChannel} points={envelope.points}
+                  className={`waveform-envelope waveform-series channel-color-${index % 7}`} />)}
             </svg>
             {triggerInViewport &&
               <i className="waveform-trigger-marker" style={{ left: `${triggerPercent}%` }} />}
@@ -380,11 +476,12 @@ export function WaveformViewer({ filename, buffer, onClose }: {
               <i className="waveform-cursor-marker"
                 style={{ left: `${cursorPercent}%` }} />}
           </div>
-        </article>)}
+        </article>
+      })}
     </div>
     <footer className="waveform-viewer-footer">
       <span>{triggerInCapture
-        ? `Trigger at frame ${triggerIndex.toLocaleString()}${triggerInViewport
+        ? `Trigger at frame ${triggerFrame.toLocaleString()}${triggerInViewport
           ? ` (${triggerPercent.toFixed(2)}% of view)` : ' (outside view)'}`
         : 'Trigger is outside the stored frame range'}</span>
       <span>View {relativeTime(viewport.first)} … {relativeTime(viewport.last - 1)}

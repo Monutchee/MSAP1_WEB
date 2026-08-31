@@ -10,6 +10,7 @@ import {
 import type { MeasurementTopology } from '../api'
 import { PowerView } from './PowerView'
 import { EnergyDemandView } from './EnergyDemandView'
+import { PowerQualityView } from './PowerQualityView'
 import { SequenceView, SEQUENCE_CONTEXT_KEYS } from './SequenceView'
 import {
   READING_INTERVAL_LABELS, aggregateReadingRecord, attribute, basicReadingRecord,
@@ -20,7 +21,8 @@ import {
 } from './readingModel'
 import './reading.css'
 
-type ReadingSubtab = 'overview' | 'power' | 'energy' | 'phasor' | 'sequence' | 'harmonics'
+type ReadingSubtab =
+  | 'overview' | 'power' | 'energy' | 'phasor' | 'sequence' | 'harmonics' | 'power-quality'
 type PhasorScope = 'voltage' | 'current' | 'all'
 type HarmonicGroup = 'voltage' | 'current'
 type HarmonicDisplay = 'magnitude' | 'percentage'
@@ -1150,9 +1152,13 @@ export function ReadingPage({
       <button className={activeSubtab === 'harmonics' ? 'active' : ''} type="button"
         aria-current={activeSubtab === 'harmonics' ? 'page' : undefined}
         onClick={() => setActiveSubtab('harmonics')}>Harmonics</button>
+      <button className={activeSubtab === 'power-quality' ? 'active' : ''} type="button"
+        aria-current={activeSubtab === 'power-quality' ? 'page' : undefined}
+        onClick={() => setActiveSubtab('power-quality')}>Power Quality</button>
     </nav>
 
     {activeSubtab !== 'harmonics' && activeSubtab !== 'energy' &&
+      activeSubtab !== 'power-quality' &&
       <RecordContextBar interval={readingInterval}
       record={committedRecord} section={activeSubtab} intervalError={intervalError}
       onIntervalChange={setReadingInterval} />}
@@ -1169,6 +1175,8 @@ export function ReadingPage({
           </div></section>
         : activeSubtab === 'energy'
           ? <EnergyDemandView canReset={canReset} onUnauthorized={onUnauthorized} />
+        : activeSubtab === 'power-quality'
+          ? <PowerQualityView onUnauthorized={onUnauthorized} />
         : activeSubtab === 'phasor'
           ? <PhasorUnbalanceView interval={readingInterval} record={committedRecord}
               nominalVoltage={Math.max(1, systemNominalVoltage)} scope={phasorScope}

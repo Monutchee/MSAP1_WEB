@@ -8,6 +8,9 @@
 .database-cursors { display:flex; flex-wrap:wrap; align-items:center; gap:.65rem 1.2rem; margin:0 0 1.4rem; padding:.85rem 1rem; border:1px solid var(--line); border-radius:10px; color:var(--muted); font: .7rem ui-monospace,monospace; }
 .database-cursors strong { color:#e2eeee; }
 .database-cursors small { flex-basis:100%; }
+.database-policy-notice { display:grid; gap:.35rem; margin-top:1rem; padding:1rem 1.15rem; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+.database-policy-notice strong { color:#dce8e9; }
+.database-policy-notice span { color:var(--muted); font-size:.74rem; }
 .database-policy-table { display:grid; border:1px solid var(--line); border-radius:18px; overflow:hidden; }
 .database-policy-table > header { display:grid; grid-template-columns:1.35fr 1fr 1fr 1fr; gap:1rem; padding:1rem 1.25rem; border-bottom:1px solid var(--line); }
 .database-policy-table fieldset { position:relative; display:grid; grid-template-columns:1.35fr 1fr 1fr 1fr; gap:1rem; margin:0; padding:1.15rem 1.25rem; border:0; border-bottom:1px solid var(--line); }
