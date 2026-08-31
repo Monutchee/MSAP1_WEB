@@ -34,6 +34,12 @@
   label the nominal voltage L-N and `delta` to label it L-L, but never infer a
   topology from readings or change/reconstruct metrology algorithms in the
   browser.
+- Configuration -> Meter edits the physical ADC CH0--CH3 phase assignment and
+  per-channel direction through `metering.current_wiring`. Keep A/B/C/N a
+  permutation, implement manual phase changes as swaps, preserve directions
+  when applying ABC/ACB presets, and display requested-versus-active health.
+  Meter and waveform data are already canonical; never remap them in the
+  browser.
 - The Sequence reading view may display the backend's authoritative sequence
   magnitudes and unbalance ratios. Do not synthesize sequence angles or a polar
   sequence plot until those angles are explicitly published by the API.

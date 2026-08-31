@@ -26,6 +26,41 @@ export interface HealthReason {
   message: string
 }
 
+export type CurrentPhase = 'A' | 'B' | 'C' | 'N'
+export type CurrentDirection = 'normal' | 'reversed'
+export type CurrentInputOrder = 'ABC' | 'ACB' | 'CUSTOM'
+
+export interface CurrentWiringChannel {
+  phase: CurrentPhase
+  direction: CurrentDirection
+}
+
+export interface CurrentWiringChannels {
+  ch0: CurrentWiringChannel
+  ch1: CurrentWiringChannel
+  ch2: CurrentWiringChannel
+  ch3: CurrentWiringChannel
+}
+
+export interface CurrentWiringConfiguration {
+  input_order: CurrentInputOrder
+  channels: CurrentWiringChannels
+}
+
+export interface CurrentWiringReadback extends CurrentWiringConfiguration {
+  phase_map: number
+  invert_mask: number
+}
+
+export interface CurrentWiringHealth {
+  requested: CurrentWiringReadback
+  active: CurrentWiringReadback
+  generation: number
+  match: boolean
+  last_apply_result: 'none' | 'success' | 'failed' | 'rolled_back' | 'rollback_failed' | 'unknown'
+  readback_mismatch_count: number
+}
+
 export interface AdcHealth {
   healthy: boolean
   spi_responsive: boolean
@@ -38,6 +73,7 @@ export interface AdcHealth {
   headers_valid: boolean
   meter_configured: boolean
   meter_generation_match: boolean
+  current_wiring: CurrentWiringHealth
   dc_offset_removal: boolean
   sample_rate_hz: number
   frames: number
@@ -953,6 +989,7 @@ export interface ProductSettings {
     flicker: FlickerSettings
     mains_signalling: MainsSignallingSettings
     demand: DemandConfiguration
+    current_wiring: CurrentWiringConfiguration
     conversion: {
       profile_id: string
       adc_reference_volts: number

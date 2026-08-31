@@ -133,6 +133,24 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 .nominal-grid-settings { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .demand-settings-grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
 .zero-crossing-settings-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.current-wiring-warning { margin: 1rem 1.35rem 0; }
+.current-wiring-preset {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 1.25rem 1.35rem;
+  border-bottom: 1px solid var(--line);
+}
+.current-wiring-preset > label { min-width: min(19rem, 100%); }
+.current-wiring-state { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: .55rem 1rem; }
+.current-wiring-state > span:not(.status-pill) { color: var(--muted); font: .68rem var(--mono); }
+.current-wiring-state strong { color: #dce8e9; }
+.current-wiring-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .9rem; padding: 1.25rem 1.35rem; }
+.current-wiring-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem; padding: 1rem; border: 1px solid var(--line); border-radius: 10px; background: rgba(7,17,22,.3); }
+.current-wiring-row > small { grid-column: 1 / -1; color: var(--muted); font: .63rem var(--mono); }
+.current-wiring-diagnostics { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .65rem 1.4rem; padding: .8rem 1.35rem; border-top: 1px solid var(--line); color: var(--muted); font: .65rem var(--mono); }
+.current-wiring-diagnostics strong { color: #dce8e9; font-weight: 600; }
 .simulator-source-panel { display: flex; align-items: end; gap: 1.25rem; margin-bottom: 1rem; padding: 1.2rem 1.5rem; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
 .simulator-source-panel label, .simulator-form label { display: flex; flex-direction: column; gap: .45rem; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; }
 .simulator-source-panel select, .simulator-form input, .simulator-form select { border: 1px solid var(--line); border-radius: 8px; padding: .65rem .7rem; color: #ecf5f5; background: #0a151a; font: inherit; }
@@ -756,6 +774,12 @@ form button.simulator-tone-add:hover { border-color: var(--green); background: r
   .meter-settings-section > header { align-items: flex-start; flex-direction: column; }
   .meter-settings-section > header > span { text-align: left; }
   .nominal-grid-settings, .demand-settings-grid { grid-template-columns: 1fr; }
+  .current-wiring-preset { align-items: flex-start; flex-direction: column; }
+  .current-wiring-state { justify-content: flex-start; }
+  .current-wiring-grid { grid-template-columns: 1fr; }
+  .current-wiring-row { grid-template-columns: 1fr; }
+  .current-wiring-row > small { grid-column: 1; }
+  .current-wiring-diagnostics { justify-content: flex-start; }
   .health-details { justify-items: start; }
   .health-list { justify-content: flex-start; }
   .developer-heading { align-items: flex-start; flex-direction: column; }
