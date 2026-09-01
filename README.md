@@ -153,13 +153,32 @@ neutral station, site, circuit, device, and calibration identity in the MNCWF
 capture settings for later COMTRADE and PQDIF conversion. The form reloads the
 active document immediately before saving so unrelated settings are preserved.
 
-**Configuration → Data Logging** is a read-only health summary. Storage
-backend, retention, and maximum-size controls are restricted to
-**Developer → Database**. The administrator-only top-level **Management** page
-owns destructive actions: clearing historian projections while retaining the
-raw spool, clearing the PQ event catalogue while retaining MNCWF files, and
-clearing waveform files while retaining event rows. Every action has a scoped
-confirmation dialog.
+**Configuration → Data Logging** is the M19 job and outbound-channel workspace.
+Administrators first define reusable HTTP, HTTPS, FTP, or SFTP Data Channels,
+including protocol-specific authentication and verification readiness, then
+create jobs by choosing a historian period, UTC generation interval, row
+interval, attributes/calculations, JSON or CSV, and either multiple remote
+channels or the mutually exclusive Local-only mode. Saving a channel does not
+contact its endpoint; **Test channel** is a separately initiated, clearly
+marked zero-data probe. HTTP and FTP always show their insecure-transport
+warning.
+
+History, MQTT, and Data Logging share the same grouped, searchable
+`AttributePicker`, populated from `GET /api/v1/meter/attributes`. It searches
+friendly labels, stable keys, groups, and units and filters against the
+selected usage/period capabilities. The browser does not maintain a second
+meter attribute table.
+
+**History → Generated Files** lists durable Data Sender artifacts with bounded
+filters and previews, authenticated downloads, quality/coverage context,
+delivery state, and administrator retry/delete actions. The Data Logging status
+surface distinguishes payload files, completed metadata, and missing/damaged
+payload alarms. The administrator-only **Management** page keeps destructive
+domains separate: **Clear historian data** preserves generated files, while
+**Clear generated files** preserves historian/raw-spool data and requires a
+second explicit confirmation before discarding anything unsent. PQ-event and
+waveform cleanup remain independent actions with their existing retention
+semantics.
 
 **Developer → Tweak** exposes the acquisition sample-rate selector (1 to
 128 kSPS from the APU's supported set, factory default 128 kSPS). Changing

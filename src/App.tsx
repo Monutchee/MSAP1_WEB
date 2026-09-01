@@ -10,7 +10,8 @@ import {
   MeterAggregate, MeterAggregateResult,
   MeterTenMinute, MeterTenMinuteResult,
   MeterTwoHour, MeterTwoHourResult,
-  MeasurementTopology, DemandConfiguration,
+  MeasurementTopology, DemandConfiguration, CurrentWiringConfiguration,
+  CurrentPhase,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
   PowerQualityEvents,
@@ -23,11 +24,21 @@ import { ReadingPage } from './reading/ReadingPage'
 import { ModbusConfiguration } from './configuration/ModbusConfiguration'
 import { MqttConfiguration } from './configuration/MqttConfiguration'
 import { PowerQualityConfiguration } from './configuration/PowerQualityConfiguration'
-import { DataLoggingStatusPage } from './configuration/DataLoggingStatusPage'
+import { DataLoggingPage } from './configuration/dataLogging/DataLoggingPage'
 import { ManagementPage } from './management/ManagementPage'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
+const CURRENT_CHANNEL_KEYS = ['ch0', 'ch1', 'ch2', 'ch3'] as const
+const DEFAULT_CURRENT_WIRING: CurrentWiringConfiguration = {
+  input_order: 'ABC',
+  channels: {
+    ch0: { phase: 'A', direction: 'normal' },
+    ch1: { phase: 'B', direction: 'normal' },
+    ch2: { phase: 'C', direction: 'normal' },
+    ch3: { phase: 'N', direction: 'normal' },
+  },
+}
 
 /**
  * Which measurement tier the dashboard renders. The first two tiers are
@@ -579,6 +590,8 @@ function PipelineHealthPanel({ health }: { health: SystemHealth | undefined }) {
         <StatusPill ok={health?.adc.headers_valid ?? false}>Frame headers</StatusPill>
         <StatusPill ok={health?.adc.fifo_ok ?? false}>PL FIFO</StatusPill>
         <StatusPill ok={health?.adc.meter_generation_match ?? false}>PL configuration</StatusPill>
+        <StatusPill ok={health?.adc.current_wiring.match ?? false}
+          neutral={!health?.adc.current_wiring}>Current wiring</StatusPill>
         <StatusPill ok={(health?.acquisition.read_errors ?? 1) === 0 &&
           !(health?.acquisition.record_stale ?? true)}>Meter DMA</StatusPill>
         <StatusPill ok={!(health?.acquisition.health_probe_pending ?? true)}>
@@ -1818,6 +1831,7 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
   measurementTopology, onMeasurementTopologyChange,
   systemNominalVoltage, onSystemNominalVoltageChange,
   demandConfiguration, onDemandConfigurationChange,
+  currentWiring, onCurrentWiringChange, currentWiringHealth,
   simulator, onSimulatorChange, onUnauthorized }: {
   configuration: FrequencyConfiguration | undefined
   configurationStatus: string
@@ -1831,6 +1845,9 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
   onSystemNominalVoltageChange: (systemNominalVoltage: number) => void
   demandConfiguration: DemandConfiguration | undefined
   onDemandConfigurationChange: (configuration: DemandConfiguration) => void
+  currentWiring: CurrentWiringConfiguration | undefined
+  onCurrentWiringChange: (configuration: CurrentWiringConfiguration) => void
+  currentWiringHealth: SystemHealth['adc']['current_wiring'] | undefined
   simulator: AdcSimulatorConfiguration | undefined
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onUnauthorized: () => void
@@ -1838,6 +1855,38 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
   const [activeTab, setActiveTab] =
     useState<'meter' | 'power-quality' | 'waveform' | 'data-logging' | 'modbus' | 'mqtt'>('meter')
   const nominalVoltageReference = measurementTopology === 'delta' ? 'L-L' : 'L-N'
+  const wiring = currentWiring ?? DEFAULT_CURRENT_WIRING
+  const wiringApplyFailed = currentWiringHealth !== undefined &&
+    !['none', 'success'].includes(currentWiringHealth.last_apply_result)
+
+  function selectCurrentPreset(preset: 'ABC' | 'ACB') {
+    const phases: CurrentPhase[] = preset === 'ABC'
+      ? ['A', 'B', 'C', 'N'] : ['A', 'C', 'B', 'N']
+    const channels = structuredClone(wiring.channels)
+    CURRENT_CHANNEL_KEYS.forEach((channel, index) => {
+      channels[channel].phase = phases[index]
+    })
+    onCurrentWiringChange({ input_order: preset, channels })
+  }
+
+  function selectCurrentPhase(channel: typeof CURRENT_CHANNEL_KEYS[number], phase: CurrentPhase) {
+    const channels = structuredClone(wiring.channels)
+    const previousPhase = channels[channel].phase
+    const swapped = CURRENT_CHANNEL_KEYS.find((candidate) =>
+      candidate !== channel && channels[candidate].phase === phase)
+    channels[channel].phase = phase
+    if (swapped) channels[swapped].phase = previousPhase
+    onCurrentWiringChange({ input_order: 'CUSTOM', channels })
+  }
+
+  function selectCurrentDirection(
+    channel: typeof CURRENT_CHANNEL_KEYS[number],
+    direction: CurrentWiringConfiguration['channels']['ch0']['direction'],
+  ) {
+    const channels = structuredClone(wiring.channels)
+    channels[channel].direction = direction
+    onCurrentWiringChange({ ...wiring, channels })
+  }
   return <section className="configuration-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Configuration</p><h1>Meter settings</h1>
@@ -1893,6 +1942,75 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
               onChange={(event) => onSystemNominalVoltageChange(Number(event.target.value))} />
               <small>{nominalVoltageReference} reference for diagrams; measurements are unchanged</small></label>
           </div>
+        </section>
+
+        <section className="meter-settings-section" aria-labelledby="current-wiring-settings-title">
+          <header><div><p className="eyebrow">Current inputs</p>
+            <h3 id="current-wiring-settings-title">ADC current-channel assignment</h3></div>
+            <span>Physical CH0–CH3 route to canonical A/B/C/N lanes</span></header>
+          {(currentWiringHealth && (!currentWiringHealth.match || wiringApplyFailed)) &&
+            <div className="error-banner current-wiring-warning" role="alert">
+              <strong>{currentWiringHealth.last_apply_result === 'rolled_back'
+                ? 'The latest current-wiring change was rolled back'
+                : currentWiringHealth.match
+                  ? 'The latest current-wiring apply failed'
+                  : 'Current wiring is not active as requested'}</strong>
+              <span>Last apply: {currentWiringHealth.last_apply_result.replaceAll('_', ' ')};
+                generation 0x{currentWiringHealth.generation.toString(16).padStart(8, '0')}.
+                Meter results may not correspond to the selected wiring.</span>
+            </div>}
+          <div className="current-wiring-preset">
+            <label>Current input order<select aria-label="Current input order"
+              value={wiring.input_order}
+              onChange={(event) => {
+                const value = event.target.value
+                if (value === 'ABC' || value === 'ACB') selectCurrentPreset(value)
+              }}>
+              <option value="ABC">ABC</option>
+              <option value="ACB">ACB</option>
+              <option value="CUSTOM" disabled>Custom</option>
+            </select>
+              <small>ABC/ACB are presets; direction remains tied to each ADC channel</small></label>
+            <div className="current-wiring-state" aria-label="Current wiring status">
+              <span>Requested <strong>{wiring.input_order}</strong></span>
+              <span>Active <strong>{currentWiringHealth?.active.input_order ?? '—'}</strong></span>
+              <StatusPill ok={currentWiringHealth?.match ?? false}
+                neutral={!currentWiringHealth}>
+                {!currentWiringHealth ? 'Wiring status unavailable'
+                  : currentWiringHealth.match ? 'Requested wiring active' : 'Readback mismatch'}
+              </StatusPill>
+            </div>
+          </div>
+          <div className="current-wiring-grid">
+            {CURRENT_CHANNEL_KEYS.map((channel, index) => {
+              const active = currentWiringHealth?.active.channels[channel]
+              return <div className="current-wiring-row" key={channel}>
+                <label>{`ADC CH${index} connected to`}<select
+                  value={wiring.channels[channel].phase}
+                  onChange={(event) => selectCurrentPhase(
+                    channel, event.target.value as CurrentPhase)}>
+                  {(['A', 'B', 'C', 'N'] as CurrentPhase[]).map((phase) =>
+                    <option key={phase} value={phase}>{`Phase ${phase}`}</option>)}
+                </select></label>
+                <label>{`ADC CH${index} direction`}<select
+                  value={wiring.channels[channel].direction}
+                  onChange={(event) => selectCurrentDirection(channel,
+                    event.target.value as CurrentWiringConfiguration['channels']['ch0']['direction'])}>
+                  <option value="normal">Normal</option>
+                  <option value="reversed">Reversed</option>
+                </select></label>
+                <small>Active: {active ? `Phase ${active.phase}, ${active.direction}` : 'unavailable'}</small>
+              </div>
+            })}
+          </div>
+          {currentWiringHealth && <div className="current-wiring-diagnostics">
+            <span>Last apply <strong>{currentWiringHealth.last_apply_result.replaceAll('_', ' ')}</strong></span>
+            <span>Readback mismatches <strong>{formatCount(currentWiringHealth.readback_mismatch_count)}</strong></span>
+            <span>Requested map <strong>0x{currentWiringHealth.requested.phase_map.toString(16).padStart(2, '0')}</strong>,
+              direction mask <strong>0x{currentWiringHealth.requested.invert_mask.toString(16)}</strong></span>
+            <span>Active map <strong>0x{currentWiringHealth.active.phase_map.toString(16).padStart(2, '0')}</strong>,
+              direction mask <strong>0x{currentWiringHealth.active.invert_mask.toString(16)}</strong></span>
+          </div>}
         </section>
 
         <section className="meter-settings-section" aria-labelledby="demand-settings-title">
@@ -1981,14 +2099,15 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
           </div>
         </section>
 
-        <div className="frequency-actions"><button type="submit">Apply and save</button>
+        <div className="frequency-actions"><button type="submit"
+          disabled={configurationStatus === 'Saving…'}>Apply and save</button>
           <span>{configurationStatus}</span></div>
       </form>}</> : activeTab === 'power-quality'
       ? <PowerQualityConfiguration onUnauthorized={onUnauthorized} />
       : activeTab === 'waveform'
         ? <WaveformConfiguration />
       : activeTab === 'data-logging'
-        ? <DataLoggingStatusPage onUnauthorized={onUnauthorized} />
+        ? <DataLoggingPage onUnauthorized={onUnauthorized} />
         : activeTab === 'modbus'
           ? <ModbusConfiguration onUnauthorized={onUnauthorized} />
           : <MqttConfiguration onUnauthorized={onUnauthorized} />}
@@ -2030,6 +2149,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [systemNominalVoltage, setSystemNominalVoltage] = useState<number>()
   const [demandConfiguration, setDemandConfiguration] =
     useState<DemandConfiguration>()
+  const [currentWiring, setCurrentWiring] =
+    useState<CurrentWiringConfiguration>()
   const [configurationStatus, setConfigurationStatus] = useState('')
   const [adcSource, setAdcSource] = useState<AdcSource>()
   const [simulator, setSimulator] = useState<AdcSimulatorConfiguration>()
@@ -2081,6 +2202,8 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           setDemandConfiguration(activeSettings.settings.metering.demand ?? {
             method: 'sliding', window_seconds: 60,
           })
+          setCurrentWiring(structuredClone(
+            activeSettings.settings.metering.current_wiring ?? DEFAULT_CURRENT_WIRING))
         }
       })
       .catch((reason) => { if (active) handleError(reason) })
@@ -2134,6 +2257,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         }
         if (demandConfiguration !== undefined) {
           settings.metering.demand = demandConfiguration
+        }
+        if (currentWiring !== undefined) {
+          settings.metering.current_wiring = currentWiring
         }
         // The simulator signal frequency is edited on the Meter form but
         // persists through the same adc.simulator path the simulator pane
@@ -2612,6 +2738,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
             onSystemNominalVoltageChange={setSystemNominalVoltage}
             demandConfiguration={demandConfiguration}
             onDemandConfigurationChange={setDemandConfiguration}
+            currentWiring={currentWiring}
+            onCurrentWiringChange={setCurrentWiring}
+            currentWiringHealth={health?.adc.current_wiring}
             simulator={simulator}
             onSimulatorChange={setSimulator}
             onUnauthorized={onUnauthorized} />
