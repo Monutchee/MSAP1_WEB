@@ -139,13 +139,17 @@ updates using journald cursors. Journal access is provided only through the
 authenticated backend API; the browser never reads the system journal
 directly.
 
-The top-level **Waveforms** page triggers and lists manual captures only;
-PQ-only evidence remains in the event catalogue even though both paths share
-the same MNCWF-v4 storage and viewer. The viewer can render separate channel
-lanes, shared-scale voltage and current overlays, or one normalized all-channel
-overlay. The browser sends only the trigger request; the acquisition daemon
-owns the dedicated waveform DMA, history, time correlation, and file
-materialization.
+The top-level **Waveforms** page triggers manual captures and browses the full
+MNCWF-v4 archive. Each row identifies a Manual, PQ event, mixed, or legacy
+trigger origin; All, Manual-only, and PQ-event-only filters use stable paged
+archive queries, with mixed captures present in both filtered views. Linked
+evidence in **History → PQ Event catalogue** resolves its capture UUID through
+an exact full-archive lookup, so an older completed session remains viewable
+and downloadable even when it is not on the newest page. The viewer can render
+separate channel lanes, shared-scale voltage and current overlays, or one
+normalized all-channel overlay. The browser sends only trigger and catalogue
+requests; the acquisition daemon owns the dedicated waveform DMA, history,
+time correlation, and file materialization.
 
 **Configuration → Power Quality** edits complete event, flicker, and
 mains-signalling policy through the central settings authority. It also stores

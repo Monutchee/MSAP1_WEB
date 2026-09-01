@@ -99,6 +99,39 @@
   font-size: .68rem;
 }
 
+.waveform-origin {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.35rem;
+  padding: .16rem .48rem;
+  border: 1px solid rgba(129, 171, 184, .28);
+  border-radius: 999px;
+  color: #afc5cb;
+  background: rgba(129, 171, 184, .08);
+  font-size: .58rem;
+  font-weight: 700;
+  letter-spacing: .035em;
+  white-space: nowrap;
+}
+
+.waveform-origin.manual {
+  border-color: rgba(84, 226, 164, .3);
+  color: #75edb8;
+  background: rgba(84, 226, 164, .08);
+}
+
+.waveform-origin.power_quality {
+  border-color: rgba(93, 179, 255, .34);
+  color: #8acaff;
+  background: rgba(93, 179, 255, .09);
+}
+
+.waveform-origin.mixed {
+  border-color: rgba(192, 145, 255, .36);
+  color: #d1adff;
+  background: rgba(192, 145, 255, .09);
+}
+
 .waveform-library-list dl {
   display: grid;
   grid-template-columns: repeat(4, minmax(80px, 1fr));
@@ -492,6 +525,8 @@
 .waveform-library-tools {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 1.25rem;
 }
 
@@ -499,6 +534,25 @@
   color: var(--muted);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: .68rem;
+}
+
+.waveform-origin-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+  color: var(--muted);
+  font-size: .68rem;
+  white-space: nowrap;
+}
+
+.waveform-origin-filter select {
+  min-height: 2.25rem;
+  padding: .45rem 1.9rem .45rem .65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: #0a151a;
+  font: .7rem ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 
 .waveform-select-all {
@@ -538,6 +592,29 @@
 
 .waveform-library-list > article.selected {
   background: rgba(84, 226, 164, .05);
+}
+
+.waveform-load-older {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.waveform-load-older button {
+  min-width: 12rem;
+  padding: .65rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: #0a151a;
+  font-size: .74rem;
+  font-weight: 700;
+}
+
+.waveform-load-older button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
 }
 
 .waveform-trigger-unit {

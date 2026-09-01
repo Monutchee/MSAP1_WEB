@@ -1285,6 +1285,27 @@ export interface DeveloperAbout {
   components: ComponentFingerprint[]
 }
 
+export type WaveformOrigin = 'manual' | 'power_quality' | 'mixed' | 'legacy'
+export type WaveformOriginFilter = 'all' | 'manual' | 'power_quality'
+
+export interface WaveformArchiveDiscovery {
+  state: 'not_started' | 'scanning' | 'complete' | 'cancelled' | 'failed'
+  scanned_files: number
+  total_files: number
+  rejected_files: number
+}
+
+export interface WaveformPage {
+  origin: WaveformOriginFilter
+  limit: number
+  total_sessions: number
+  completed_sessions: number
+  incomplete_sessions: number
+  active_sessions: number
+  returned_sessions: number
+  next_before_session_id: number | null
+}
+
 export interface WaveformSession {
   id: number
   state: 'capturing' | 'complete' | 'incomplete'
@@ -1295,7 +1316,7 @@ export interface WaveformSession {
   trigger_realtime_nanoseconds: number
   sample_rate_hz: number
   event_count: number
-  origin: 'manual' | 'power_quality' | 'mixed' | 'legacy'
+  origin: WaveformOrigin
   decimation: number
   filename: string
   continuation_of_session_id: number
@@ -1322,14 +1343,22 @@ export interface WaveformStatus {
   history_capacity_frames: number
   completed_sessions: number
   incomplete_sessions: number
-  archive_discovery?: {
-    state: 'not_started' | 'scanning' | 'complete' | 'cancelled' | 'failed'
-    scanned_files: number
-    total_files: number
-    rejected_files: number
-  }
+  archive_discovery?: WaveformArchiveDiscovery
+  page?: WaveformPage
   export_formats: string[]
   sessions: WaveformSession[]
+}
+
+export interface WaveformSessionLookup {
+  capture_uuid: string
+  archive_discovery: WaveformArchiveDiscovery
+  session: WaveformSession | null
+}
+
+export interface WaveformQuery {
+  origin?: WaveformOriginFilter
+  before_session_id?: number
+  limit?: number
 }
 
 export type PowerQualityEventLifecycle = 'start' | 'update' | 'end' | 'abort' | 'unknown'
@@ -1645,7 +1674,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ confirmed: true }),
     }),
-  waveforms: () => request<WaveformStatus>('/api/v1/waveforms'),
+  waveforms: (query: WaveformQuery = {}) => {
+    const parameters = new URLSearchParams()
+    if (query.origin) parameters.set('origin', query.origin)
+    if (query.before_session_id !== undefined)
+      parameters.set('before_session_id', String(query.before_session_id))
+    if (query.limit !== undefined) parameters.set('limit', String(query.limit))
+    const suffix = parameters.size === 0 ? '' : `?${parameters.toString()}`
+    return request<WaveformStatus>(`/api/v1/waveforms${suffix}`)
+  },
+  waveformSession: (captureUuid: string) =>
+    request<WaveformSessionLookup>(`/api/v1/waveforms/session?capture_uuid=${
+      encodeURIComponent(captureUuid)}`),
   waveformFile: (filename: string) => requestBinary(waveformViewPath(filename)),
   triggerWaveform: (pretrigger_ms: number, posttrigger_ms: number,
     decimation: number) =>

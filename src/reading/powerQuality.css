@@ -345,6 +345,7 @@
 }
 .power-quality-capture-actions > button { color: #dce8e9; border-color: var(--line); }
 .power-quality-capture-pending { color: var(--muted); font-size: .66rem; }
+.power-quality-capture-pending.unavailable { color: #ff9d9d; }
 .power-quality-empty {
   display: grid;
   align-content: center;

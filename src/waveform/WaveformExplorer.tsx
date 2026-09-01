@@ -1,18 +1,20 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  api, ApiError, waveformDownloadPath, WaveformSession, WaveformStatus,
+  api, ApiError, waveformDownloadPath, WaveformOrigin,
+  WaveformOriginFilter, WaveformSession, WaveformStatus,
 } from '../api'
 import { WaveformTriggerPanel } from './WaveformTriggerPanel'
 import { WaveformViewer } from './WaveformViewer'
 import { parseWaveform, ParsedWaveform } from './waveformFile'
 import './waveform.css'
 
+const waveformPageSize = 16
+
 /**
  * One coarse health verdict for the page header. The detailed counters live
  * in Developer -> Waveform; here a capture either looks healthy or it does
  * not. All inputs are cumulative since daemon start, so the flag latches
- * until the acquisition service restarts - deliberate, because the loss it
- * reports usually happened while nobody was watching.
+ * until the acquisition service restarts.
  */
 function waveformIssue(status: WaveformStatus | undefined) {
   if (!status) return undefined
@@ -41,6 +43,25 @@ function duration(session: WaveformSession) {
     session.sample_rate_hz).toFixed(3)} s`
 }
 
+export function waveformOriginLabel(origin: WaveformOrigin) {
+  switch (origin) {
+    case 'manual': return 'Manual trigger'
+    case 'power_quality': return 'PQ event trigger'
+    case 'mixed': return 'Manual + PQ event'
+    case 'legacy': return 'Legacy / unknown trigger'
+  }
+}
+
+function hasLinkedPqEvidence(session: WaveformSession) {
+  return session.origin === 'power_quality' || session.origin === 'mixed'
+}
+
+function mergeSessions(current: WaveformSession[], incoming: WaveformSession[]) {
+  const sessions = new Map(current.map((session) => [session.id, session]))
+  incoming.forEach((session) => sessions.set(session.id, session))
+  return Array.from(sessions.values()).sort((first, second) => second.id - first.id)
+}
+
 export function WaveformExplorer({
   onUnauthorized, canDelete, acquisitionAvailable = true,
 }: {
@@ -49,6 +70,10 @@ export function WaveformExplorer({
   acquisitionAvailable?: boolean
 }) {
   const [status, setStatus] = useState<WaveformStatus>()
+  const [sessions, setSessions] = useState<WaveformSession[]>([])
+  const [origin, setOrigin] = useState<WaveformOriginFilter>('all')
+  const [nextBefore, setNextBefore] = useState<number | null>(null)
+  const [loadingOlder, setLoadingOlder] = useState(false)
   const [loadingFile, setLoadingFile] = useState('')
   const [deletingSession, setDeletingSession] = useState(0)
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set())
@@ -58,35 +83,97 @@ export function WaveformExplorer({
     waveform: ParsedWaveform
   }>()
   const [error, setError] = useState('')
+  const originRef = useRef(origin)
+  const archiveStateRef = useRef<string>()
+  const loadedOlderRef = useRef(false)
+  originRef.current = origin
 
-  const load = useCallback(async () => {
+  const handleFailure = useCallback((reason: unknown, fallback: string) => {
+    if (reason instanceof ApiError && reason.status === 401) {
+      onUnauthorized()
+      return
+    }
+    setError(reason instanceof Error ? reason.message : fallback)
+  }, [onUnauthorized])
+
+  const loadNewest = useCallback(async (replace = false) => {
     if (!acquisitionAvailable) return
+    const requestedOrigin = origin
     try {
-      setStatus(await api.waveforms())
+      const next = await api.waveforms({ origin: requestedOrigin, limit: waveformPageSize })
+      if (originRef.current !== requestedOrigin) return
+      const archiveState = next.archive_discovery?.state
+      const indexingCompleted = archiveStateRef.current === 'scanning' &&
+        archiveState === 'complete'
+      archiveStateRef.current = archiveState
+      setStatus(next)
+      if (replace || indexingCompleted) {
+        loadedOlderRef.current = false
+        setSessions(next.sessions)
+        setNextBefore(next.page?.next_before_session_id ?? null)
+        setSelected(new Set())
+      } else {
+        setSessions((current) => mergeSessions(current, next.sessions))
+        if (!loadedOlderRef.current)
+          setNextBefore(next.page?.next_before_session_id ?? null)
+      }
       setError('')
     } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 401) {
-        onUnauthorized()
-        return
-      }
-      setError(reason instanceof Error ? reason.message : 'Unable to read waveform history')
+      if (originRef.current === requestedOrigin)
+        handleFailure(reason, 'Unable to read waveform history')
     }
-  }, [acquisitionAvailable, onUnauthorized])
+  }, [acquisitionAvailable, handleFailure, origin])
 
   useEffect(() => {
+    setSelected(new Set())
+    setSessions([])
+    setNextBefore(null)
+    setLoadingOlder(false)
+    loadedOlderRef.current = false
+    archiveStateRef.current = undefined
     if (!acquisitionAvailable) {
       setStatus(undefined)
       setError('')
       return
     }
     let active = true
+    let pending = false
+    let firstPage = true
     const refresh = async () => {
-      if (active) await load()
+      if (!active || pending) return
+      pending = true
+      await loadNewest(firstPage)
+      firstPage = false
+      pending = false
     }
     void refresh()
     const timer = window.setInterval(refresh, 2000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [acquisitionAvailable, load])
+  }, [acquisitionAvailable, loadNewest])
+
+  const loadOlder = useCallback(async () => {
+    if (nextBefore === null || status?.archive_discovery?.state === 'scanning') return
+    const requestedOrigin = origin
+    setLoadingOlder(true)
+    setError('')
+    try {
+      const next = await api.waveforms({
+        origin: requestedOrigin,
+        before_session_id: nextBefore,
+        limit: waveformPageSize,
+      })
+      if (originRef.current !== requestedOrigin) return
+      loadedOlderRef.current = true
+      setStatus(next)
+      setSessions((current) => mergeSessions(current, next.sessions))
+      setNextBefore(next.page?.next_before_session_id ?? null)
+    } catch (reason) {
+      if (originRef.current === requestedOrigin)
+        handleFailure(reason, 'Unable to load older waveform captures')
+    } finally {
+      if (originRef.current === requestedOrigin) setLoadingOlder(false)
+    }
+  }, [handleFailure, nextBefore, origin, status?.archive_discovery?.state])
 
   const open = useCallback(async (session: WaveformSession) => {
     if (!session.filename) return
@@ -94,48 +181,33 @@ export function WaveformExplorer({
     setError('')
     try {
       const buffer = await api.waveformFile(session.filename)
-      // Parse before mounting the viewer so an unsupported or damaged file is
-      // reported inside this page instead of throwing through the React tree.
-      const waveform = parseWaveform(buffer)
-      setViewer({ filename: session.filename, waveform })
+      setViewer({ filename: session.filename, waveform: parseWaveform(buffer) })
     } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 401) {
-        onUnauthorized()
-        return
-      }
-      setError(reason instanceof Error ? reason.message : 'Unable to load waveform file')
+      handleFailure(reason, 'Unable to load waveform file')
     } finally {
       setLoadingFile('')
     }
-  }, [onUnauthorized])
+  }, [handleFailure])
 
   async function remove(session: WaveformSession) {
-    if (session.state === 'capturing' ||
-      !window.confirm(`Delete waveform session ${session.id}? This cannot be undone.`))
+    if (session.state === 'capturing') return
+    const evidenceWarning = hasLinkedPqEvidence(session)
+      ? ' Linked PQ event evidence will become unavailable.' : ''
+    if (!window.confirm(`Delete waveform session ${session.id}?${evidenceWarning} This cannot be undone.`))
       return
     setDeletingSession(session.id)
     setError('')
     try {
-      const next = await api.deleteWaveform(session.id)
-      setStatus(next)
+      await api.deleteWaveform(session.id)
       if (viewer?.filename === session.filename) setViewer(undefined)
+      await loadNewest(true)
     } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 401) {
-        onUnauthorized()
-        return
-      }
-      setError(reason instanceof Error ? reason.message : 'Unable to delete waveform')
+      handleFailure(reason, 'Unable to delete waveform')
     } finally {
       setDeletingSession(0)
     }
   }
 
-  // PQ-only evidence is browsed from History → PQ Event catalogue. A mixed
-  // session remains here because it contains an explicit manual trigger too;
-  // legacy files predate origin metadata and stay visible for compatibility.
-  const sessions = (status?.sessions ?? []).filter(
-    (session) => session.origin !== 'power_quality')
-  // A capture still being written cannot be deleted, so it never selects.
   const deletable = sessions.filter((session) => session.state !== 'capturing')
   const allSelected = deletable.length > 0 &&
     deletable.every((session) => selected.has(session.id))
@@ -146,7 +218,7 @@ export function WaveformExplorer({
     setSelected(next)
   }
 
-  function toggleSelectAll() {
+  function toggleSelectShown() {
     setSelected(allSelected
       ? new Set()
       : new Set(deletable.map((session) => session.id)))
@@ -154,8 +226,10 @@ export function WaveformExplorer({
 
   async function removeSelected() {
     const targets = deletable.filter((session) => selected.has(session.id))
+    const evidenceWarning = targets.some(hasLinkedPqEvidence)
+      ? ' Linked PQ event evidence for the selected captures will become unavailable.' : ''
     if (targets.length === 0 ||
-      !window.confirm(`Delete ${targets.length} waveform session(s)? This cannot be undone.`))
+      !window.confirm(`Delete ${targets.length} waveform session(s)?${evidenceWarning} This cannot be undone.`))
       return
     setBulkDeleting(true)
     setError('')
@@ -163,8 +237,7 @@ export function WaveformExplorer({
     try {
       for (const session of targets) {
         try {
-          const next = await api.deleteWaveform(session.id)
-          setStatus(next)
+          await api.deleteWaveform(session.id)
           if (viewer?.filename === session.filename) setViewer(undefined)
         } catch (reason) {
           if (reason instanceof ApiError && reason.status === 401) {
@@ -175,6 +248,7 @@ export function WaveformExplorer({
             reason instanceof Error ? reason.message : 'delete failed'}`)
         }
       }
+      await loadNewest(true)
       if (failures.length > 0)
         setError(`Unable to delete ${failures.length} of ${targets.length} — ${failures[0]}`)
     } finally {
@@ -185,13 +259,19 @@ export function WaveformExplorer({
 
   const issue = waveformIssue(status)
   const archive = status?.archive_discovery
-  const archiveIndexing = archive !== undefined && archive.state === 'scanning'
+  const archiveIndexing = archive?.state === 'scanning'
+  const totals = status?.page
+  const totalSessions = totals?.total_sessions ?? sessions.length
+  const completedSessions = totals?.completed_sessions ??
+    sessions.filter((session) => session.state === 'complete').length
+  const incompleteSessions = totals?.incomplete_sessions ??
+    sessions.filter((session) => session.state === 'incomplete').length
 
   return <section className="waveform-explorer-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Waveforms</p><h1>Capture history</h1>
-        <p>Browse persistent pre/post-trigger captures and inspect raw or converted values.</p></div>
-      <button className="waveform-refresh" type="button" onClick={() => void load()}>
+        <p>Browse persistent manual and PQ-event captures and inspect raw or converted values.</p></div>
+      <button className="waveform-refresh" type="button" onClick={() => void loadNewest(true)}>
         Refresh history
       </button>
     </div>
@@ -211,18 +291,34 @@ export function WaveformExplorer({
       </span>}
     </div>
     {error && <div className="error-banner"><strong>Waveform error</strong><span>{error}</span></div>}
-    {canDelete && <WaveformTriggerPanel status={status} onStatus={setStatus}
-      onUnauthorized={onUnauthorized} />}
+    {canDelete && <WaveformTriggerPanel status={status} onStatus={(next) => {
+      setStatus(next)
+      void loadNewest(true)
+    }} onUnauthorized={onUnauthorized} />}
     <section className="waveform-library">
       <header>
         <div><p className="eyebrow">Persistent storage</p><h2>Saved captures</h2></div>
         <div className="waveform-library-tools">
-          <span>{sessions.filter((session) => session.state === 'complete').length} complete ·
-            {' '}{sessions.filter((session) => session.state === 'incomplete').length} incomplete</span>
+          <label className="waveform-origin-filter">
+            <span>Trigger type</span>
+            <select aria-label="Filter captures by trigger type" value={origin}
+              onChange={(event) => {
+                const next = event.target.value as WaveformOriginFilter
+                originRef.current = next
+                setOrigin(next)
+                setSelected(new Set())
+              }}>
+              <option value="all">All</option>
+              <option value="manual">Manual trigger only</option>
+              <option value="power_quality">PQ event trigger only</option>
+            </select>
+          </label>
+          <span>{count(completedSessions)} complete · {count(incompleteSessions)} incomplete ·
+            {' '}{count(sessions.length)} of {count(totalSessions)} shown</span>
           {canDelete && deletable.length > 0 && <>
             <label className="waveform-select-all">
               <input type="checkbox" checked={allSelected}
-                onChange={toggleSelectAll} />Select all
+                onChange={toggleSelectShown} />Select shown
             </label>
             <button className="waveform-delete" type="button"
               disabled={selected.size === 0 || bulkDeleting}
@@ -244,17 +340,16 @@ export function WaveformExplorer({
                 onChange={() => toggleSelected(session.id)} />}
               <strong>Session {session.id}</strong>
               <span className={`session-state ${session.state}`}>{session.state}</span>
+              <span className={`waveform-origin ${session.origin}`}
+                aria-label={`Trigger origin: ${waveformOriginLabel(session.origin)}`}>
+                {waveformOriginLabel(session.origin)}
+              </span>
               <time>{sessionTime(session)}</time>
             </div>
             <dl>
               <div><dt>Duration</dt><dd>{duration(session)}</dd></div>
               <div><dt>Sample rate</dt><dd>{count(session.sample_rate_hz)} frame/s
                 {session.decimation > 1 ? ` ÷ ${session.decimation}` : ''}</dd></div>
-              {/*
-                * Sequences span acquisition frames whatever the decimation,
-                * so the window span is the same for any divisor; the stored
-                * count is what the file actually contains.
-                */}
               <div><dt>Samples</dt><dd>
                 {count((session.last_sequence - session.first_sequence) /
                   Math.max(1, session.decimation) + 1)}
@@ -288,14 +383,22 @@ export function WaveformExplorer({
           </article>)}
         {sessions.length === 0 &&
           <div className="waveform-library-empty">
-            <strong>{archiveIndexing ? 'Indexing saved captures' : 'No manual waveform captures'}</strong>
+            <strong>{archiveIndexing ? 'Indexing saved captures' : 'No matching waveform captures'}</strong>
             <span>{archiveIndexing
-              ? 'Validated files appear here as soon as archive indexing completes.'
-              : canDelete
-              ? 'Trigger a capture with the form above.'
-              : 'An administrator can trigger a manual capture from this page. PQ evidence is under History.'}</span>
+              ? 'Validated files appear here as archive indexing progresses.'
+              : origin === 'all'
+              ? canDelete ? 'Trigger a capture with the form above.'
+                : 'No saved manual or PQ-event captures are available.'
+              : 'Choose All or another trigger filter to browse the archive.'}</span>
           </div>}
       </div>
+      {nextBefore !== null && <div className="waveform-load-older">
+        <button type="button" disabled={loadingOlder || archiveIndexing}
+          onClick={() => void loadOlder()}>
+          {archiveIndexing ? 'Indexing archive…'
+            : loadingOlder ? 'Loading…' : 'Load older captures'}
+        </button>
+      </div>}
     </section>
     {viewer && <WaveformViewer key={viewer.filename}
       filename={viewer.filename} waveform={viewer.waveform}
