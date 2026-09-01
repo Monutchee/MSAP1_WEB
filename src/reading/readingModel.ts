@@ -20,6 +20,8 @@ export interface ReadingRecord {
   channels: IntervalChannel[]
   sequence: number
   configurationGeneration: number
+  firstSampleIndex: number | undefined
+  sampleCount: number | undefined
   timeQuality: 'unsynchronized' | 'synchronized' | 'holdover' | undefined
   utcStartNanoseconds: number | undefined
   utcUncertaintyNanoseconds: number | undefined
@@ -42,6 +44,17 @@ export const READING_INTERVAL_LABELS: Record<ReadingInterval, string> = {
   aggregate: '150/180-cycle aggregate',
   min10: '10-minute finalized',
   hour2: '2-hour finalized',
+}
+
+export const READING_HARMONIC_PERIODS: Record<ReadingInterval, HarmonicPeriod> = {
+  basic: 'basic',
+  aggregate: 'cycles_150_180',
+  min10: 'minutes_10',
+  hour2: 'hours_2',
+}
+
+export function harmonicPeriodForReadingInterval(interval: ReadingInterval) {
+  return READING_HARMONIC_PERIODS[interval]
 }
 
 export const POWER_SCOPES: PowerScope[] = ['a', 'b', 'c', 'total']
@@ -118,14 +131,19 @@ function buildRecord(
     attributes: MeterReadingAttribute[]
     channels: IntervalChannel[]
     record_complete: boolean
+    first_sample_index?: number
+    sample_count?: number
   },
   context: Omit<ReadingRecord,
-    'interval' | 'sequence' | 'configurationGeneration' | 'attributes' | 'channels' | 'recordComplete'>,
+    'interval' | 'sequence' | 'configurationGeneration' | 'firstSampleIndex' | 'sampleCount' |
+    'attributes' | 'channels' | 'recordComplete'>,
 ): ReadingRecord {
   return {
     interval,
     sequence: source.sequence,
     configurationGeneration: source.configuration_generation,
+    firstSampleIndex: source.first_sample_index,
+    sampleCount: source.sample_count,
     attributes: source.attributes,
     channels: source.channels,
     recordComplete: source.record_complete && sourcesMatch(source.sequence, source.attributes),
@@ -144,6 +162,8 @@ export function basicReadingRecord(readings: MeterReadings | undefined): Reading
     attributes: readings.attributes ?? [],
     channels: readings.channels,
     record_complete: readings.record_complete,
+    first_sample_index: readings.timing?.first_sample_index,
+    sample_count: readings.timing?.sample_count,
   }, {
     timeQuality: readings.timing?.time_quality,
     utcStartNanoseconds: readings.timing?.utc_start_nanoseconds,
@@ -259,6 +279,24 @@ export function isUsableHarmonicSpectrum(spectrum: HarmonicSpectrum | undefined)
   if (!spectrum?.available || !spectrum.interval_valid) return false
   return !harmonicIsLong(spectrum.period) ||
     (spectrum.time_aligned && !spectrum.contaminated)
+}
+
+/**
+ * Return a harmonic family only when its physical interval is exactly the
+ * committed scalar record. This prevents a newer family from being rendered
+ * beside cached power values during independent endpoint polling.
+ */
+export function matchingHarmonicSpectrum(
+  record: ReadingRecord | undefined,
+  spectrum: HarmonicSpectrum | undefined,
+) {
+  if (!record || !spectrum?.available || record.firstSampleIndex === undefined ||
+      record.sampleCount === undefined) return undefined
+  return spectrum.period === harmonicPeriodForReadingInterval(record.interval) &&
+    spectrum.configuration_generation === record.configurationGeneration &&
+    spectrum.first_sample === record.firstSampleIndex &&
+    spectrum.sample_count === record.sampleCount
+    ? spectrum : undefined
 }
 
 export function updateHarmonicSpectrumCache(

@@ -1806,6 +1806,18 @@
 .pf-analysis > p { padding: 0 1.15rem 1.15rem; }
 .pf-analysis dl { padding: .35rem 1.15rem 0; }
 
+.thd-phase-values {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: .2rem .65rem;
+}
+
+.thd-phase-values b {
+  color: var(--muted);
+  font-size: .72em;
+}
+
 .power-matrix-scroll,
 .reading-advanced-scroll {
   overflow-x: auto;

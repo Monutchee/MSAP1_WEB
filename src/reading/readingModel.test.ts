@@ -3,8 +3,9 @@ import type { HarmonicSpectrum, MeterReadingAttribute, MeterReadings } from '../
 import {
   basicReadingRecord, buildStableChartScale, chartMagnitude, effectiveQuality,
   formatReading, formatUtc, normalizeForPrecision, operatingMode, pqResultant,
-  growStableChartScale, harmonicPresentationState, intervalPresentationState,
-  selectCommittedRecord, selectHarmonicSpectrum, updateCompleteRecordCache,
+  growStableChartScale, harmonicPeriodForReadingInterval, harmonicPresentationState,
+  intervalPresentationState, matchingHarmonicSpectrum, selectCommittedRecord,
+  selectHarmonicSpectrum, updateCompleteRecordCache,
   updateHarmonicSpectrumCache, visibleQuality, type ReadingRecord,
 } from './readingModel'
 
@@ -54,6 +55,7 @@ function record(sequence: number, generation: number, complete: boolean): Readin
   return {
     interval: 'basic', attributes: [reading('power.active.total', 10, 'valid', sequence)],
     channels: [], sequence, configurationGeneration: generation,
+    firstSampleIndex: sequence * 3_200, sampleCount: 3_200,
     timeQuality: 'synchronized', utcStartNanoseconds: undefined,
     utcUncertaintyNanoseconds: undefined, recordComplete: complete,
     arithmeticError: false, flags: [],
@@ -103,6 +105,8 @@ describe('reading record adapter', () => {
     expect(coherent?.recordComplete).toBe(true)
     expect(coherent?.utcStartNanoseconds).toBeDefined()
     expect(coherent?.timeQuality).toBe('synchronized')
+    expect(coherent?.firstSampleIndex).toBe(0)
+    expect(coherent?.sampleCount).toBe(3_200)
 
     const mixed = basicReadingRecord(basic([
       reading('power.active.total', 1084.97),
@@ -185,6 +189,36 @@ describe('reading record adapter', () => {
     cache = updateHarmonicSpectrumCache(cache, 'minutes_10', restarted, 7)
     expect(selectHarmonicSpectrum(cache, 'minutes_10', restarted, 7)).toBeUndefined()
     expect(cache).not.toHaveProperty('hours_2')
+  })
+
+  it('maps every Power interval and accepts only an exact harmonic interval identity', () => {
+    expect(harmonicPeriodForReadingInterval('basic')).toBe('basic')
+    expect(harmonicPeriodForReadingInterval('aggregate')).toBe('cycles_150_180')
+    expect(harmonicPeriodForReadingInterval('min10')).toBe('minutes_10')
+    expect(harmonicPeriodForReadingInterval('hour2')).toBe('hours_2')
+
+    const power = {
+      ...record(9, 7, true), interval: 'min10' as const,
+      firstSampleIndex: 123_456, sampleCount: 76_800_000,
+    }
+    const exact = harmonic(2, 7, {
+      period: 'minutes_10', first_sample: 123_456, sample_count: 76_800_000,
+    })
+    expect(matchingHarmonicSpectrum(power, exact)).toBe(exact)
+    expect(matchingHarmonicSpectrum(power, {
+      ...exact, configuration_generation: 8,
+    })).toBeUndefined()
+    expect(matchingHarmonicSpectrum(power, {
+      ...exact, first_sample: 123_457,
+    })).toBeUndefined()
+    expect(matchingHarmonicSpectrum(power, {
+      ...exact, sample_count: 76_799_999,
+    })).toBeUndefined()
+    expect(matchingHarmonicSpectrum(power, {
+      ...exact, period: 'hours_2',
+    })).toBeUndefined()
+    expect(matchingHarmonicSpectrum({ ...power, firstSampleIndex: undefined }, exact))
+      .toBeUndefined()
   })
 })
 

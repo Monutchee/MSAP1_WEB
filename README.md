@@ -59,9 +59,14 @@ Positive P means import, negative P export, positive Q₁ inductive/lagging, and
 negative Q₁ capacitive/leading. The dashed apparent-power envelope is backend
 S; the separately displayed `sqrt(P² + Q₁²)` resultant need not match it in
 distorted or unbalanced conditions. Totals are never reconstructed from phase
-values. The current backend does not supply THD, fundamental P₁/S₁, or
-algorithm profile/version, so those items remain explicitly unavailable and no
-distortion component or fundamental triangle is invented.
+values. While Power is visible, the browser requests the corresponding atomic
+harmonic family and displays the APU-calculated voltage and current H₂–H₅₀ THD
+only when period, configuration generation, first sample, and sample count
+exactly match the committed scalar record. Phase scope shows that phase; Total
+shows separate A/B/C values and never averages them. An interval race, invalid
+family, missing order, or qualified range below H₅₀ remains visibly
+unavailable. Fundamental P₁/S₁ and algorithm profile/version remain explicitly
+unavailable, so no distortion component or fundamental triangle is invented.
 
 **Reading → Phasor & Unbalance** retains the fundamental phasor diagram and
 adds friendly unbalance summaries plus a collapsed exact-quality/provenance

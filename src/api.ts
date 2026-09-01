@@ -485,7 +485,24 @@ export interface HarmonicChannel {
   channel: number
   name: string
   unit: 'A' | 'V'
+  thd: HarmonicDistortion
   orders: HarmonicOrder[]
+}
+
+export type HarmonicDistortionStatus =
+  | 'valid'
+  | 'interval_invalid'
+  | 'channel_unavailable'
+  | 'fundamental_unavailable'
+  | 'insufficient_order_range'
+  | 'harmonic_unavailable'
+
+/** APU-calculated product THD. Null is unavailable and is never numeric zero. */
+export interface HarmonicDistortion {
+  percent: number | null
+  first_order: 2
+  last_order: 50
+  status: HarmonicDistortionStatus
 }
 
 export type HarmonicPeriod =

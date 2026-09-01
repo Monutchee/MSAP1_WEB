@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { MeterReadingAttribute } from '../api'
+import type {
+  HarmonicChannel, HarmonicDistortionStatus, HarmonicSpectrum, MeterReadingAttribute,
+} from '../api'
 import {
   POWER_METRICS, POWER_SCOPES, POWER_SCOPE_LABELS, READING_INTERVAL_LABELS,
   attribute, buildStableChartScale, chartMagnitude, effectiveQuality,
@@ -176,9 +178,74 @@ function PQOperatingPointChart({ record, scope }: {
   </section>
 }
 
-function PowerFactorAnalysis({ record, scope }: {
+const THD_CHANNELS: Record<Exclude<PowerScope, 'total'>, { voltage: number; current: number }> = {
+  a: { voltage: 6, current: 0 },
+  b: { voltage: 5, current: 1 },
+  c: { voltage: 4, current: 2 },
+}
+
+const THD_STATUS_MESSAGES: Record<HarmonicDistortionStatus, string> = {
+  valid: '',
+  interval_invalid: 'The matching harmonic interval failed measurement validation.',
+  channel_unavailable: 'One or more selected phase channels are unavailable.',
+  fundamental_unavailable: 'A valid nonzero H₁ is unavailable for one or more selected phases.',
+  insufficient_order_range: 'The current sample rate does not qualify magnitudes through H₅₀.',
+  harmonic_unavailable: 'At least one H₂–H₅₀ magnitude is unavailable.',
+}
+
+function harmonicChannel(spectrum: HarmonicSpectrum | undefined, channel: number) {
+  return spectrum?.channels.find((candidate) => candidate.channel === channel)
+}
+
+function formatThd(channel: HarmonicChannel | undefined) {
+  const thd = channel?.thd
+  return thd?.status === 'valid' && thd.percent !== null && Number.isFinite(thd.percent)
+    ? `${thd.percent.toFixed(3)}%` : '—'
+}
+
+function ThdReadout({ spectrum, scope, kind }: {
+  spectrum: HarmonicSpectrum | undefined
+  scope: PowerScope
+  kind: 'voltage' | 'current'
+}) {
+  const phases = scope === 'total' ? (['a', 'b', 'c'] as const) : [scope]
+  if (scope !== 'total')
+    return <>{formatThd(harmonicChannel(spectrum, THD_CHANNELS[scope][kind]))}</>
+  return <span className="thd-phase-values" aria-label={`${kind} THD by phase`}>
+    {phases.map((phase) => <span key={phase}>
+      <b>{phase.toUpperCase()}</b> {formatThd(harmonicChannel(
+        spectrum, THD_CHANNELS[phase][kind],
+      ))}
+    </span>)}
+  </span>
+}
+
+function thdAvailabilityMessage(
+  spectrum: HarmonicSpectrum | undefined,
+  scope: PowerScope,
+  pendingMessage: string | undefined,
+) {
+  if (!spectrum) return pendingMessage ??
+    'Waiting for the harmonic family that exactly matches this Power interval.'
+  const phases = scope === 'total' ? (['a', 'b', 'c'] as const) : [scope]
+  const channels = phases.flatMap((phase) => [
+    harmonicChannel(spectrum, THD_CHANNELS[phase].voltage),
+    harmonicChannel(spectrum, THD_CHANNELS[phase].current),
+  ])
+  if (channels.some((channel) => !channel?.thd))
+    return 'The matching harmonic family does not provide an APU THD result.'
+  const statuses = [...new Set(channels.map((channel) => channel!.thd.status)
+    .filter((status) => status !== 'valid'))]
+  if (statuses.length > 0)
+    return statuses.map((status) => THD_STATUS_MESSAGES[status]).join(' ')
+  return 'The APU calculated each value from H₂–H₅₀ of this exact interval; phases are not averaged.'
+}
+
+function PowerFactorAnalysis({ record, scope, harmonics, harmonicMessage }: {
   record: ReadingRecord
   scope: PowerScope
+  harmonics: HarmonicSpectrum | undefined
+  harmonicMessage: string | undefined
 }) {
   const powerFactor = powerAttribute(record, 'factor', scope)
   const displacement = powerAttribute(record, 'displacement', scope)
@@ -186,6 +253,7 @@ function PowerFactorAnalysis({ record, scope }: {
   const currentUnbalance = attribute(record, 'unbalance.current')
   const difference = isValidReading(powerFactor) && isValidReading(displacement)
     ? Math.abs(powerFactor.value - displacement.value).toFixed(4) : '—'
+  const thdMessage = thdAvailabilityMessage(harmonics, scope, harmonicMessage)
 
   return <section className="pf-analysis" aria-labelledby="pf-analysis-heading">
     <header><p className="eyebrow">Power-quality context</p>
@@ -196,13 +264,17 @@ function PowerFactorAnalysis({ record, scope }: {
       <div><dt>|PF − DPF|</dt><dd>{difference}</dd></div>
       <div><dt>Voltage unbalance</dt><dd>{formatReading(voltageUnbalance, 3)}</dd></div>
       <div><dt>Current unbalance</dt><dd>{formatReading(currentUnbalance, 3)}</dd></div>
-      <div><dt>Voltage THD</dt><dd>—</dd></div>
-      <div><dt>Current THD</dt><dd>—</dd></div>
+      <div><dt>Voltage THD (H₂–H₅₀)</dt><dd>
+        <ThdReadout spectrum={harmonics} scope={scope} kind="voltage" />
+      </dd></div>
+      <div><dt>Current THD (H₂–H₅₀)</dt><dd>
+        <ThdReadout spectrum={harmonics} scope={scope} kind="current" />
+      </dd></div>
       <div><dt>Fundamental P₁ / S₁</dt><dd>—</dd></div>
     </dl>
     <p>The difference between true PF and displacement PF may reflect waveform
-      distortion, unbalance, or other nonfundamental effects. THD and a complete
-      P₁–Q₁–S₁ decomposition are not supplied by this record.</p>
+      distortion, unbalance, or other nonfundamental effects. {thdMessage}{' '}
+      A complete P₁–Q₁–S₁ decomposition is not supplied by this record.</p>
   </section>
 }
 
@@ -253,10 +325,12 @@ function RawPowerMeasurements({ record }: { record: ReadingRecord }) {
   </details>
 }
 
-export function PowerView({ record, scope, onScopeChange }: {
+export function PowerView({ record, scope, onScopeChange, harmonics, harmonicMessage }: {
   record: ReadingRecord
   scope: PowerScope
   onScopeChange: (scope: PowerScope) => void
+  harmonics?: HarmonicSpectrum
+  harmonicMessage?: string
 }) {
   return <section className="reading-section power-view" aria-labelledby="power-view-heading">
     <div className="reading-section-heading compact">
@@ -268,7 +342,8 @@ export function PowerView({ record, scope, onScopeChange }: {
     <PowerSummary record={record} scope={scope} />
     <div className="power-analysis-grid">
       <PQOperatingPointChart key={`${record.interval}-${scope}`} record={record} scope={scope} />
-      <PowerFactorAnalysis record={record} scope={scope} />
+      <PowerFactorAnalysis record={record} scope={scope} harmonics={harmonics}
+        harmonicMessage={harmonicMessage} />
     </div>
     <PowerPhaseMatrix record={record} />
     <RawPowerMeasurements record={record} />

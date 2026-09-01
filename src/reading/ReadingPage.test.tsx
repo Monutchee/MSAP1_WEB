@@ -120,6 +120,7 @@ function harmonicSpectrum(
     rate_limited: false,
     channels: [{
       channel: 6, name: 'Va', unit: 'V',
+      thd: { percent: 1.25, first_order: 2, last_order: 50, status: 'valid' },
       orders: [{
         order: 1, magnitude_micro_units: 120_000_000, magnitude: 120,
         magnitude_valid: true, angle_millidegrees: 0, angle_degrees: 0,
@@ -163,6 +164,30 @@ describe('Reading page coherent record behavior', () => {
     interval.focus()
     expect(interval).toHaveFocus()
     expect(screen.queryByRole('button', { name: 'Phasor Angle' })).not.toBeInTheDocument()
+  })
+
+  it('requests Basic harmonics for Power and hides THD immediately on identity change', async () => {
+    const matching = harmonicSpectrum(1, {
+      period: 'basic', sample_count: 3_200, first_sample: 0,
+      channels: [
+        { channel: 0, name: 'Ia', unit: 'A',
+          thd: { percent: 0, first_order: 2, last_order: 50, status: 'valid' }, orders: [] },
+        { channel: 6, name: 'Va', unit: 'V',
+          thd: { percent: 1.25, first_order: 2, last_order: 50, status: 'valid' }, orders: [] },
+      ],
+    })
+    vi.spyOn(api, 'meterHarmonics').mockResolvedValue(matching)
+    const { rerender } = render(<ReadingPage readings={record(41, 7, true)}
+      onUnauthorized={() => undefined} systemNominalVoltage={120} measurementTopology="wye" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Power' }))
+    await waitFor(() => expect(api.meterHarmonics).toHaveBeenCalledWith('basic'))
+    expect(await screen.findByText('1.250%')).toBeInTheDocument()
+    expect(screen.getByText('0.000%')).toBeInTheDocument()
+
+    rerender(<ReadingPage readings={record(1, 8, true)}
+      onUnauthorized={() => undefined} systemNominalVoltage={120} measurementTopology="wye" />)
+    await waitFor(() => expect(screen.queryByText('1.250%')).not.toBeInTheDocument())
+    expect(screen.getByText(/Locating the H₂–H₅₀ harmonic family/)).toBeInTheDocument()
   })
 
   it('shows an operator sequence view without inventing unpublished angles', () => {

@@ -1,6 +1,6 @@
 import {
   type PointerEvent as ReactPointerEvent,
-  useCallback, useEffect, useMemo, useState,
+  useEffect, useMemo, useState,
 } from 'react'
 import {
   api, ApiError, HarmonicChannel, HarmonicOrder, HarmonicPeriod,
@@ -16,7 +16,8 @@ import { harmonicMismatchMessage, harmonicNominalMismatch } from './harmonicDiag
 import {
   READING_INTERVAL_LABELS, aggregateReadingRecord, attribute, basicReadingRecord,
   effectiveQuality, formatReading, formatUtc, friendlyAttributeName, isValidReading,
-  harmonicPresentationState, intervalPresentationState, operatingMode, powerAttribute,
+  harmonicPeriodForReadingInterval, harmonicPresentationState, intervalPresentationState,
+  matchingHarmonicSpectrum, operatingMode, powerAttribute,
   selectCommittedRecord, selectHarmonicSpectrum, updateCompleteRecordCache,
   updateHarmonicSpectrumCache, visibleQuality, type CompleteRecordCache,
   type HarmonicPresentationState, type HarmonicSpectrumCache,
@@ -1044,6 +1045,9 @@ export function ReadingPage({
   const [orderRange, setOrderRange] = useState<HarmonicOrderRange>(FULL_SUMMARY_RANGE)
   const [spectrum, setSpectrum] = useState<HarmonicSpectrum>()
   const [harmonicError, setHarmonicError] = useState('')
+  const requestedHarmonicPeriod = activeSubtab === 'power'
+    ? harmonicPeriodForReadingInterval(readingInterval)
+    : activeSubtab === 'harmonics' ? period : undefined
 
   useEffect(() => {
     if (!acquisitionAvailable || activeSubtab === 'harmonics' || readingInterval === 'basic') {
@@ -1091,37 +1095,38 @@ export function ReadingPage({
     }
   }, [acquisitionAvailable, activeSubtab, onUnauthorized, readingInterval])
 
-  const loadHarmonics = useCallback(async () => {
-    if (!acquisitionAvailable) return
-    try {
-      setSpectrum(await api.meterHarmonics(period))
-      setHarmonicError('')
-    } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 401) {
-        onUnauthorized()
-        return
-      }
-      setHarmonicError(reason instanceof Error ? reason.message : 'Unable to read harmonics')
-    }
-  }, [acquisitionAvailable, onUnauthorized, period])
-
   useEffect(() => {
-    if (!acquisitionAvailable || activeSubtab !== 'harmonics') return
+    if (!acquisitionAvailable || !requestedHarmonicPeriod) return
     let active = true
     let pending = false
     const refresh = async () => {
       if (!active || pending) return
       pending = true
-      await loadHarmonics()
-      pending = false
+      try {
+        const next = await api.meterHarmonics(requestedHarmonicPeriod)
+        if (active) {
+          setSpectrum(next)
+          setHarmonicError('')
+        }
+      } catch (reason) {
+        if (!active) return
+        if (reason instanceof ApiError && reason.status === 401) {
+          onUnauthorized()
+          return
+        }
+        setHarmonicError(reason instanceof Error ? reason.message : 'Unable to read harmonics')
+      } finally {
+        pending = false
+      }
     }
+    setSpectrum((current) => current?.period === requestedHarmonicPeriod ? current : undefined)
     void refresh()
     const timer = window.setInterval(refresh, 2000)
     return () => {
       active = false
       window.clearInterval(timer)
     }
-  }, [acquisitionAvailable, activeSubtab, loadHarmonics])
+  }, [acquisitionAvailable, onUnauthorized, requestedHarmonicPeriod])
 
   useEffect(() => {
     if (acquisitionAvailable) return
@@ -1169,17 +1174,33 @@ export function ReadingPage({
 
   useEffect(() => {
     setHarmonicSpectra((current) => acquisitionAvailable
-      ? updateHarmonicSpectrumCache(current, period, spectrum, harmonicGeneration)
+      ? updateHarmonicSpectrumCache(
+          current, spectrum?.period ?? requestedHarmonicPeriod ?? period,
+          spectrum, harmonicGeneration,
+        )
       : {})
-  }, [acquisitionAvailable, harmonicGeneration, period, spectrum])
+  }, [acquisitionAvailable, harmonicGeneration, period, requestedHarmonicPeriod, spectrum])
 
+  const harmonicTabCandidate = spectrum?.period === period ? spectrum : undefined
   const cachedSpectrum = acquisitionAvailable
-    ? selectHarmonicSpectrum(harmonicSpectra, period, spectrum, harmonicGeneration)
+    ? selectHarmonicSpectrum(harmonicSpectra, period, harmonicTabCandidate, harmonicGeneration)
     : undefined
   const harmonicState: HarmonicPresentationState = acquisitionAvailable
-    ? harmonicPresentationState(spectrum, cachedSpectrum, harmonicGeneration)
+    ? harmonicPresentationState(harmonicTabCandidate, cachedSpectrum, harmonicGeneration)
     : 'waiting'
   const displayedSpectrum = nominalMismatch ? undefined : cachedSpectrum
+  const powerPeriod = harmonicPeriodForReadingInterval(readingInterval)
+  const powerCandidate = spectrum?.period === powerPeriod ? spectrum : undefined
+  const exactPowerSpectrum = matchingHarmonicSpectrum(committedRecord, powerCandidate) ??
+    matchingHarmonicSpectrum(committedRecord, harmonicSpectra[powerPeriod])
+  const powerSpectrum = !nominalMismatch && !harmonicError ? exactPowerSpectrum : undefined
+  const powerHarmonicMessage = harmonicError
+    ? `H₂–H₅₀ THD is unavailable: ${harmonicError}`
+    : nominalMismatch
+      ? harmonicMismatchMessage(nominalMismatch, canConfigure)
+      : committedRecord?.firstSampleIndex === undefined || committedRecord.sampleCount === undefined
+        ? 'This Power record does not include the sample identity required to match THD safely.'
+        : 'Locating the H₂–H₅₀ harmonic family for this exact Power interval.'
   const channels = CHANNEL_GROUPS[group]
   const channelByIndex = useMemo(() => new Map(
     displayedSpectrum?.channels.map((channel) => [channel.channel, channel]) ?? [],
@@ -1239,7 +1260,8 @@ export function ReadingPage({
       : activeSubtab === 'power'
         ? committedRecord
           ? <PowerView record={committedRecord} scope={powerScope}
-              onScopeChange={setPowerScope} />
+              onScopeChange={setPowerScope} harmonics={powerSpectrum}
+              harmonicMessage={powerHarmonicMessage} />
           : <section className="reading-section"><div className="harmonic-empty">
             <strong>Waiting for {READING_INTERVAL_LABELS[readingInterval]} power data</strong>
             <span>Power cards, chart, and matrix commit together after all source sequences agree.</span>
