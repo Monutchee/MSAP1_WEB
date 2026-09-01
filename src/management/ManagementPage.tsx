@@ -6,7 +6,7 @@ import { ConfirmDialog, ConfirmDialogState } from '../components/ConfirmDialog'
 import './management.css'
 
 const ALL_HISTORY_DATASETS: HistorianDataset[] = [
-  'basic', 'cycles_150_180', 'minutes_10', 'hours_2', 'demand',
+  'basic', 'cycles_150_180', 'minutes_10', 'hours_2', 'demand', 'seconds_10',
   'harmonic_cycles_150_180', 'harmonic_minutes_10', 'harmonic_hours_2',
 ]
 

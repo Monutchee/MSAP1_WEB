@@ -6,6 +6,7 @@ import {
   MeterAttributeCatalog,
 } from '../api'
 import { AttributePicker } from '../components/AttributePicker'
+import { meterCatalogPeriodForMqtt } from './mqttPeriod'
 import './mqtt.css'
 
 const DEFAULT_PORT: Record<MqttTransport, number> = {
@@ -344,14 +345,17 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
                 <label>Measurement period<select value={publication.period}
                   onChange={(event) => {
                     const next = event.target.value
-                    const availableNext = new Set(catalog?.periods.find((entry) => entry.id === next)?.attributes ?? [])
+                    const catalogPeriod = meterCatalogPeriodForMqtt(next)
+                    const availableNext = new Set(catalog?.periods.find(
+                      (entry) => entry.id === catalogPeriod)?.attributes ?? [])
                     const invalid = publication.attributes.filter((attribute) => !availableNext.has(attribute))
                     if (invalid.length > 0 && !window.confirm(
                       `${invalid.length} selected attribute${invalid.length === 1 ? '' : 's'} ` +
                       `cannot be published for this period. Remove ${invalid.length === 1 ? 'it' : 'them'} and continue?`)) return
                     editPublication(index, { period: next,
                       attributes: publication.attributes.filter((attribute) => availableNext.has(attribute)) })
-                  }}>{capabilities.map((period) => <option key={period.id} value={period.id}>{catalog?.periods.find((entry) => entry.id === period.id)?.label ?? period.id}</option>)}</select></label>
+                  }}>{capabilities.map((period) => <option key={period.id} value={period.id}>{catalog?.periods.find((entry) =>
+                    entry.id === meterCatalogPeriodForMqtt(period.id))?.label ?? period.id}</option>)}</select></label>
                 <label>Interval (ms)<input type="number" min="100" max="86400000"
                   value={publication.interval_ms}
                   onChange={(event) => editPublication(index, { interval_ms: Number(event.target.value) })} /></label>
@@ -362,7 +366,8 @@ export function MqttConfiguration({ onUnauthorized }: { onUnauthorized: () => vo
                 <label className="toggle"><input type="checkbox" checked={publication.retain}
                   onChange={(event) => editPublication(index, { retain: event.target.checked })} />Retain latest payload</label>
               </div>
-              {catalog ? <AttributePicker catalog={catalog} period={publication.period}
+              {catalog ? <AttributePicker catalog={catalog}
+                period={meterCatalogPeriodForMqtt(publication.period)}
                 selected={publication.attributes}
                 onChange={(attributes) => editPublication(index, { attributes })} />
                 : <fieldset className="mqtt-attributes"><legend>Meter attributes</legend>

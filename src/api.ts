@@ -274,6 +274,60 @@ export interface MeterAggregatePending {
 export type MeterAggregate = MeterAggregateResult | MeterAggregatePending
 
 /**
+ * One completed UTC-aligned IEC 61000-4-30 ten-second frequency result.
+ * Exact sample, UTC, and Q16 audit integers remain decimal strings so the
+ * browser never rounds them through JavaScript Number.
+ */
+export interface MeterFrequency10sResult {
+  available: true
+  sequence: number
+  configuration_generation: number
+  valid: boolean
+  quality: MeterReadingQuality
+  /** Omitted for every invalid completed interval; zero is never substituted. */
+  frequency_hz?: number
+  frequency_millihz?: number
+  time_quality: 'unsynchronized' | 'synchronized' | 'holdover'
+  age_ms: number
+  first_sample_index: string
+  interval_end_sample_index: string
+  sample_count: number
+  sample_rate_hz: number
+  measured_sample_rate_millihz: number
+  cycle_count: number
+  utc_start_nanoseconds: string
+  utc_end_nanoseconds: string
+  utc_uncertainty_nanoseconds: string
+  source_sequence: number
+  boundary_generation: number
+  source_status: number
+  source_status_flags: string[]
+  status: number
+  status_flags: string[]
+  reasons: number
+  rejection_reasons: string[]
+  observer_drop_count: number
+  guard_flags: number
+  guard_flag_names: string[]
+  observed_crossings: number
+  included_crossings: number
+  rejected_cycles: number
+  duration_q16_samples: string
+  first_crossing_q16_samples: string
+  last_crossing_q16_samples: string
+  nominal_frequency_hz: number
+  reference_channel: number
+  filter_profile: number
+  calibration_profile: number
+}
+
+export interface MeterFrequency10sPending {
+  available: false
+}
+
+export type MeterFrequency10s = MeterFrequency10sResult | MeterFrequency10sPending
+
+/**
  * A finalized, clock-aligned ten-minute aggregate produced in programmable
  * logic. Frequency is intentionally absent: its standardized product uses an
  * independent 10-second interval rather than this aggregation tier.
@@ -1063,6 +1117,7 @@ export interface DatabaseSettings {
   harmonic_minutes_10: DatasetStorageSettings
   harmonic_hours_2: DatasetStorageSettings
   demand: DatasetStorageSettings
+  seconds_10: DatasetStorageSettings
 }
 
 export interface DatabaseConsumerCursor {
@@ -1106,7 +1161,7 @@ export interface DatabaseStatus {
 }
 
 export type HistorianDataset =
-  | 'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2' | 'demand'
+  | 'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2' | 'demand' | 'seconds_10'
   | 'harmonic_cycles_150_180' | 'harmonic_minutes_10'
   | 'harmonic_hours_2'
 
@@ -1607,6 +1662,8 @@ export const api = {
   meterAttributes: (usage: MeterAttributeUsage) =>
     request<MeterAttributeCatalog>(`/api/v1/meter/attributes?usage=${usage}`),
   meterAggregate: () => request<MeterAggregate>('/api/v1/meter/aggregate'),
+  meterFrequency10s: () =>
+    request<MeterFrequency10s>('/api/v1/meter/frequency-10s'),
   meterTenMinute: () => request<MeterTenMinute>('/api/v1/meter/minutes-10'),
   meterTwoHour: () => request<MeterTwoHour>('/api/v1/meter/hours-2'),
   meterTenMinuteLive: () => request<MeterTenMinute>('/api/v1/meter/minutes-10/live'),
