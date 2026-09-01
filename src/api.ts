@@ -1322,6 +1322,12 @@ export interface WaveformStatus {
   history_capacity_frames: number
   completed_sessions: number
   incomplete_sessions: number
+  archive_discovery?: {
+    state: 'not_started' | 'scanning' | 'complete' | 'cancelled' | 'failed'
+    scanned_files: number
+    total_files: number
+    rejected_files: number
+  }
   export_formats: string[]
   sessions: WaveformSession[]
 }
@@ -1462,9 +1468,25 @@ export interface MainsSignalStatus {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly code?: string,
+    public readonly retryable?: boolean,
+  ) {
     super(message)
   }
+}
+
+interface ApiErrorPayload {
+  error?: string
+  code?: string
+  retryable?: boolean
+}
+
+function apiError(status: number, payload: ApiErrorPayload, fallback: string) {
+  return new ApiError(status, payload.error ?? fallback,
+    payload.code, payload.retryable)
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1476,9 +1498,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   })
-  const payload = await response.json().catch(() => ({}))
+  const payload: ApiErrorPayload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new ApiError(response.status, payload.error ?? `Request failed (${response.status})`)
+    throw apiError(response.status, payload, `Request failed (${response.status})`)
   }
   return payload as T
 }
@@ -1486,8 +1508,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 async function requestBinary(path: string): Promise<ArrayBuffer> {
   const response = await fetch(path, { credentials: 'same-origin' })
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({}))
-    throw new ApiError(response.status, payload.error ?? `Request failed (${response.status})`)
+    const payload: ApiErrorPayload = await response.json().catch(() => ({}))
+    throw apiError(response.status, payload, `Request failed (${response.status})`)
   }
   return response.arrayBuffer()
 }
@@ -1502,9 +1524,9 @@ async function uploadFile<T = MqttCredentialStatus>(path: string, file: File): P
     },
     body: file,
   })
-  const payload = await response.json().catch(() => ({}))
+  const payload: ApiErrorPayload = await response.json().catch(() => ({}))
   if (!response.ok)
-    throw new ApiError(response.status, payload.error ?? `Upload failed (${response.status})`)
+    throw apiError(response.status, payload, `Upload failed (${response.status})`)
   return payload as T
 }
 
@@ -1699,8 +1721,8 @@ export const api = {
       credentials: 'same-origin',
     })
     if (!response.ok) {
-      const payload = await response.json().catch(() => ({}))
-      throw new ApiError(response.status, payload.error ?? `Preview failed (${response.status})`)
+      const payload: ApiErrorPayload = await response.json().catch(() => ({}))
+      throw apiError(response.status, payload, `Preview failed (${response.status})`)
     }
     return response.text()
   },

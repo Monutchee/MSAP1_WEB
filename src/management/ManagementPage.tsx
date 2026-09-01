@@ -21,8 +21,9 @@ interface PendingAction {
   dialog: ConfirmDialogState
 }
 
-export function ManagementPage({ onUnauthorized }: {
+export function ManagementPage({ onUnauthorized, acquisitionAvailable = true }: {
   onUnauthorized: () => void
+  acquisitionAvailable?: boolean
 }) {
   const [database, setDatabase] = useState<DatabaseStatus>()
   const [waveforms, setWaveforms] = useState<WaveformStatus>()
@@ -42,8 +43,10 @@ export function ManagementPage({ onUnauthorized }: {
   }, [onUnauthorized])
 
   const load = useCallback(async () => {
+    const waveformRequest: Promise<WaveformStatus | undefined> = acquisitionAvailable
+      ? api.waveforms() : Promise.resolve(undefined)
     const [nextDatabase, nextWaveforms, nextGenerated] = await Promise.allSettled([
-      api.developerDatabase(), api.waveforms(), api.dataLoggingStatus(),
+      api.developerDatabase(), waveformRequest, api.dataLoggingStatus(),
     ])
     const failures: string[] = []
     if (nextDatabase.status === 'fulfilled') setDatabase(nextDatabase.value)
@@ -53,7 +56,7 @@ export function ManagementPage({ onUnauthorized }: {
     if (nextGenerated.status === 'fulfilled') setGenerated(nextGenerated.value)
     else failures.push(handleFailure(nextGenerated.reason, 'Unable to read generated-file status'))
     setError(failures.filter((failure) => failure !== 'unauthorized').join(' · '))
-  }, [handleFailure])
+  }, [acquisitionAvailable, handleFailure])
 
   useEffect(() => {
     void load()
@@ -120,6 +123,8 @@ export function ManagementPage({ onUnauthorized }: {
 
   const waveformCount = waveforms?.sessions.length ?? 0
   const captureActive = waveforms?.active_session ?? false
+  const archiveIndexing = waveforms !== undefined &&
+    waveforms.archive_discovery?.state !== 'complete'
   return <section className="management-page">
     <div className="developer-heading">
       <div><p className="eyebrow">Administration</p><h1>Management</h1>
@@ -194,9 +199,12 @@ export function ManagementPage({ onUnauthorized }: {
         <span>{captureActive ? 'Capture active' : `${waveformCount} sessions`}</span></header>
       <p>Remove manual and PQ capture sessions and their MNCWF files. PQ catalogue rows are not deleted.</p>
       {captureActive && <div className="management-warning">Wait for the active capture to finish before clearing waveform data.</div>}
+      {archiveIndexing && <div className="management-warning" role="status">
+        Waveform archive indexing is still in progress. Clear-all is available after every retained file has been checked.
+      </div>}
       <div className="management-actions">
         <button type="button" className="danger"
-          disabled={busy || captureActive || waveformCount === 0}
+          disabled={busy || captureActive || archiveIndexing || waveformCount === 0}
           onClick={() => request({ kind: 'waveforms' }, {
             title: 'Clear all waveform data?',
             description: 'Every inactive manual and PQ waveform session and its MNCWF master file will be permanently removed. Event catalogue records remain.',

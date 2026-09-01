@@ -42,10 +42,11 @@ function duration(session: WaveformSession) {
 }
 
 export function WaveformExplorer({
-  onUnauthorized, canDelete,
+  onUnauthorized, canDelete, acquisitionAvailable = true,
 }: {
   onUnauthorized: () => void
   canDelete: boolean
+  acquisitionAvailable?: boolean
 }) {
   const [status, setStatus] = useState<WaveformStatus>()
   const [loadingFile, setLoadingFile] = useState('')
@@ -59,6 +60,7 @@ export function WaveformExplorer({
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
+    if (!acquisitionAvailable) return
     try {
       setStatus(await api.waveforms())
       setError('')
@@ -69,9 +71,14 @@ export function WaveformExplorer({
       }
       setError(reason instanceof Error ? reason.message : 'Unable to read waveform history')
     }
-  }, [onUnauthorized])
+  }, [acquisitionAvailable, onUnauthorized])
 
   useEffect(() => {
+    if (!acquisitionAvailable) {
+      setStatus(undefined)
+      setError('')
+      return
+    }
     let active = true
     const refresh = async () => {
       if (active) await load()
@@ -79,7 +86,7 @@ export function WaveformExplorer({
     void refresh()
     const timer = window.setInterval(refresh, 2000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [load])
+  }, [acquisitionAvailable, load])
 
   const open = useCallback(async (session: WaveformSession) => {
     if (!session.filename) return
@@ -177,6 +184,8 @@ export function WaveformExplorer({
   }
 
   const issue = waveformIssue(status)
+  const archive = status?.archive_discovery
+  const archiveIndexing = archive !== undefined && archive.state === 'scanning'
 
   return <section className="waveform-explorer-page">
     <div className="developer-heading">
@@ -195,6 +204,11 @@ export function WaveformExplorer({
           title={issue ? 'Details in Developer → Waveform' : undefined}>
           <i />{issue || 'Healthy'}
         </span>}
+      {archive && <span className={`status-pill ${archive.state === 'complete' ? 'ok' : 'neutral'}`}>
+        <i />{archive.state === 'scanning'
+          ? `Indexing archive ${count(archive.scanned_files)}/${count(archive.total_files)}`
+          : archive.state === 'complete' ? 'Archive indexed' : `Archive ${archive.state}`}
+      </span>}
     </div>
     {error && <div className="error-banner"><strong>Waveform error</strong><span>{error}</span></div>}
     {canDelete && <WaveformTriggerPanel status={status} onStatus={setStatus}
@@ -274,8 +288,10 @@ export function WaveformExplorer({
           </article>)}
         {sessions.length === 0 &&
           <div className="waveform-library-empty">
-            <strong>No manual waveform captures</strong>
-            <span>{canDelete
+            <strong>{archiveIndexing ? 'Indexing saved captures' : 'No manual waveform captures'}</strong>
+            <span>{archiveIndexing
+              ? 'Validated files appear here as soon as archive indexing completes.'
+              : canDelete
               ? 'Trigger a capture with the form above.'
               : 'An administrator can trigger a manual capture from this page. PQ evidence is under History.'}</span>
           </div>}

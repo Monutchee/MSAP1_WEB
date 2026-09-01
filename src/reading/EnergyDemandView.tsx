@@ -182,9 +182,10 @@ function DemandTable({ demand, displayUnit }: {
   </table></div>
 }
 
-export function EnergyDemandView({ canReset, onUnauthorized }: {
+export function EnergyDemandView({ canReset, onUnauthorized, enabled = true }: {
   canReset: boolean
   onUnauthorized: () => void
+  enabled?: boolean
 }) {
   const [energy, setEnergy] = useState<MeterEnergy>()
   const [demand, setDemand] = useState<MeterDemand>()
@@ -233,6 +234,13 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
   }, [handleError])
 
   useEffect(() => {
+    if (!enabled) {
+      setEnergy(undefined)
+      setDemand(undefined)
+      setEnergyError('')
+      setDemandError('')
+      return
+    }
     let active = true
     let pending = false
     const poll = async () => {
@@ -247,7 +255,7 @@ export function EnergyDemandView({ canReset, onUnauthorized }: {
       active = false
       window.clearInterval(timer)
     }
-  }, [refresh])
+  }, [enabled, refresh])
 
   const openReset = (target: ResetTarget) => {
     setResetTarget(target)

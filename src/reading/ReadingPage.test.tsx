@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MeterReadingAttribute, MeterReadings } from '../api'
 import { ReadingPage } from './ReadingPage'
 
@@ -74,6 +74,8 @@ function displayedSequence() {
 }
 
 describe('Reading page coherent record behavior', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
   it('retains an incomplete same-generation update and clears it on generation change', () => {
     const { rerender } = render(<ReadingPage readings={record(41, 7, true)}
       onUnauthorized={() => undefined} systemNominalVoltage={120} measurementTopology="wye" />)
@@ -152,5 +154,33 @@ describe('Reading page coherent record behavior', () => {
       name: 'Zero sequence I₀ unavailable',
     })).toBeInTheDocument()
     expect(screen.getByText('Invalid values present')).toBeInTheDocument()
+  })
+
+  it('replaces harmonic priming guidance with an actionable nominal mismatch warning', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)))
+    const mismatched = record(41, 7, true)
+    mismatched.timing!.nominal_frequency_hz = 60
+    mismatched.frequency.hz = 49.998
+    mismatched.frequency.millihz = 49_998
+
+    const { rerender } = render(<ReadingPage readings={mismatched}
+      onUnauthorized={() => undefined} systemNominalVoltage={120}
+      measurementTopology="wye" canConfigure />)
+    fireEvent.click(screen.getByRole('button', { name: 'Harmonics' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Configured nominal is 60 Hz; measured grid is 49.998 Hz. Harmonic windows are intentionally rejected—select 50 Hz under Configuration → Meter.')
+    expect(screen.getByText('Harmonic windows intentionally rejected')).toBeInTheDocument()
+    expect(screen.queryByText('No complete spectrum yet')).not.toBeInTheDocument()
+
+    const corrected = record(42, 8, true)
+    corrected.timing!.nominal_frequency_hz = 50
+    corrected.frequency.hz = 49.998
+    corrected.frequency.millihz = 49_998
+    act(() => rerender(<ReadingPage readings={corrected}
+      onUnauthorized={() => undefined} systemNominalVoltage={120}
+      measurementTopology="wye" canConfigure />))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByText('No complete spectrum yet')).toBeInTheDocument()
   })
 })

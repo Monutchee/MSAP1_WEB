@@ -26,6 +26,11 @@ import { MqttConfiguration } from './configuration/MqttConfiguration'
 import { PowerQualityConfiguration } from './configuration/PowerQualityConfiguration'
 import { DataLoggingPage } from './configuration/dataLogging/DataLoggingPage'
 import { ManagementPage } from './management/ManagementPage'
+import {
+  classifySystemReadiness,
+  type SystemReadiness,
+  type SystemReadinessState,
+} from './systemReadiness'
 
 const HISTORY = 80
 const VISIBLE_CHANNELS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -116,6 +121,36 @@ function StatusPill({ ok, neutral = false, children }: {
 }) {
   const state = neutral ? 'neutral' : ok ? 'ok' : 'bad'
   return <span className={`status-pill ${state}`}><i />{children}</span>
+}
+
+function SystemReadinessBanner({ readiness, failure }: {
+  readiness: SystemReadiness
+  failure: Error | undefined
+}) {
+  if (readiness.state === 'healthy') return null
+  const copy: Record<Exclude<SystemReadinessState, 'healthy'>, {
+    title: string; detail: string
+  }> = {
+    initializing: {
+      title: 'System initializing or recovering',
+      detail: 'Metering is not ready yet. This page remains available and will retry automatically.',
+    },
+    degraded: {
+      title: 'System needs attention',
+      detail: 'The metering service is reachable, but one or more health checks report a fault.',
+    },
+    unavailable: {
+      title: 'System unavailable',
+      detail: failure?.message ?? 'The health service could not be reached. Retrying automatically.',
+    },
+  }
+  const message = copy[readiness.state]
+  return <div className={`system-readiness-banner ${readiness.state}`}
+    role={readiness.state === 'initializing' ? 'status' : 'alert'}
+    aria-live={readiness.state === 'initializing' ? 'polite' : 'assertive'}>
+    <i aria-hidden="true" />
+    <div><strong>{message.title}</strong><span>{message.detail}</span></div>
+  </div>
 }
 
 function SimulatorApplyDialog({ state, onClose, onRetry }: {
@@ -1089,10 +1124,13 @@ const SIMULATOR_LANE_GROUPS = [
   { title: 'Current', detail: 'Phase and neutral inputs', channels: [0, 1, 2, 3] },
 ] as const
 
-function SimulatorMeasurementLanes({ simulator, onChange, onUnauthorized }: {
+function SimulatorMeasurementLanes({
+  simulator, onChange, onUnauthorized, enabled = true,
+}: {
   simulator: AdcSimulatorConfiguration
   onChange: (configuration: AdcSimulatorConfiguration) => void
   onUnauthorized: () => void
+  enabled?: boolean
 }) {
   return <section id="simulator-panel-measurement" role="tabpanel"
     aria-labelledby="simulator-tab-measurement" className="simulator-category-panel">
@@ -1149,7 +1187,7 @@ function SimulatorMeasurementLanes({ simulator, onChange, onUnauthorized }: {
         })}
       </div>
     </section>)}
-    <SingleCycleReadout onUnauthorized={onUnauthorized} />
+    <SingleCycleReadout onUnauthorized={onUnauthorized} enabled={enabled} />
     <details className="simulator-explainer"><summary>Measurement-lane details</summary>
       <p>CH7 remains zero and invalid. RMS values become signed 24-bit ADC sine peaks; DC is a constant offset and noise is uniform white fluctuation. Standard ABC rotation is A=0&deg;, B=240&deg;, C=120&deg;; 0/120/240 selects reverse ACB rotation. Preserve phase keeps waveform and packet framing continuous across a reconfiguration.</p>
     </details>
@@ -1204,7 +1242,7 @@ function SimulatorHarmonics({ simulator, simulatorSelected, sampleRateHz, onChan
 
 function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   sourceStatus, simulatorStatus, simulatorApplyBusy, onSourceChange, onSimulatorChange,
-  onSimulatorSubmit }: {
+  onSimulatorSubmit, acquisitionAvailable = true }: {
   onUnauthorized: () => void
   health: SystemHealth | undefined
   readings: MeterReadings | undefined
@@ -1216,6 +1254,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   onSourceChange: (source: AdcSource['source']) => void
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onSimulatorSubmit: (activate: boolean) => void
+  acquisitionAvailable?: boolean
 }) {
   const [activeTab, setActiveTab] =
     useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'database' | 'waveform' | 'about' | 'logs'>('overview')
@@ -1286,6 +1325,7 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       </section>
       <div className="simulator-source-panel">
         <label>Active source<select value={adcSource?.source ?? 'physical'}
+          disabled={!acquisitionAvailable}
           onChange={(event) => onSourceChange(event.target.value as AdcSource['source'])}>
           <option value="physical">Physical AD7771</option>
           <option value="simulator">PL simulator</option>
@@ -1326,7 +1366,8 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
         ? <section id="simulator-panel-power-quality" role="tabpanel"
             aria-labelledby="simulator-tab-power-quality"
             className="simulator-form simulator-category-panel">
-            <PowerQualityPanel onUnauthorized={onUnauthorized} simulator={simulator} />
+            <PowerQualityPanel onUnauthorized={onUnauthorized} simulator={simulator}
+              enabled={acquisitionAvailable} />
           </section>
         : simulator
           ? <form className="simulator-form" onSubmit={(event) => {
@@ -1344,15 +1385,17 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
               </div>
               {simulatorCategory === 'measurement'
                 ? <SimulatorMeasurementLanes simulator={simulator}
-                    onChange={onSimulatorChange} onUnauthorized={onUnauthorized} />
+                    onChange={onSimulatorChange} onUnauthorized={onUnauthorized}
+                    enabled={acquisitionAvailable} />
                 : <SimulatorHarmonics simulator={simulator}
                     simulatorSelected={simulatorSelected} sampleRateHz={sampleRateHz}
                     onChange={onSimulatorChange} />}
               <div className="frequency-actions simulator-actions">
                 {!simulatorSelected && <button className="secondary" type="button"
-                  disabled={simulatorApplyBusy || !tonesValid}
+                  disabled={!acquisitionAvailable || simulatorApplyBusy || !tonesValid}
                   onClick={() => onSimulatorSubmit(false)}>Save profile only</button>}
-                <button type="submit" disabled={simulatorApplyBusy || !tonesValid}>
+                <button type="submit"
+                  disabled={!acquisitionAvailable || simulatorApplyBusy || !tonesValid}>
                   {simulatorApplyBusy ? 'Applying profile…'
                     : simulatorSelected ? 'Apply to running simulator' : 'Save and use PL simulator'}</button>
                 <span>{simulatorStatus}</span>
@@ -1365,7 +1408,8 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       : activeTab === 'database'
         ? <DeveloperDatabasePage onUnauthorized={onUnauthorized} />
       : activeTab === 'waveform'
-        ? <DeveloperWaveformStatus onUnauthorized={onUnauthorized} />
+        ? <DeveloperWaveformStatus onUnauthorized={onUnauthorized}
+            enabled={acquisitionAvailable} />
       : activeTab === 'about'
         ? <DeveloperAboutPage onUnauthorized={onUnauthorized} />
         : <DeveloperLogs onUnauthorized={onUnauthorized} />}
@@ -1383,13 +1427,15 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
  * measured effect sit on one screen. Values convert from the record's
  * micro-units and picowatts to engineering units.
  */
-function SingleCycleReadout({ onUnauthorized }: {
+function SingleCycleReadout({ onUnauthorized, enabled = true }: {
   onUnauthorized: () => void
+  enabled?: boolean
 }) {
   const [status, setStatus] = useState<SingleCycleStatus>()
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
+    if (!enabled) return
     try {
       setStatus(await api.meterSingleCycle())
       setError('')
@@ -1400,9 +1446,14 @@ function SingleCycleReadout({ onUnauthorized }: {
       }
       setError(reason instanceof Error ? reason.message : 'Unable to read single-cycle diagnostics')
     }
-  }, [onUnauthorized])
+  }, [enabled, onUnauthorized])
 
   useEffect(() => {
+    if (!enabled) {
+      setStatus(undefined)
+      setError('')
+      return
+    }
     let active = true
     const refresh = async () => {
       if (active) await load()
@@ -1410,7 +1461,7 @@ function SingleCycleReadout({ onUnauthorized }: {
     void refresh()
     const timer = window.setInterval(refresh, 1000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [load])
+  }, [enabled, load])
 
   const lanes = ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va']
   const laneUnit = (index: number) => (index < 4 ? 'A' : 'V')
@@ -1518,9 +1569,10 @@ function selectedEventChannels(channels: string, channel: number) {
  * Named amplitude disturbances, live Urms(1/2), and the durable event
  * catalogue form one end-to-end PQ EventEngine test surface.
  */
-export function PowerQualityPanel({ onUnauthorized, simulator }: {
+export function PowerQualityPanel({ onUnauthorized, simulator, enabled = true }: {
   onUnauthorized: () => void
   simulator: AdcSimulatorConfiguration | undefined
+  enabled?: boolean
 }) {
   const [status, setStatus] = useState<PowerQualityStatus>()
   const [sequencer, setSequencer] = useState<AdcSimulatorEvent>()
@@ -1545,6 +1597,7 @@ export function PowerQualityPanel({ onUnauthorized, simulator }: {
   }, [onUnauthorized])
 
   const load = useCallback(async () => {
+    if (!enabled) return
     try {
       const [quality, event, events] = await Promise.all([
         api.meterPowerQuality(), api.adcSimulatorEvent(),
@@ -1557,15 +1610,22 @@ export function PowerQualityPanel({ onUnauthorized, simulator }: {
     } catch (reason) {
       handle(reason, 'Unable to read power-quality state')
     }
-  }, [handle])
+  }, [enabled, handle])
 
   useEffect(() => {
+    if (!enabled) {
+      setStatus(undefined)
+      setSequencer(undefined)
+      setCanonicalEvents(undefined)
+      setError('')
+      return
+    }
     let active = true
     const refresh = async () => { if (active) await load() }
     void refresh()
     const timer = window.setInterval(refresh, 1000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [load])
+  }, [enabled, load])
 
   useEffect(() => {
     let active = true
@@ -1696,11 +1756,11 @@ export function PowerQualityPanel({ onUnauthorized, simulator }: {
       {selectedProfile && !selectedProfile.enabled &&
         <p className="simulator-event-warning">This detector profile is disabled. Enable it under Meter settings → Power Quality → PQ Event profiles before running the test.</p>}
       <div className="simulator-event-actions">
-        <button type="button" disabled={commandBusy || !sequencer?.simulator_active}
+        <button type="button" disabled={!enabled || commandBusy || !sequencer?.simulator_active}
           onClick={() => void command('arm')}>Create PQ event</button>
-        <button type="button" disabled={commandBusy}
+        <button type="button" disabled={!enabled || commandBusy}
           onClick={() => void command('cancel')}>Cancel event</button>
-        <button type="button" disabled={commandBusy}
+        <button type="button" disabled={!enabled || commandBusy}
           onClick={() => void command('clear')}>Clear counter</button>
         <span>{message}</span>
       </div>
@@ -1754,13 +1814,15 @@ export function PowerQualityPanel({ onUnauthorized, simulator }: {
   </section>
 }
 
-function DeveloperWaveformStatus({ onUnauthorized }: {
+function DeveloperWaveformStatus({ onUnauthorized, enabled = true }: {
   onUnauthorized: () => void
+  enabled?: boolean
 }) {
   const [status, setStatus] = useState<WaveformStatus>()
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
+    if (!enabled) return
     try {
       setStatus(await api.waveforms())
       setError('')
@@ -1771,9 +1833,14 @@ function DeveloperWaveformStatus({ onUnauthorized }: {
       }
       setError(reason instanceof Error ? reason.message : 'Unable to read waveform status')
     }
-  }, [onUnauthorized])
+  }, [enabled, onUnauthorized])
 
   useEffect(() => {
+    if (!enabled) {
+      setStatus(undefined)
+      setError('')
+      return
+    }
     let active = true
     const refresh = async () => {
       if (active) await load()
@@ -1781,7 +1848,7 @@ function DeveloperWaveformStatus({ onUnauthorized }: {
     void refresh()
     const timer = window.setInterval(refresh, 1000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [load])
+  }, [enabled, load])
 
   const retainedSeconds = status?.sample_rate_hz
     ? status.history_capacity_frames / status.sample_rate_hz
@@ -1808,6 +1875,13 @@ function DeveloperWaveformStatus({ onUnauthorized }: {
       <article><span>File write failures</span><strong>{formatCount(status?.materialization_failures)}</strong></article>
       <article><span>Active capture</span><strong>{status?.active_session ? 'Yes' : 'No'}</strong></article>
       <article><span>Completed files</span><strong>{formatCount(status?.completed_sessions)}</strong></article>
+      <article><span>Archive index</span><strong>{status?.archive_discovery
+        ? status.archive_discovery.state === 'complete' ? 'Complete'
+          : `${formatCount(status.archive_discovery.scanned_files)} / ${formatCount(status.archive_discovery.total_files)}`
+        : '—'}</strong>
+        <small>{status?.archive_discovery
+          ? `${formatCount(status.archive_discovery.rejected_files)} rejected`
+          : 'discovery status unavailable'}</small></article>
     </section>
   </div>
 }
@@ -2114,7 +2188,7 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
   </section>
 }
 
-function Dashboard({ session, onLogout, onUnauthorized }: {
+export function Dashboard({ session, onLogout, onUnauthorized }: {
   session: Session
   onLogout: () => void
   onUnauthorized: () => void
@@ -2122,6 +2196,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [activeView, setActiveView] =
     useState<'dashboard' | 'reading' | 'history' | 'waveforms' | 'management' | 'configuration' | 'about' | 'developer'>('dashboard')
   const [health, setHealth] = useState<SystemHealth>()
+  const [healthFailure, setHealthFailure] = useState<Error>()
   const [readings, setReadings] = useState<MeterReadings>()
   const [history, setHistory] = useState<MeterReadings[]>([])
   const [tier, setTier] = useState<MeterTier>('basic')
@@ -2159,6 +2234,9 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   const [simulatorApplyDialog, setSimulatorApplyDialog] =
     useState<SimulatorApplyDialogState>({ phase: 'hidden', activate: false })
   const [error, setError] = useState('')
+  const readiness = classifySystemReadiness(health,
+    healthFailure instanceof ApiError ? healthFailure : healthFailure
+      ? { code: undefined, retryable: false } : undefined)
 
   const handleError = useCallback((reason: unknown) => {
     if (reason instanceof ApiError && reason.status === 401) { onUnauthorized(); return }
@@ -2170,29 +2248,31 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     const load = async () => {
       try {
         const next = await api.health()
-        if (active) { setHealth(next); setError('') }
-      } catch (reason) { if (active) handleError(reason) }
+        if (active) {
+          setHealth(next)
+          setHealthFailure(undefined)
+        }
+      } catch (reason) {
+        if (!active) return
+        if (reason instanceof ApiError && reason.status === 401) {
+          onUnauthorized()
+          return
+        }
+        setHealth(undefined)
+        setHealthFailure(reason instanceof Error
+          ? reason : new Error('Unable to read system health'))
+      }
     }
     void load()
     const timer = window.setInterval(load, 2000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [handleError])
+  }, [onUnauthorized])
 
   useEffect(() => {
     let active = true
-    Promise.all([
-      api.adcSource(), api.adcSimulator(), api.activeSettings(),
-    ])
-      .then(([source, configuration, activeSettings]) => {
+    api.activeSettings()
+      .then((activeSettings) => {
         if (active) {
-          setAdcSource({ ...source, source: activeSettings.settings.adc.source })
-          setSimulator({
-            ...configuration,
-            frequency_hz: activeSettings.settings.adc.simulator.frequency_hz,
-            preserve_phase: activeSettings.settings.adc.simulator.preserve_phase,
-            channels: activeSettings.settings.adc.simulator.channels,
-            harmonics: activeSettings.settings.adc.simulator.harmonics,
-          })
           setFrequencyConfiguration(activeSettings.settings.metering.frequency)
           setNominalFrequency(activeSettings.settings.metering.nominal_frequency_hz)
           setMeasurementTopology(
@@ -2209,6 +2289,29 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       .catch((reason) => { if (active) handleError(reason) })
     return () => { active = false }
   }, [handleError])
+
+  useEffect(() => {
+    if (!readiness.acquisitionReachable) {
+      setAdcSource(undefined)
+      setSimulator(undefined)
+      return
+    }
+    let active = true
+    Promise.all([api.adcSource(), api.adcSimulator(), api.activeSettings()])
+      .then(([source, configuration, activeSettings]) => {
+        if (!active) return
+        setAdcSource({ ...source, source: activeSettings.settings.adc.source })
+        setSimulator({
+          ...configuration,
+          frequency_hz: activeSettings.settings.adc.simulator.frequency_hz,
+          preserve_phase: activeSettings.settings.adc.simulator.preserve_phase,
+          channels: activeSettings.settings.adc.simulator.channels,
+          harmonics: activeSettings.settings.adc.simulator.harmonics,
+        })
+      })
+      .catch((reason) => { if (active) handleError(reason) })
+    return () => { active = false }
+  }, [handleError, readiness.acquisitionReachable])
 
   // Source configuration is loaded once, while live health is refreshed every
   // two seconds. Fold the runtime fields back into the source models so the
@@ -2335,6 +2438,23 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
   }
 
   useEffect(() => {
+    if (readiness.liveDataReady) return
+    setReadings(undefined)
+    setHistory([])
+    setAggregate(undefined)
+    setAggregateHistory([])
+    setTenMinute(undefined)
+    setTenMinuteHistory([])
+    setTenMinuteLive(undefined)
+    setTenMinuteLiveHistory([])
+    setTwoHour(undefined)
+    setTwoHourHistory([])
+    setTwoHourLive(undefined)
+    setTwoHourLiveHistory([])
+  }, [readiness.liveDataReady])
+
+  useEffect(() => {
+    if (!readiness.liveDataReady) return
     let active = true
     let pending = false
     const load = async () => {
@@ -2354,13 +2474,13 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     void load()
     const timer = window.setInterval(load, 200)
     return () => { active = false; window.clearInterval(timer) }
-  }, [handleError])
+  }, [handleError, readiness.liveDataReady])
 
   // The aggregate is polled only while its tier is displayed. The interval is
   // created by this effect and torn down again on tier change, view change, and
   // unmount, so no aggregate request can outlive the selection that made it.
   useEffect(() => {
-    if (activeView !== 'dashboard' || tier !== 'aggregate') return
+    if (!readiness.liveDataReady || activeView !== 'dashboard' || tier !== 'aggregate') return
     let active = true
     let pending = false
     const load = async () => {
@@ -2407,13 +2527,13 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       setAggregateHistory([])
       setAggregateError('')
     }
-  }, [activeView, tier, handleError])
+  }, [activeView, tier, handleError, readiness.liveDataReady])
 
   // The open two-hour preview advances only when a completed ten-minute block
   // is folded into the still-open two-hour accumulator. It is explicitly
   // non-normative and has a sequence space separate from completed results.
   useEffect(() => {
-    if (activeView !== 'dashboard' || tier !== 'hour2Live') return
+    if (!readiness.liveDataReady || activeView !== 'dashboard' || tier !== 'hour2Live') return
     let active = true
     let pending = false
     const load = async () => {
@@ -2454,13 +2574,13 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       setTwoHourLiveHistory([])
       setTwoHourLiveError('')
     }
-  }, [activeView, tier, handleError])
+  }, [activeView, tier, handleError, readiness.liveDataReady])
 
   // The M14 result is sparse (one result every two hours), but querying the
   // cached typed snapshot is cheap. Poll while selected so a newly closed
   // interval appears promptly without coupling this view to the DMA stream.
   useEffect(() => {
-    if (activeView !== 'dashboard' || tier !== 'hour2') return
+    if (!readiness.liveDataReady || activeView !== 'dashboard' || tier !== 'hour2') return
     let active = true
     let pending = false
     const load = async () => {
@@ -2501,12 +2621,12 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       setTwoHourHistory([])
       setTwoHourError('')
     }
-  }, [activeView, tier, handleError])
+  }, [activeView, tier, handleError, readiness.liveDataReady])
 
   // A ten-minute preview is finalized from the current merge-safe accumulator
   // after every completed 150/180-cycle block (roughly every three seconds).
   useEffect(() => {
-    if (activeView !== 'dashboard' || tier !== 'min10Live') return
+    if (!readiness.liveDataReady || activeView !== 'dashboard' || tier !== 'min10Live') return
     let active = true
     let pending = false
     const load = async () => {
@@ -2547,13 +2667,13 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       setTenMinuteLiveHistory([])
       setTenMinuteLiveError('')
     }
-  }, [activeView, tier, handleError])
+  }, [activeView, tier, handleError, readiness.liveDataReady])
 
   // Ten-minute blocks are sparse, but poll often enough that a just-finalized
   // block appears promptly. Sequence de-duplication prevents repeated points
   // while the same immutable result is returned between block boundaries.
   useEffect(() => {
-    if (activeView !== 'dashboard' || tier !== 'min10') return
+    if (!readiness.liveDataReady || activeView !== 'dashboard' || tier !== 'min10') return
     let active = true
     let pending = false
     const load = async () => {
@@ -2594,7 +2714,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
       setTenMinuteHistory([])
       setTenMinuteError('')
     }
-  }, [activeView, tier, handleError])
+  }, [activeView, tier, handleError, readiness.liveDataReady])
 
   // Basic measurement block timing is absent while the meter still emits
   // old-format records without cycle-defined block metadata; fall back to
@@ -2700,6 +2820,7 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
         aria-current={activeView === 'developer' ? 'page' : undefined}
         onClick={() => setActiveView('developer')}>Developer</button>}
     </nav>
+    <SystemReadinessBanner readiness={readiness} failure={healthFailure} />
     {activeView === 'developer'
       ? <DeveloperPage onUnauthorized={onUnauthorized} health={health} readings={readings}
           adcSource={adcSource}
@@ -2709,22 +2830,27 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
           simulatorApplyBusy={simulatorApplyDialog.phase === 'applying'}
           onSourceChange={changeAdcSource}
           onSimulatorChange={setSimulator}
-          onSimulatorSubmit={saveSimulator} />
+          onSimulatorSubmit={saveSimulator}
+          acquisitionAvailable={readiness.acquisitionReachable} />
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
       : activeView === 'management'
-        ? <ManagementPage onUnauthorized={onUnauthorized} />
+        ? <ManagementPage onUnauthorized={onUnauthorized}
+            acquisitionAvailable={readiness.acquisitionReachable} />
       : activeView === 'reading'
         ? <ReadingPage readings={readings} onUnauthorized={onUnauthorized}
             systemNominalVoltage={systemNominalVoltage ?? 120}
             measurementTopology={measurementTopology ?? 'wye'}
-            canReset={session.role === 'admin'} />
+            canReset={session.role === 'admin'} canConfigure={session.role === 'admin'}
+            acquisitionAvailable={readiness.acquisitionReachable &&
+              health?.acquisition.running === true} />
       : activeView === 'history'
         ? <HistoryPage onUnauthorized={onUnauthorized}
             canDelete={session.role === 'admin'} />
       : activeView === 'waveforms'
         ? <WaveformExplorer onUnauthorized={onUnauthorized}
-            canDelete={session.role === 'admin'} />
+            canDelete={session.role === 'admin'}
+            acquisitionAvailable={readiness.acquisitionReachable} />
       : activeView === 'configuration'
         ? <ConfigurationPage configuration={frequencyConfiguration}
             configurationStatus={configurationStatus}
@@ -2748,7 +2874,12 @@ function Dashboard({ session, onLogout, onUnauthorized }: {
     <section className="hero">
       <div><p className="eyebrow">Live metering</p><h1>Grid RMS monitor</h1>
         <p>{heroSummary}</p></div>
-      <StatusPill ok={health?.healthy ?? false}>{health?.healthy ? 'System healthy' : 'Needs attention'}</StatusPill>
+      <StatusPill ok={readiness.state === 'healthy'}
+        neutral={readiness.state === 'initializing'}>
+        {readiness.state === 'healthy' ? 'System healthy'
+          : readiness.state === 'initializing' ? 'Initializing'
+            : readiness.state === 'unavailable' ? 'Unavailable' : 'Needs attention'}
+      </StatusPill>
     </section>
     {error && <div className="error-banner"><strong>Data unavailable</strong><span>{error}</span></div>}
     <section className="section-heading dashboard-results-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div>

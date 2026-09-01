@@ -82,6 +82,15 @@ code { color: #baf6d8; font-family: ui-monospace, "SFMono-Regular", Consolas, mo
 .status-pill.neutral { color: var(--muted); }
 .error-banner { display: flex; gap: 1rem; margin-bottom: 1.5rem; padding: .9rem 1rem; border: 1px solid rgba(255,111,106,.3); border-radius: 10px; color: #ffd1cf; background: rgba(255,111,106,.08); font-size: .82rem; }
 .error-banner span { color: #ba8988; }
+.system-readiness-banner { display: flex; align-items: flex-start; gap: .85rem; margin: 1rem 0 1.5rem; padding: .9rem 1rem; border: 1px solid rgba(255,188,92,.4); border-radius: 10px; background: rgba(255,174,65,.09); }
+.system-readiness-banner > i { flex: 0 0 auto; width: 9px; height: 9px; margin-top: .28rem; border-radius: 50%; background: #ffbc5c; box-shadow: 0 0 14px rgba(255,188,92,.8); }
+.system-readiness-banner > div { display: grid; gap: .2rem; }
+.system-readiness-banner strong { color: #ffe1ad; font-size: .82rem; }
+.system-readiness-banner span { color: #c9ab77; font-size: .78rem; }
+.system-readiness-banner.degraded, .system-readiness-banner.unavailable { border-color: rgba(255,111,106,.3); background: rgba(255,111,106,.08); }
+.system-readiness-banner.degraded > i, .system-readiness-banner.unavailable > i { background: var(--red); box-shadow: 0 0 14px rgba(255,111,106,.8); }
+.system-readiness-banner.degraded strong, .system-readiness-banner.unavailable strong { color: #ffd1cf; }
+.system-readiness-banner.degraded span, .system-readiness-banner.unavailable span { color: #ba8988; }
 .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--panel); }
 .metric { padding: 1.35rem 1.5rem; border-right: 1px solid var(--line); }
 .metric:last-child { border-right: 0; }

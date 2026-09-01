@@ -2628,3 +2628,16 @@
     animation-iteration-count: 1 !important;
   }
 }
+.harmonic-mismatch-warning {
+  display: flex;
+  gap: .8rem;
+  margin: 1rem 0;
+  padding: .9rem 1rem;
+  border: 1px solid rgba(255, 188, 92, .42);
+  border-radius: 10px;
+  color: #ffe1ad;
+  background: rgba(255, 174, 65, .09);
+  font-size: .82rem;
+}
+
+.harmonic-mismatch-warning span { color: #d8b77d; }

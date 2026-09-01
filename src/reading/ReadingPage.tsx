@@ -12,6 +12,7 @@ import { PowerView } from './PowerView'
 import { EnergyDemandView } from './EnergyDemandView'
 import { PowerQualityView } from './PowerQualityView'
 import { SequenceView, SEQUENCE_CONTEXT_KEYS } from './SequenceView'
+import { harmonicMismatchMessage, harmonicNominalMismatch } from './harmonicDiagnosis'
 import {
   READING_INTERVAL_LABELS, aggregateReadingRecord, attribute, basicReadingRecord,
   effectiveQuality, formatReading, formatUtc, friendlyAttributeName, isValidReading,
@@ -985,13 +986,16 @@ function PhasorUnbalanceView({
  * its seven channels and six chunks per channel.
  */
 export function ReadingPage({
-  readings, onUnauthorized, systemNominalVoltage, measurementTopology, canReset = false,
+  readings, onUnauthorized, systemNominalVoltage, measurementTopology,
+  canReset = false, canConfigure = false, acquisitionAvailable = true,
 }: {
   readings: MeterReadings | undefined
   onUnauthorized: () => void
   systemNominalVoltage: number
   measurementTopology: MeasurementTopology
   canReset?: boolean
+  canConfigure?: boolean
+  acquisitionAvailable?: boolean
 }) {
   const [activeSubtab, setActiveSubtab] = useState<ReadingSubtab>('overview')
   const [readingInterval, setReadingInterval] = useState<ReadingInterval>('basic')
@@ -1011,7 +1015,7 @@ export function ReadingPage({
   const [harmonicError, setHarmonicError] = useState('')
 
   useEffect(() => {
-    if (activeSubtab === 'harmonics' || readingInterval === 'basic') {
+    if (!acquisitionAvailable || activeSubtab === 'harmonics' || readingInterval === 'basic') {
       setIntervalError('')
       return
     }
@@ -1054,9 +1058,10 @@ export function ReadingPage({
       active = false
       window.clearInterval(timer)
     }
-  }, [activeSubtab, onUnauthorized, readingInterval])
+  }, [acquisitionAvailable, activeSubtab, onUnauthorized, readingInterval])
 
   const loadHarmonics = useCallback(async () => {
+    if (!acquisitionAvailable) return
     try {
       setSpectrum(await api.meterHarmonics(period))
       setHarmonicError('')
@@ -1067,10 +1072,10 @@ export function ReadingPage({
       }
       setHarmonicError(reason instanceof Error ? reason.message : 'Unable to read harmonics')
     }
-  }, [onUnauthorized, period])
+  }, [acquisitionAvailable, onUnauthorized, period])
 
   useEffect(() => {
-    if (activeSubtab !== 'harmonics') return
+    if (!acquisitionAvailable || activeSubtab !== 'harmonics') return
     let active = true
     let pending = false
     const refresh = async () => {
@@ -1085,7 +1090,17 @@ export function ReadingPage({
       active = false
       window.clearInterval(timer)
     }
-  }, [activeSubtab, loadHarmonics])
+  }, [acquisitionAvailable, activeSubtab, loadHarmonics])
+
+  useEffect(() => {
+    if (acquisitionAvailable) return
+    setAggregate(undefined)
+    setTenMinute(undefined)
+    setTwoHour(undefined)
+    setSpectrum(undefined)
+    setIntervalError('')
+    setHarmonicError('')
+  }, [acquisitionAvailable])
 
   const channels = CHANNEL_GROUPS[group]
   const channelByIndex = useMemo(() => new Map(
@@ -1117,6 +1132,7 @@ export function ReadingPage({
       : readingInterval === 'min10' ? tenMinuteCandidate : twoHourCandidate
   const activeGeneration = readings?.configuration_generation ??
     intervalCandidate?.configurationGeneration
+  const nominalMismatch = harmonicNominalMismatch(readings)
 
   useEffect(() => {
     setCompleteRecords((current) => updateCompleteRecordCache(
@@ -1174,9 +1190,11 @@ export function ReadingPage({
             <span>Power cards, chart, and matrix commit together after all source sequences agree.</span>
           </div></section>
         : activeSubtab === 'energy'
-          ? <EnergyDemandView canReset={canReset} onUnauthorized={onUnauthorized} />
+          ? <EnergyDemandView canReset={canReset} onUnauthorized={onUnauthorized}
+              enabled={acquisitionAvailable} />
         : activeSubtab === 'power-quality'
-          ? <PowerQualityView onUnauthorized={onUnauthorized} />
+          ? <PowerQualityView onUnauthorized={onUnauthorized}
+              enabled={acquisitionAvailable} />
         : activeSubtab === 'phasor'
           ? <PhasorUnbalanceView interval={readingInterval} record={committedRecord}
               nominalVoltage={Math.max(1, systemNominalVoltage)} scope={phasorScope}
@@ -1230,14 +1248,20 @@ export function ReadingPage({
               Combined
             </button>
           </div>
-          <span className="harmonic-family-state">{spectrum?.available
-            ? `Family ${formatCount(spectrum.sequence)}`
-            : 'Waiting for a complete family'}</span>
+          <span className="harmonic-family-state">{nominalMismatch
+            ? 'Nominal frequency mismatch'
+            : spectrum?.available ? `Family ${formatCount(spectrum.sequence)}`
+              : 'Waiting for a complete family'}</span>
         </div>
       </div>
 
       {harmonicError && <div className="error-banner"><strong>Harmonics unavailable</strong>
         <span>{harmonicError}</span></div>}
+      {nominalMismatch &&
+        <div className="harmonic-mismatch-warning" role="alert">
+          <strong>Nominal frequency does not match the measured grid</strong>
+          <span>{harmonicMismatchMessage(nominalMismatch, canConfigure)}</span>
+        </div>}
 
       <div className="harmonic-summary" aria-label="Harmonic pipeline status">
 		<HarmonicStatus ok={spectrum?.interval_valid ?? false} pending={!spectrum}>Interval valid</HarmonicStatus>
@@ -1258,12 +1282,14 @@ export function ReadingPage({
 
       {!spectrum?.available
         ? <div className="harmonic-empty">
-          <strong>No complete spectrum yet</strong>
-		  <span>The {PERIOD_LABELS[period]} harmonic interval has not completed yet. The adaptive L/25 conditioner supports every selectable rate from 1 to 128 kSPS.
+          <strong>{nominalMismatch ? 'Harmonic windows intentionally rejected' : 'No complete spectrum yet'}</strong>
+		  <span>{nominalMismatch
+            ? <>{harmonicMismatchMessage(nominalMismatch, canConfigure)} The strict interval geometry guard remains active so a 50 Hz window cannot be mislabeled as a 60 Hz spectrum.</>
+            : <>The {PERIOD_LABELS[period]} harmonic interval has not completed yet. The adaptive L/25 conditioner supports every selectable rate from 1 to 128 kSPS.
             {readings && <> The current capture is {formatCount(readings.sample_rate_hz)} samples/s with
               {' '}{formatCount(readings.block_sample_count)}-frame basic blocks.</>}
             {' '}The previous spectrum remains hidden until grid lock is valid and all 42 records for one
-			family agree. A newly started 10-minute or 2-hour selection remains unavailable until its first complete aligned interval closes.</span>
+			family agree. A newly started 10-minute or 2-hour selection remains unavailable until its first complete aligned interval closes.</>}</span>
         </div>
         : <>
           <HarmonicOverview columns={channels} channelByIndex={channelByIndex}

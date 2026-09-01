@@ -26,7 +26,10 @@ function eventLabel(record: PowerQualityRecord | undefined) {
   return `${label} ${record.kind === 'event_end' ? 'ended' : 'started'}`
 }
 
-export function PowerQualityView({ onUnauthorized }: { onUnauthorized: () => void }) {
+export function PowerQualityView({ onUnauthorized, enabled = true }: {
+  onUnauthorized: () => void
+  enabled?: boolean
+}) {
   const [category, setCategory] = useState<PowerQualityCategory>('flicker')
   const [flicker, setFlicker] = useState<FlickerStatus>()
   const [mains, setMains] = useState<MainsSignalStatus>()
@@ -56,6 +59,13 @@ export function PowerQualityView({ onUnauthorized }: { onUnauthorized: () => voi
   }, [handleFailure])
 
   useEffect(() => {
+    if (!enabled) {
+      setFlicker(undefined)
+      setMains(undefined)
+      setEvents(undefined)
+      setError('')
+      return
+    }
     let active = true
     let pending = false
     const refresh = async () => {
@@ -70,7 +80,7 @@ export function PowerQualityView({ onUnauthorized }: { onUnauthorized: () => voi
       active = false
       window.clearInterval(timer)
     }
-  }, [load])
+  }, [enabled, load])
 
   function handleCategoryTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' &&
