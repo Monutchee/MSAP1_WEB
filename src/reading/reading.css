@@ -1441,10 +1441,21 @@
 }
 
 .record-context-status .record-mode-badge {
+  font-weight: 800;
+}
+
+.record-context-status .record-mode-badge.state-ready {
   border-color: rgba(84, 226, 164, .4);
   color: #071512;
   background: var(--green);
-  font-weight: 800;
+}
+
+.record-context-status .record-mode-badge.state-waiting,
+.record-context-status .record-mode-badge.state-priming,
+.record-context-status .record-mode-badge.state-rejected {
+  border-color: rgba(255, 189, 92, .4);
+  color: var(--amber);
+  background: rgba(255, 189, 92, .08);
 }
 
 .record-context-status .quality-valid { color: var(--green); }
@@ -1484,6 +1495,21 @@
   grid-column: 1 / -1;
   margin: 0;
 }
+
+.interval-state-banner {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: .35rem;
+  padding: .8rem .9rem;
+  border: 1px solid rgba(255, 189, 92, .4);
+  border-radius: 10px;
+  background: rgba(255, 189, 92, .07);
+  font-size: var(--reading-label-size);
+}
+
+.interval-state-banner strong { color: var(--amber); }
+.interval-state-banner span { color: #c4aa7a; line-height: 1.5; }
+.interval-state-banner.rejected { border-style: solid; }
 
 .overview-groups {
   display: grid;

@@ -16,9 +16,11 @@ import { harmonicMismatchMessage, harmonicNominalMismatch } from './harmonicDiag
 import {
   READING_INTERVAL_LABELS, aggregateReadingRecord, attribute, basicReadingRecord,
   effectiveQuality, formatReading, formatUtc, friendlyAttributeName, isValidReading,
-  operatingMode, powerAttribute, selectCommittedRecord, updateCompleteRecordCache,
-  visibleQuality, type CompleteRecordCache, type PowerScope, type ReadingInterval,
-  type ReadingRecord,
+  harmonicPresentationState, intervalPresentationState, operatingMode, powerAttribute,
+  selectCommittedRecord, selectHarmonicSpectrum, updateCompleteRecordCache,
+  updateHarmonicSpectrumCache, visibleQuality, type CompleteRecordCache,
+  type HarmonicPresentationState, type HarmonicSpectrumCache,
+  type IntervalPresentationState, type PowerScope, type ReadingInterval, type ReadingRecord,
 } from './readingModel'
 import './reading.css'
 
@@ -149,6 +151,12 @@ const PERIOD_LABELS: Record<Exclude<HarmonicPeriod, 'basic'>, string> = {
   cycles_150_180: '3 seconds (150/180 cycles)',
   minutes_10: '10 minutes',
   hours_2: '2 hours',
+}
+
+const PERIOD_INTERVAL_LABELS: Record<Exclude<HarmonicPeriod, 'basic'>, string> = {
+  cycles_150_180: '3-second',
+  minutes_10: '10-minute',
+  hours_2: '2-hour',
 }
 
 function formatCount(value: number | undefined) {
@@ -585,9 +593,12 @@ function ReadingIntervalSelect({ id, value, onChange }: {
   </label>
 }
 
-function RecordContextBar({ interval, record, section, intervalError, onIntervalChange }: {
+function RecordContextBar({
+  interval, record, state, section, intervalError, onIntervalChange,
+}: {
   interval: ReadingInterval
   record: ReadingRecord | undefined
+  state: IntervalPresentationState
   section: Exclude<ReadingSubtab, 'harmonics'>
   intervalError: string
   onIntervalChange: (interval: ReadingInterval) => void
@@ -599,17 +610,23 @@ function RecordContextBar({ interval, record, section, intervalError, onInterval
   const qualityLabel = quality === 'valid' ? 'Visible values valid'
     : quality === 'partial' ? 'Some values unavailable'
       : quality === 'invalid' ? 'Invalid values present' : 'Awaiting complete record'
-  const synchronization = record?.timeQuality === 'synchronized' ? 'Synchronized'
+  const synchronization = record?.timeQuality === 'synchronized' ? 'Clock synchronized'
     : record?.timeQuality === 'holdover' ? 'Clock holdover'
       : record?.timeQuality === 'unsynchronized' ? 'Unsynchronized' : 'Timing unavailable'
   const uncertainty = record?.utcUncertaintyNanoseconds === undefined ? undefined
     : record.utcUncertaintyNanoseconds / 1_000_000
 
-  return <section className="record-context" aria-label="Finalized meter record context">
+  const modeLabel = state === 'ready' ? 'Finalized'
+    : state === 'rejected' ? 'Previous finalized'
+      : state === 'priming' ? 'Priming' : 'Waiting'
+  const intervalName = interval === 'min10' ? '10-minute'
+    : interval === 'hour2' ? '2-hour' : READING_INTERVAL_LABELS[interval]
+
+  return <section className="record-context" aria-label="Meter record context">
     <ReadingIntervalSelect id="shared-reading-interval" value={interval}
       onChange={onIntervalChange} />
     <div className="record-context-status">
-      <span className="record-mode-badge">Finalized</span>
+      <span className={`record-mode-badge state-${state}`}>{modeLabel}</span>
       <span className={`record-quality quality-${quality ?? 'waiting'}`}>{qualityLabel}</span>
       <span>{synchronization}</span>
       {record?.flags.map((flag) => <span className="record-flag" key={flag}>{flag}</span>)}
@@ -620,6 +637,19 @@ function RecordContextBar({ interval, record, section, intervalError, onInterval
       <div><dt>UTC uncertainty</dt><dd>{uncertainty === undefined
         ? '—' : `±${uncertainty.toLocaleString('en-US', { maximumFractionDigits: 3 })} ms`}</dd></div>
     </dl>
+    {state === 'priming' && <div className="interval-state-banner priming"
+      role="status" aria-live="polite">
+      <strong>Waiting for the first clean finalized {intervalName} interval</strong>
+      <span>{interval === 'min10'
+        ? 'The partial UTC window closed at startup remains available for diagnostics. The display waits for the following complete 10-minute window, so startup can cross two UTC boundaries.'
+        : 'Only clean, time-aligned 10-minute intervals contribute to the first 2-hour result. Partial startup data remains available for diagnostics but is not presented as a measurement.'}</span>
+    </div>}
+    {state === 'rejected' && <div className="interval-state-banner rejected" role="alert">
+      <strong>Latest {intervalName} interval rejected</strong>
+      <span>{record
+        ? `Showing finalized record ${formatCount(record.sequence)} as stale while waiting for the next clean, time-aligned interval.`
+        : 'Waiting for the next clean, time-aligned interval.'}</span>
+    </div>}
     {intervalError && <div className="error-banner"><strong>Interval unavailable</strong>
       <span>{intervalError}</span></div>}
   </section>
@@ -1002,6 +1032,7 @@ export function ReadingPage({
   const [powerScope, setPowerScope] = useState<PowerScope>('total')
   const [phasorScope, setPhasorScope] = useState<PhasorScope>('all')
   const [completeRecords, setCompleteRecords] = useState<CompleteRecordCache>({})
+  const [harmonicSpectra, setHarmonicSpectra] = useState<HarmonicSpectrumCache>({})
   const [aggregate, setAggregate] = useState<MeterAggregate>()
   const [tenMinute, setTenMinute] = useState<MeterTenMinute>()
   const [twoHour, setTwoHour] = useState<MeterTwoHour>()
@@ -1098,25 +1129,12 @@ export function ReadingPage({
     setTenMinute(undefined)
     setTwoHour(undefined)
     setSpectrum(undefined)
+    setCompleteRecords({})
+    setHarmonicSpectra({})
     setIntervalError('')
     setHarmonicError('')
   }, [acquisitionAvailable])
 
-  const channels = CHANNEL_GROUPS[group]
-  const channelByIndex = useMemo(() => new Map(
-    spectrum?.channels.map((channel) => [channel.channel, channel]) ?? [],
-  ), [spectrum])
-  const ordersByChannel = useMemo(() => new Map(
-    spectrum?.channels.map((channel) => [
-      channel.channel,
-      new Map(channel.orders.map((order) => [order.order, order])),
-    ]) ?? [],
-  ), [spectrum])
-  const anglesAvailable = spectrum?.available === true && channels.some((column) =>
-    channelByIndex.get(column.channel)?.orders.some((order) => order.angle_valid))
-  const tableFirstOrder = orderRange.first === FIRST_SUMMARY_ORDER ? 1 : orderRange.first
-  const tableOrders = ALL_HARMONIC_ORDERS.filter((order) =>
-    order >= tableFirstOrder && order <= orderRange.last)
   const aggregateResult = aggregate?.available ? aggregate : undefined
   const tenMinuteResult = tenMinute?.available ? tenMinute : undefined
   const twoHourResult = twoHour?.available ? twoHour : undefined
@@ -1133,14 +1151,50 @@ export function ReadingPage({
   const activeGeneration = readings?.configuration_generation ??
     intervalCandidate?.configurationGeneration
   const nominalMismatch = harmonicNominalMismatch(readings)
+  const harmonicGeneration = readings?.configuration_generation ??
+    spectrum?.configuration_generation
 
   useEffect(() => {
-    setCompleteRecords((current) => updateCompleteRecordCache(
-      current, readingInterval, intervalCandidate, activeGeneration))
-  }, [activeGeneration, intervalCandidate, readingInterval])
+    setCompleteRecords((current) => acquisitionAvailable
+      ? updateCompleteRecordCache(current, readingInterval, intervalCandidate, activeGeneration)
+      : {})
+  }, [acquisitionAvailable, activeGeneration, intervalCandidate, readingInterval])
 
-  const committedRecord = selectCommittedRecord(
+  const selectedRecord = selectCommittedRecord(
     completeRecords, readingInterval, intervalCandidate, activeGeneration)
+  const committedRecord = acquisitionAvailable ? selectedRecord : undefined
+  const intervalState = acquisitionAvailable
+    ? intervalPresentationState(intervalCandidate, committedRecord, activeGeneration)
+    : 'waiting'
+
+  useEffect(() => {
+    setHarmonicSpectra((current) => acquisitionAvailable
+      ? updateHarmonicSpectrumCache(current, period, spectrum, harmonicGeneration)
+      : {})
+  }, [acquisitionAvailable, harmonicGeneration, period, spectrum])
+
+  const cachedSpectrum = acquisitionAvailable
+    ? selectHarmonicSpectrum(harmonicSpectra, period, spectrum, harmonicGeneration)
+    : undefined
+  const harmonicState: HarmonicPresentationState = acquisitionAvailable
+    ? harmonicPresentationState(spectrum, cachedSpectrum, harmonicGeneration)
+    : 'waiting'
+  const displayedSpectrum = nominalMismatch ? undefined : cachedSpectrum
+  const channels = CHANNEL_GROUPS[group]
+  const channelByIndex = useMemo(() => new Map(
+    displayedSpectrum?.channels.map((channel) => [channel.channel, channel]) ?? [],
+  ), [displayedSpectrum])
+  const ordersByChannel = useMemo(() => new Map(
+    displayedSpectrum?.channels.map((channel) => [
+      channel.channel,
+      new Map(channel.orders.map((order) => [order.order, order])),
+    ]) ?? [],
+  ), [displayedSpectrum])
+  const anglesAvailable = displayedSpectrum?.available === true && channels.some((column) =>
+    channelByIndex.get(column.channel)?.orders.some((order) => order.angle_valid))
+  const tableFirstOrder = orderRange.first === FIRST_SUMMARY_ORDER ? 1 : orderRange.first
+  const tableOrders = ALL_HARMONIC_ORDERS.filter((order) =>
+    order >= tableFirstOrder && order <= orderRange.last)
 
   return <section className="reading-page">
     <header className="reading-heading">
@@ -1176,7 +1230,8 @@ export function ReadingPage({
     {activeSubtab !== 'harmonics' && activeSubtab !== 'energy' &&
       activeSubtab !== 'power-quality' &&
       <RecordContextBar interval={readingInterval}
-      record={committedRecord} section={activeSubtab} intervalError={intervalError}
+      record={committedRecord} state={intervalState} section={activeSubtab}
+      intervalError={intervalError}
       onIntervalChange={setReadingInterval} />}
 
     {activeSubtab === 'overview'
@@ -1250,8 +1305,13 @@ export function ReadingPage({
           </div>
           <span className="harmonic-family-state">{nominalMismatch
             ? 'Nominal frequency mismatch'
-            : spectrum?.available ? `Family ${formatCount(spectrum.sequence)}`
-              : 'Waiting for a complete family'}</span>
+            : harmonicState === 'ready' && displayedSpectrum
+              ? `Family ${formatCount(displayedSpectrum.sequence)}`
+              : harmonicState === 'rejected' && displayedSpectrum
+                ? `Family ${formatCount(displayedSpectrum.sequence)} · latest rejected`
+                : harmonicState === 'invalid' ? 'Latest family invalid'
+                  : harmonicState === 'priming' ? 'Waiting for a clean family'
+                    : 'Waiting for a complete family'}</span>
         </div>
       </div>
 
@@ -1261,6 +1321,19 @@ export function ReadingPage({
         <div className="harmonic-mismatch-warning" role="alert">
           <strong>Nominal frequency does not match the measured grid</strong>
           <span>{harmonicMismatchMessage(nominalMismatch, canConfigure)}</span>
+        </div>}
+      {!nominalMismatch && harmonicState === 'rejected' &&
+        <div className="harmonic-mismatch-warning interval-rejected" role="alert">
+          <strong>Latest harmonic interval rejected</strong>
+          <span>Showing family {formatCount(displayedSpectrum?.sequence)} as stale while waiting
+            for the next clean, time-aligned {PERIOD_INTERVAL_LABELS[period]} interval.</span>
+        </div>}
+      {!nominalMismatch && harmonicState === 'invalid' &&
+        <div className="harmonic-mismatch-warning interval-rejected" role="alert">
+          <strong>Latest finalized harmonic interval is invalid</strong>
+          <span>{displayedSpectrum
+            ? `Showing family ${formatCount(displayedSpectrum.sequence)} as stale; the latest full interval failed measurement validation.`
+            : 'The latest full interval failed measurement validation. Waiting for a valid family.'}</span>
         </div>}
 
       <div className="harmonic-summary" aria-label="Harmonic pipeline status">
@@ -1280,11 +1353,22 @@ export function ReadingPage({
         </>}
       </div>
 
-      {!spectrum?.available
-        ? <div className="harmonic-empty">
-          <strong>{nominalMismatch ? 'Harmonic windows intentionally rejected' : 'No complete spectrum yet'}</strong>
+      {!displayedSpectrum?.available
+        ? <div className={`harmonic-empty${harmonicState === 'priming' ? ' warning' : ''}`}
+            role={!nominalMismatch && harmonicState === 'priming' ? 'status' : undefined}
+            aria-live={!nominalMismatch && harmonicState === 'priming' ? 'polite' : undefined}>
+          <strong>{nominalMismatch ? 'Harmonic windows intentionally rejected'
+            : harmonicState === 'priming'
+              ? `Waiting for the first clean finalized ${PERIOD_INTERVAL_LABELS[period]} interval`
+              : harmonicState === 'invalid'
+                ? 'No valid spectrum from the latest finalized interval'
+                : 'No complete spectrum yet'}</strong>
 		  <span>{nominalMismatch
             ? <>{harmonicMismatchMessage(nominalMismatch, canConfigure)} The strict interval geometry guard remains active so a 50 Hz window cannot be mislabeled as a 60 Hz spectrum.</>
+            : harmonicState === 'priming'
+              ? <>The closed startup family is partial, contaminated, or not time aligned and remains available to diagnostics. The spectrum appears after one complete clean UTC interval closes.</>
+              : harmonicState === 'invalid'
+                ? <>The interval completed without startup contamination, but its measurement validity failed. Correct the reported metrology fault and wait for the next finalized family.</>
             : <>The {PERIOD_LABELS[period]} harmonic interval has not completed yet. The adaptive L/25 conditioner supports every selectable rate from 1 to 128 kSPS.
             {readings && <> The current capture is {formatCount(readings.sample_rate_hz)} samples/s with
               {' '}{formatCount(readings.block_sample_count)}-frame basic blocks.</>}
@@ -1293,7 +1377,7 @@ export function ReadingPage({
         </div>
         : <>
           <HarmonicOverview columns={channels} channelByIndex={channelByIndex}
-            ordersByChannel={ordersByChannel} qualifiedMaxOrder={spectrum.qualified_max_order}
+            ordersByChannel={ordersByChannel} qualifiedMaxOrder={displayedSpectrum.qualified_max_order}
             display={display} group={group} view={chartView} orderRange={orderRange}
             onOrderRangeChange={setOrderRange} />
           <div className="harmonic-table-toolbar">
@@ -1327,7 +1411,7 @@ export function ReadingPage({
                     channel={channelByIndex.get(column.channel)}
                     point={ordersByChannel.get(column.channel)?.get(order)}
                     fundamental={ordersByChannel.get(column.channel)?.get(1)}
-                    qualified={order <= spectrum.qualified_max_order}
+                    qualified={order <= displayedSpectrum.qualified_max_order}
                     display={display} />)}
                 </tr>)}
               </tbody>
