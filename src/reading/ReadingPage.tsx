@@ -5,12 +5,13 @@ import {
 import {
   api, ApiError, HarmonicChannel, HarmonicOrder, HarmonicPeriod,
   HarmonicSpectrum, MeterAggregate, MeterTenMinute,
-  MeterTwoHour, MeterReadings,
+  MeterTwoHour, MeterReadings, MeterFrequency10s, MeterFrequency10sResult,
 } from '../api'
 import type { MeasurementTopology } from '../api'
 import { PowerView } from './PowerView'
 import { EnergyDemandView } from './EnergyDemandView'
 import { PowerQualityView } from './PowerQualityView'
+import { Frequency10sPanel } from './Frequency10sPanel'
 import { SequenceView, SEQUENCE_CONTEXT_KEYS } from './SequenceView'
 import { harmonicMismatchMessage, harmonicNominalMismatch } from './harmonicDiagnosis'
 import {
@@ -1018,12 +1019,16 @@ function PhasorUnbalanceView({
  */
 export function ReadingPage({
   readings, onUnauthorized, systemNominalVoltage, measurementTopology,
+  frequency10s, frequency10sHistory = [], frequency10sError = '',
   canReset = false, canConfigure = false, acquisitionAvailable = true,
 }: {
   readings: MeterReadings | undefined
   onUnauthorized: () => void
   systemNominalVoltage: number
   measurementTopology: MeasurementTopology
+  frequency10s?: MeterFrequency10s
+  frequency10sHistory?: MeterFrequency10sResult[]
+  frequency10sError?: string
   canReset?: boolean
   canConfigure?: boolean
   acquisitionAvailable?: boolean
@@ -1247,6 +1252,9 @@ export function ReadingPage({
         aria-current={activeSubtab === 'power-quality' ? 'page' : undefined}
         onClick={() => setActiveSubtab('power-quality')}>Power Quality</button>
     </nav>
+
+    {activeSubtab === 'overview' && <Frequency10sPanel frequency={frequency10s}
+      history={frequency10sHistory} error={frequency10sError} />}
 
     {activeSubtab !== 'harmonics' && activeSubtab !== 'energy' &&
       activeSubtab !== 'power-quality' &&

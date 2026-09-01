@@ -68,6 +68,48 @@ const readings = {
   },
 }
 
+const frequency10s = {
+  available: true,
+  sequence: 77,
+  configuration_generation: 7,
+  valid: true,
+  quality: 'valid',
+  frequency_hz: 50.001,
+  frequency_millihz: 50_001,
+  time_quality: 'synchronized',
+  age_ms: 125,
+  first_sample_index: '9007199254740000',
+  interval_end_sample_index: '9007199256020000',
+  sample_count: 1_280_000,
+  sample_rate_hz: 128_000,
+  measured_sample_rate_millihz: 128_000_125,
+  cycle_count: 500,
+  utc_start_nanoseconds: '1788000200000000000',
+  utc_end_nanoseconds: '1788000210000000000',
+  utc_uncertainty_nanoseconds: '250',
+  source_sequence: 77,
+  boundary_generation: 9,
+  source_status: 0,
+  source_status_flags: ['boundary_valid', 'time_synchronized'],
+  status: 0,
+  status_flags: ['result_valid', 'time_aligned'],
+  reasons: 0,
+  rejection_reasons: [],
+  observer_drop_count: 0,
+  guard_flags: 0x0c,
+  guard_flag_names: ['exact_start', 'exact_end'],
+  observed_crossings: 501,
+  included_crossings: 501,
+  rejected_cycles: 0,
+  duration_q16_samples: '83886080000',
+  first_crossing_q16_samples: '590295760316989440000',
+  last_crossing_q16_samples: '590295844203069440000',
+  nominal_frequency_hz: 50,
+  reference_channel: 6,
+  filter_profile: 1,
+  calibration_profile: 1,
+}
+
 describe('dashboard startup readiness', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -78,6 +120,7 @@ describe('dashboard startup readiness', () => {
     vi.useFakeTimers()
     let mode: 'starting' | 'ready' | 'stale' = 'starting'
     let meterRequests = 0
+    let frequencyRequests = 0
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/v1/health') {
@@ -100,6 +143,10 @@ describe('dashboard startup readiness', () => {
         ++meterRequests
         return json(readings)
       }
+      if (url === '/api/v1/meter/frequency-10s') {
+        ++frequencyRequests
+        return json(frequency10s)
+      }
       throw new Error(`Unexpected request ${url}`)
     }))
 
@@ -108,6 +155,7 @@ describe('dashboard startup readiness', () => {
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(screen.getByText('System initializing or recovering')).toBeInTheDocument()
     expect(meterRequests).toBe(0)
+    expect(frequencyRequests).toBe(0)
 
     mode = 'ready'
     await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
@@ -115,14 +163,20 @@ describe('dashboard startup readiness', () => {
     expect(screen.getByText('System healthy')).toBeInTheDocument()
     expect(meterRequests).toBeGreaterThan(0)
     expect(screen.getByText('49.998')).toBeInTheDocument()
+    expect(screen.getByText('Latest completed interval').parentElement)
+      .toHaveTextContent('50.001 Hz')
+    expect(frequencyRequests).toBeGreaterThan(0)
 
     mode = 'stale'
     await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
     expect(screen.getByText('System needs attention')).toBeInTheDocument()
     expect(screen.queryByText('49.998')).not.toBeInTheDocument()
+    expect(screen.queryByText('50.001', { exact: false })).not.toBeInTheDocument()
     const stoppedAt = meterRequests
+    const frequencyStoppedAt = frequencyRequests
     await act(async () => { await vi.advanceTimersByTimeAsync(600) })
     expect(meterRequests).toBe(stoppedAt)
+    expect(frequencyRequests).toBe(frequencyStoppedAt)
   })
 
   it('shows both exact documentation downloads to a Viewer', async () => {
@@ -139,6 +193,7 @@ describe('dashboard startup readiness', () => {
         missed_sample_count: 0, healthy: true, channels: [], harmonics: [],
       })
       if (url === '/api/v1/meter/readings') return json(readings)
+      if (url === '/api/v1/meter/frequency-10s') return json(frequency10s)
       if (url === '/api/v1/about') return json({
         product: 'MSAP1', operating_system: 'MNCOS',
         yocto_system_version: 'test', build_hex: 'abc123',

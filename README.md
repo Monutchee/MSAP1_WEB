@@ -8,10 +8,19 @@ in the API model for future reference monitoring but is not rendered.
 The viewer-facing **About** tab displays the MNCOS/Yocto version, short image
 build identifier, and software build date from `/api/v1/about`.
 
-The main **Dashboard** contains live RMS readings and pipeline health. The
-meter produces two cycle-defined measurement tiers, and a **Measurement
-interval**
-selector in the "RMS readings" heading chooses which one the dashboard renders:
+The main **Dashboard** contains the independent UTC-aligned frequency product,
+live RMS readings, and pipeline health. `GET /api/v1/meter/frequency-10s` is
+polled once per second while Dashboard or Reading is visible. Its dedicated
+**UTC 10-second frequency** panel shows only a valid standardized value; a
+rejected completed interval keeps its named rejection reasons and audit
+provenance but displays no numeric zero. UTC nanoseconds, sample anchors, and
+Q16 crossing positions remain decimal strings and are formatted with `BigInt`
+so JavaScript cannot round them. The same panel appears in **Reading →
+Overview**, independently of its RMS interval selector.
+
+The meter also produces cycle-defined and long-interval RMS tiers. A
+**Measurement interval** selector in the "RMS readings" heading chooses which
+one the dashboard renders:
 
 - **Basic block (10/12 cycles)** reads `GET /api/v1/meter/readings`. This is the
   IEC 61000-4-30 basic measurement block: 10 grid cycles at 50 Hz nominal and
@@ -115,11 +124,11 @@ event-specific MNCWF export. Administrators can select one or several events
 for confirmed deletion without deleting the shared MNCWF files. The browser
 does not read DMA, RPMsg, or raw storage.
 
-The aggregate grid frequency is **informative only**. Per
+The 150/180-cycle aggregate grid frequency remains **informative only**. Per
 IEC 61000-4-30:2025 the standardized frequency product is defined over its own
-10 s interval, which is not this tier, so the aggregate frequency card is
-labelled informative and is never presented as a Class A frequency
-measurement. Meter controls are separated under the administrator-only
+UTC-aligned 10 s interval. The aggregate frequency card is therefore labelled
+informative and is never substituted for the dedicated Class A interval panel.
+Meter controls are separated under the administrator-only
 **Configuration → Meter** view, including the grid-frequency zero-crossing
 settings, the declared nominal grid frequency selector (50 Hz or 60 Hz),
 which chooses the IEC 61000-4-30 basic measurement block of 10 or 12 cycles,
@@ -176,7 +185,9 @@ History, MQTT, and Data Logging share the same grouped, searchable
 `AttributePicker`, populated from `GET /api/v1/meter/attributes`. It searches
 friendly labels, stable keys, groups, and units and filters against the
 selected usage/period capabilities. The browser does not maintain a second
-meter attribute table.
+meter attribute table. The canonical historian/Data Logging ID for the new
+product is `seconds_10`; MQTT retains its compact wire ID `seconds10`, which
+the UI maps back to `seconds_10` for labels and attribute validation.
 
 **History → Generated Files** lists durable Data Sender artifacts with bounded
 filters and previews, authenticated downloads, quality/coverage context,

@@ -8,6 +8,7 @@ import {
   AdcSource, ApiError, DeveloperAbout, SingleCycleStatus, PowerQualityStatus,
   DeveloperLogEntry, FrequencyConfiguration, LogPriority,
   MeterAggregate, MeterAggregateResult,
+  MeterFrequency10s, MeterFrequency10sResult,
   MeterTenMinute, MeterTenMinuteResult,
   MeterTwoHour, MeterTwoHourResult,
   MeasurementTopology, DemandConfiguration, CurrentWiringConfiguration,
@@ -22,6 +23,7 @@ import { DeveloperDatabasePage } from './developer/DeveloperDatabasePage'
 import { DeveloperDataRecorderPage } from './developer/DeveloperDataRecorderPage'
 import { HistoryPage } from './history/HistoryPage'
 import { ReadingPage } from './reading/ReadingPage'
+import { Frequency10sPanel } from './reading/Frequency10sPanel'
 import { ModbusConfiguration } from './configuration/ModbusConfiguration'
 import { MqttConfiguration } from './configuration/MqttConfiguration'
 import { PowerQualityConfiguration } from './configuration/PowerQualityConfiguration'
@@ -2226,6 +2228,10 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
   // Kept separate from the shared `error`: the 200 ms readings poll clears
   // that five times a second, which would hide a persistent aggregate fault.
   const [aggregateError, setAggregateError] = useState('')
+  const [frequency10s, setFrequency10s] = useState<MeterFrequency10s>()
+  const [frequency10sHistory, setFrequency10sHistory] =
+    useState<MeterFrequency10sResult[]>([])
+  const [frequency10sError, setFrequency10sError] = useState('')
   const [tenMinute, setTenMinute] = useState<MeterTenMinute>()
   const [tenMinuteHistory, setTenMinuteHistory] = useState<MeterTenMinuteResult[]>([])
   const [tenMinuteError, setTenMinuteError] = useState('')
@@ -2258,6 +2264,7 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
   const readiness = classifySystemReadiness(health,
     healthFailure instanceof ApiError ? healthFailure : healthFailure
       ? { code: undefined, retryable: false } : undefined)
+  const frequency10sVisible = activeView === 'dashboard' || activeView === 'reading'
 
   const handleError = useCallback((reason: unknown) => {
     if (reason instanceof ApiError && reason.status === 401) { onUnauthorized(); return }
@@ -2464,6 +2471,9 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
     setHistory([])
     setAggregate(undefined)
     setAggregateHistory([])
+    setFrequency10s(undefined)
+    setFrequency10sHistory([])
+    setFrequency10sError('')
     setTenMinute(undefined)
     setTenMinuteHistory([])
     setTenMinuteLive(undefined)
@@ -2496,6 +2506,54 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
     const timer = window.setInterval(load, 200)
     return () => { active = false; window.clearInterval(timer) }
   }, [handleError, readiness.liveDataReady])
+
+  // The IEC frequency result owns an independent UTC-aligned ten-second
+  // interval. Keep its request, history, and errors separate from both the
+  // fast Basic poll and whichever RMS tier the operator selects.
+  useEffect(() => {
+    if (!readiness.liveDataReady || !frequency10sVisible) return
+    let active = true
+    let pending = false
+    const load = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const next = await api.meterFrequency10s()
+        if (active) {
+          setFrequency10s(next)
+          if (next.available) {
+            setFrequency10sHistory((current) => {
+              const previous = current.at(-1)
+              if (previous &&
+                  previous.configuration_generation !== next.configuration_generation)
+                return [next]
+              return previous?.sequence === next.sequence
+                ? current : [...current, next].slice(-HISTORY)
+            })
+          }
+          setFrequency10sError('')
+        }
+      } catch (reason) {
+        if (!active) return
+        if (reason instanceof ApiError && reason.status === 401) {
+          handleError(reason)
+          return
+        }
+        setFrequency10sError(reason instanceof Error
+          ? reason.message
+          : 'Unable to read the UTC ten-second frequency')
+      } finally { pending = false }
+    }
+    void load()
+    const timer = window.setInterval(load, 1000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      setFrequency10s(undefined)
+      setFrequency10sHistory([])
+      setFrequency10sError('')
+    }
+  }, [frequency10sVisible, handleError, readiness.liveDataReady])
 
   // The aggregate is polled only while its tier is displayed. The interval is
   // created by this effect and torn down again on tier change, view change, and
@@ -2860,6 +2918,8 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
             acquisitionAvailable={readiness.acquisitionReachable} />
       : activeView === 'reading'
         ? <ReadingPage readings={readings} onUnauthorized={onUnauthorized}
+            frequency10s={frequency10s} frequency10sHistory={frequency10sHistory}
+            frequency10sError={frequency10sError}
             systemNominalVoltage={systemNominalVoltage ?? 120}
             measurementTopology={measurementTopology ?? 'wye'}
             canReset={session.role === 'admin'} canConfigure={session.role === 'admin'}
@@ -2903,6 +2963,8 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
       </StatusPill>
     </section>
     {error && <div className="error-banner"><strong>Data unavailable</strong><span>{error}</span></div>}
+    <Frequency10sPanel frequency={frequency10s} history={frequency10sHistory}
+      error={frequency10sError} />
     <section className="section-heading dashboard-results-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div>
       <div className="heading-status">
         {tier === 'basic' && timing && <StatusPill ok={timing.time_quality === 'synchronized'}>

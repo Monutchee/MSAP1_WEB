@@ -11,12 +11,14 @@ const catalog: MeterAttributeCatalog = {
   periods: [
     { id: 'basic', label: 'Basic 10/12-cycle',
       attributes: ['frequency', 'voltage.ln.a.rms'] },
+    { id: 'seconds_10', label: 'IEC frequency 10-second', attributes: ['frequency'] },
     { id: 'minutes_10', label: '10 minute', attributes: ['voltage.ln.a.rms'] },
   ],
   attributes: [
     { id: 'frequency', label: 'Frequency', group: 'frequency', unit: 'Hz',
       value_kind: 'linear', search_aliases: ['hertz'],
-      calculations: ['minimum', 'maximum', 'average', 'last'], periods: ['basic'] },
+      calculations: ['minimum', 'maximum', 'average', 'last'],
+      periods: ['basic', 'seconds_10'] },
     { id: 'voltage.ln.a.rms', label: 'Line voltage A', group: 'voltage_ln_rms',
       unit: 'V', value_kind: 'linear', search_aliases: ['phase a'],
       calculations: ['minimum', 'maximum', 'average', 'last'],
@@ -88,6 +90,20 @@ describe('DataLoggingJobEditor', () => {
     expect(latest.destination).toBe('local_only')
     expect(latest.channel_ids).toEqual([])
     expect(screen.getByText(/No network connection is attempted/)).toBeInTheDocument()
+  })
+
+  it('allows ten-second files and rows for the standardized frequency product', () => {
+    render(<Harness start={initialJob({
+      source_period: 'seconds_10', generation_interval_seconds: 10,
+      row_interval_seconds: 10,
+      selections: [{ attribute: 'frequency', calculation: 'last' }],
+    })} />)
+
+    const generation = screen.getByRole('combobox', { name: 'Generate one file every' })
+    const rows = screen.getByRole('combobox', { name: 'One output row every' })
+    expect(within(generation).getByRole('option', { name: '10 seconds' })).toBeInTheDocument()
+    expect(within(rows).getByRole('option', { name: '10 seconds' })).toBeInTheDocument()
+    expect(within(rows).queryByRole('option', { name: '3 seconds' })).not.toBeInTheDocument()
   })
 
   it('requires confirmation before a period change removes attributes', () => {
