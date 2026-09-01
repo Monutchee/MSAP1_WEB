@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 let Dashboard: typeof import('./App')['Dashboard']
@@ -123,5 +123,47 @@ describe('dashboard startup readiness', () => {
     const stoppedAt = meterRequests
     await act(async () => { await vi.advanceTimersByTimeAsync(600) })
     expect(meterRequests).toBe(stoppedAt)
+  })
+
+  it('shows both exact documentation downloads to a Viewer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/health') return json(health())
+      if (url === '/api/v1/settings/active') return json(settings)
+      if (url === '/api/v1/adc/source') return json({
+        source: 'physical', configuration_generation: 7, active: true, healthy: true,
+      })
+      if (url === '/api/v1/adc/simulator') return json({
+        active_source: 'physical', configuration_generation: 7,
+        active_generation: 0, generated_frames: 0, saturation_count: 0,
+        missed_sample_count: 0, healthy: true, channels: [], harmonics: [],
+      })
+      if (url === '/api/v1/meter/readings') return json(readings)
+      if (url === '/api/v1/about') return json({
+        product: 'MSAP1', operating_system: 'MNCOS',
+        yocto_system_version: 'test', build_hex: 'abc123',
+        software_build_date: '2026-09-01', image_recipe: 'msap1-image',
+        machine: 'msap1',
+      })
+      throw new Error(`Unexpected request ${url}`)
+    }))
+
+    render(<Dashboard session={{ username: 'viewer', role: 'viewer' }}
+      onLogout={() => undefined} onUnauthorized={() => undefined} />)
+    fireEvent.click(screen.getByRole('button', { name: 'About' }))
+
+    const yaml = await screen.findByRole('link', {
+      name: /Download OpenAPI YAML/,
+    })
+    const xlsx = screen.getByRole('link', {
+      name: /Download Modbus registers XLSX/,
+    })
+    expect(yaml).toHaveAttribute('href',
+      '/api/v1/documentation/msap1_api.yaml')
+    expect(yaml).toHaveAttribute('download', 'msap1_api.yaml')
+    expect(xlsx).toHaveAttribute('href',
+      '/api/v1/documentation/msap1_modbus_registers.xlsx')
+    expect(xlsx).toHaveAttribute('download', 'msap1_modbus_registers.xlsx')
+    await waitFor(() => expect(screen.getByText('abc123')).toBeInTheDocument())
   })
 })

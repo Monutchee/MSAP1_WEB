@@ -1839,6 +1839,11 @@ export const mqttCaDownloadPath = '/api/v1/mqtt/tls/ca'
 export const mqttClientCertificateDownloadPath =
   '/api/v1/mqtt/tls/client-certificate'
 
+export const openApiDocumentDownloadPath =
+  '/api/v1/documentation/msap1_api.yaml'
+export const modbusRegisterDocumentDownloadPath =
+  '/api/v1/documentation/msap1_modbus_registers.xlsx'
+
 export function dataLoggingArtifactDownloadPath(id: string) {
   return `/api/v1/data-logging/artifacts/download?id=${encodeURIComponent(id)}`
 }

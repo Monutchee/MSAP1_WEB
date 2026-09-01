@@ -14,7 +14,8 @@ import {
   CurrentPhase,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
-  PowerQualityEvents,
+  PowerQualityEvents, openApiDocumentDownloadPath,
+  modbusRegisterDocumentDownloadPath,
 } from './api'
 import { WaveformExplorer } from './waveform/WaveformExplorer'
 import { DeveloperDatabasePage } from './developer/DeveloperDatabasePage'
@@ -607,6 +608,26 @@ function AboutPage({ onUnauthorized }: { onUnauthorized: () => void }) {
         <div><dt>Image recipe</dt><dd>{about?.image_recipe || '—'}</dd></div>
         <div><dt>Machine</dt><dd>{about?.machine || '—'}</dd></div>
       </dl>
+    </section>
+    <section className="documentation-panel" aria-labelledby="documentation-title">
+      <div>
+        <p className="eyebrow">Documentation</p>
+        <h2 id="documentation-title">Product integration files</h2>
+        <p>Download the immutable API contract and Modbus register map built into this software image.</p>
+      </div>
+      <div className="documentation-downloads">
+        <a href={openApiDocumentDownloadPath} download="msap1_api.yaml">
+          <span>OpenAPI 3.1</span>
+          <strong>Download OpenAPI YAML</strong>
+          <small>msap1_api.yaml</small>
+        </a>
+        <a href={modbusRegisterDocumentDownloadPath}
+          download="msap1_modbus_registers.xlsx">
+          <span>Modbus map</span>
+          <strong>Download Modbus registers XLSX</strong>
+          <small>msap1_modbus_registers.xlsx</small>
+        </a>
+      </div>
     </section>
   </section>
 }

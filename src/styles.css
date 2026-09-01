@@ -509,7 +509,8 @@ form button.simulator-tone-add:hover { border-color: var(--green); background: r
 }
 .developer-subtabs button.active { color: var(--green); background: var(--panel); }
 .developer-overview { display: grid; gap: 1rem; }
-.temperature-panel, .telemetry-panel, .component-panel, .about-panel {
+.temperature-panel, .telemetry-panel, .component-panel, .about-panel,
+.documentation-panel {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -545,6 +546,65 @@ form button.simulator-tone-add:hover { border-color: var(--green); background: r
   color: #e4eeee;
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   overflow-wrap: anywhere;
+}
+.documentation-panel {
+  display: grid;
+  grid-template-columns: minmax(230px, .8fr) minmax(420px, 1.4fr);
+  gap: 2rem;
+  margin-top: 1rem;
+  padding: 2rem;
+}
+.documentation-panel .eyebrow { margin-top: 0; }
+.documentation-panel h2 { margin-bottom: .55rem; }
+.documentation-panel > div:first-child > p:last-child {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.documentation-downloads {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .8rem;
+}
+.documentation-downloads a {
+  display: grid;
+  align-content: center;
+  gap: .35rem;
+  min-height: 112px;
+  padding: 1.15rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: #e4eeee;
+  background: rgba(7, 20, 25, .62);
+  text-decoration: none;
+  transition: border-color .15s ease, background .15s ease,
+    transform .15s ease;
+}
+.documentation-downloads a:hover,
+.documentation-downloads a:focus-visible {
+  border-color: var(--green);
+  background: rgba(84, 226, 164, .07);
+  transform: translateY(-1px);
+  outline: 0;
+}
+.documentation-downloads span {
+  color: var(--green);
+  font-size: .62rem;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.documentation-downloads strong { font-size: .82rem; }
+.documentation-downloads small {
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 820px) {
+  .documentation-panel { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .documentation-downloads { grid-template-columns: 1fr; }
 }
 .digest-purpose {
   margin: 0;
