@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ManagementPage } from './ManagementPage'
 
-function waveformStatus(sessionCount: number) {
+function waveformStatus(sessionCount: number, archiveState = 'complete') {
   return {
     running: true,
     active_session: false,
@@ -22,6 +22,10 @@ function waveformStatus(sessionCount: number) {
     history_capacity_frames: 1_000_000,
     completed_sessions: sessionCount,
     incomplete_sessions: 0,
+    archive_discovery: {
+      state: archiveState, scanned_files: archiveState === 'complete' ? sessionCount : 0,
+      total_files: sessionCount, rejected_files: 0,
+    },
     export_formats: ['mncwf'],
     sessions: Array.from({ length: sessionCount }, (_, index) => ({
       id: index + 1,
@@ -163,5 +167,32 @@ describe('Management page', () => {
     expect(JSON.parse(String(waveformDelete?.[1]?.body))).toEqual({
       session_id: 0, all: true, confirmed: true,
     })
+  })
+
+  it('prevents clear-all while retained waveform files are still being indexed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/waveforms')
+        return new Response(JSON.stringify(waveformStatus(1, 'scanning')), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      if (url === '/api/v1/developer/database')
+        return new Response(JSON.stringify({
+          historian: { block_count: 0, power_quality_event_count: 0 },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url === '/api/v1/data-logging/status')
+        return new Response(JSON.stringify({
+          artifact_count: 0, pending_delivery_count: 0, archive_count: 0,
+          completed_metadata_count: 0, outbox_count: 0,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+
+    render(<ManagementPage onUnauthorized={() => undefined} />)
+
+    expect(await screen.findByText(/Waveform archive indexing is still in progress/))
+      .toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Clear all waveform data' }))
+      .toBeDisabled()
   })
 })

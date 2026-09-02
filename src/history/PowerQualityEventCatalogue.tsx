@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  api, ApiError, PowerQualityEvent, WaveformSession, WaveformStatus,
+  api, ApiError, PowerQualityEvent, WaveformSessionLookup,
   waveformEventExportPath,
 } from '../api'
 import { ConfirmDialog, ConfirmDialogState } from '../components/ConfirmDialog'
@@ -211,16 +211,29 @@ function EventTimeline({ groups, selectedEventId, checkedEventIds, expandedGroup
   </ul>
 }
 
-function CaptureLink({ captureUuid, event, session, onViewWaveform }: {
+interface CaptureLookupState {
+  loading: boolean
+  result?: WaveformSessionLookup
+  error?: string
+}
+
+function CaptureLink({ captureUuid, event, lookup, onViewWaveform }: {
   captureUuid: string
   event: PowerQualityEvent
-  session: WaveformSession | undefined
+  lookup: CaptureLookupState | undefined
   onViewWaveform: (filename: string) => void
 }) {
+  const session = lookup?.result?.session
   const materialized = session?.state === 'complete' && Boolean(session.filename)
+  const materializationPending = session?.state === 'capturing'
+  const locating = !lookup || (lookup.loading && !lookup.result) ||
+    (!session && (lookup.result?.archive_discovery.state === 'not_started' ||
+      lookup.result?.archive_discovery.state === 'scanning'))
+  const unavailable = (!session && !locating) ||
+    Boolean(session && !materialized && !materializationPending)
   return <article className="power-quality-capture-link">
     <div>
-      <strong>{session ? `Session ${session.id}` : 'Capture pending in session catalogue'}</strong>
+      <strong>{session ? `Session ${session.id}` : 'Linked capture'}</strong>
       <code>{captureUuid}</code>
     </div>
     {session && <dl>
@@ -238,13 +251,23 @@ function CaptureLink({ captureUuid, event, session, onViewWaveform }: {
           Download event MNCWF
         </a>
       </div>
-      : <span className="power-quality-capture-pending">Materialization pending</span>}
+      : materializationPending
+      ? <span className="power-quality-capture-pending">Materialization pending</span>
+      : session
+      ? <span className="power-quality-capture-pending unavailable">
+        Linked waveform unavailable
+      </span>
+      : null}
+    {!materialized && !session && <span className={`power-quality-capture-pending ${
+      unavailable ? 'unavailable' : ''}`}>
+      {locating ? 'Locating capture' : 'Linked waveform unavailable'}
+    </span>}
   </article>
 }
 
-function EventDetail({ event, waveforms, canDelete, onDelete, onViewWaveform }: {
+function EventDetail({ event, captureLookups, canDelete, onDelete, onViewWaveform }: {
   event: PowerQualityEvent | undefined
-  waveforms: WaveformStatus | undefined
+  captureLookups: ReadonlyMap<string, CaptureLookupState>
   canDelete: boolean
   onDelete: (events: PowerQualityEvent[]) => void
   onViewWaveform: (filename: string) => void
@@ -253,9 +276,6 @@ function EventDetail({ event, waveforms, canDelete, onDelete, onViewWaveform }: 
     <strong>Select an event</strong><span>Its lifecycle snapshot and linked captures appear here.</span>
   </div>
 
-  const sessionByCapture = new Map(
-    waveforms?.sessions.map((session) => [session.capture_uuid, session]) ?? [],
-  )
   const unit = eventUnit(event)
   return <div className="power-quality-event-detail">
     <header>
@@ -295,7 +315,7 @@ function EventDetail({ event, waveforms, canDelete, onDelete, onViewWaveform }: 
         <span>MNCWF is the master record</span></header>
       {event.waveform_capture_uuids.map((captureUuid) => <CaptureLink
         key={captureUuid} captureUuid={captureUuid} event={event}
-        session={sessionByCapture.get(captureUuid)} onViewWaveform={onViewWaveform} />)}
+        lookup={captureLookups.get(captureUuid)} onViewWaveform={onViewWaveform} />)}
       {event.waveform_capture_uuids.length === 0 && <div className="power-quality-empty compact">
         <strong>No linked capture</strong><span>{event.waveform.enabled
           ? 'The capture coordinator has not linked a materialized session yet.'
@@ -316,7 +336,8 @@ export function PowerQualityEventCatalogue({ onUnauthorized,
   canDelete?: boolean
 }) {
   const [events, setEvents] = useState<PowerQualityEvent[]>([])
-  const [waveforms, setWaveforms] = useState<WaveformStatus>()
+  const [captureLookups, setCaptureLookups] = useState<
+    ReadonlyMap<string, CaptureLookupState>>(new Map())
   const [selectedEventId, setSelectedEventId] = useState<string>()
   const [checkedEventIds, setCheckedEventIds] = useState<ReadonlySet<string>>(new Set())
   const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(new Set())
@@ -324,6 +345,7 @@ export function PowerQualityEventCatalogue({ onUnauthorized,
   const [deleting, setDeleting] = useState(false)
   const [dialogError, setDialogError] = useState('')
   const [error, setError] = useState('')
+  const [lookupError, setLookupError] = useState('')
   const [loadingWaveform, setLoadingWaveform] = useState('')
   const [viewer, setViewer] = useState<{
     filename: string
@@ -339,22 +361,20 @@ export function PowerQualityEventCatalogue({ onUnauthorized,
   }, [onUnauthorized])
 
   const load = useCallback(async () => {
-    const [nextEvents, nextWaveforms] = await Promise.allSettled([
-      api.powerQualityEvents({ limit: 100 }), api.waveforms(),
-    ])
-    const failures: string[] = []
-    if (nextEvents.status === 'fulfilled') {
-      const available = new Set(nextEvents.value.events.map((event) => event.event_id))
-      setEvents(nextEvents.value.events)
+    try {
+      const next = await api.powerQualityEvents({ limit: 100 })
+      const available = new Set(next.events.map((event) => event.event_id))
+      setEvents(next.events)
       setSelectedEventId((current) => current && available.has(current)
-        ? current : nextEvents.value.events[0]?.event_id)
+        ? current : next.events[0]?.event_id)
       setCheckedEventIds((current) => new Set(
         Array.from(current).filter((id) => available.has(id)),
       ))
-    } else failures.push(handleFailure(nextEvents.reason, 'Unable to read event catalogue'))
-    if (nextWaveforms.status === 'fulfilled') setWaveforms(nextWaveforms.value)
-    else failures.push(handleFailure(nextWaveforms.reason, 'Unable to read waveform catalogue'))
-    setError(failures.filter((failure) => failure !== 'unauthorized').join(' · '))
+      setError('')
+    } catch (reason) {
+      const failure = handleFailure(reason, 'Unable to read event catalogue')
+      setError(failure === 'unauthorized' ? '' : failure)
+    }
   }, [handleFailure])
 
   useEffect(() => {
@@ -377,6 +397,50 @@ export function PowerQualityEventCatalogue({ onUnauthorized,
   const groups = useMemo(() => groupOverlappingEvents(events), [events])
   const selectedEvent = useMemo(() => events.find(
     (event) => event.event_id === selectedEventId), [events, selectedEventId])
+  const selectedCaptureKey = selectedEvent?.waveform_capture_uuids.join('\0') ?? ''
+
+  useEffect(() => {
+    const captureUuids = selectedCaptureKey === '' ? [] : selectedCaptureKey.split('\0')
+    setCaptureLookups(new Map(captureUuids.map((captureUuid) => [captureUuid, {
+      loading: true,
+    }])))
+    setLookupError('')
+    if (captureUuids.length === 0) return
+
+    let active = true
+    let pending = false
+    const refresh = async () => {
+      if (!active || pending) return
+      pending = true
+      const results = await Promise.allSettled(
+        captureUuids.map((captureUuid) => api.waveformSession(captureUuid)),
+      )
+      if (!active) return
+      const next = new Map<string, CaptureLookupState>()
+      const failures: string[] = []
+      results.forEach((result, index) => {
+        const captureUuid = captureUuids[index]
+        if (result.status === 'fulfilled') {
+          next.set(captureUuid, { loading: false, result: result.value })
+          return
+        }
+        const failure = handleFailure(
+          result.reason, `Unable to locate capture ${captureUuid}`)
+        if (failure !== 'unauthorized') failures.push(failure)
+        next.set(captureUuid, { loading: false, error: failure })
+      })
+      setCaptureLookups(next)
+      setLookupError(failures.join(' · '))
+      pending = false
+    }
+    void refresh()
+    const timer = window.setInterval(refresh, 2000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [handleFailure, selectedCaptureKey])
+
   const allSelected = events.length > 0 && events.every(
     (event) => checkedEventIds.has(event.event_id))
 
@@ -458,8 +522,8 @@ export function PowerQualityEventCatalogue({ onUnauthorized,
   }
 
   return <>
-    {error && <div className="error-banner"><strong>Event evidence unavailable</strong>
-      <span>{error}</span></div>}
+    {(error || lookupError) && <div className="error-banner"><strong>Event evidence unavailable</strong>
+      <span>{[error, lookupError].filter(Boolean).join(' · ')}</span></div>}
     <section className="power-quality-events" aria-labelledby="event-catalogue-title">
       <header><div><p className="eyebrow">Power quality history</p>
         <h2 id="event-catalogue-title">Event catalogue</h2></div>
@@ -482,7 +546,7 @@ export function PowerQualityEventCatalogue({ onUnauthorized,
           canDelete={canDelete} onSelect={setSelectedEventId}
           onToggleExpanded={toggleExpanded} onToggleChecked={toggleChecked}
           onDelete={requestDeletion} />
-        <EventDetail event={selectedEvent} waveforms={waveforms}
+        <EventDetail event={selectedEvent} captureLookups={captureLookups}
           canDelete={canDelete} onDelete={requestDeletion}
           onViewWaveform={(filename) => {
             if (loadingWaveform === '') void openWaveform(filename)

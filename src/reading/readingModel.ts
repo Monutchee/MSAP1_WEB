@@ -1,6 +1,6 @@
 import {
-  MeterAggregateResult, MeterReadingAttribute, MeterReadingQuality,
-  MeterReadings, MeterTenMinuteResult,
+  HarmonicPeriod, HarmonicSpectrum, MeterAggregateResult, MeterReadingAttribute,
+  MeterReadingQuality, MeterReadings, MeterTenMinuteResult,
 } from '../api'
 
 export type ReadingInterval = 'basic' | 'aggregate' | 'min10' | 'hour2'
@@ -20,21 +20,41 @@ export interface ReadingRecord {
   channels: IntervalChannel[]
   sequence: number
   configurationGeneration: number
+  firstSampleIndex: number | undefined
+  sampleCount: number | undefined
   timeQuality: 'unsynchronized' | 'synchronized' | 'holdover' | undefined
   utcStartNanoseconds: number | undefined
   utcUncertaintyNanoseconds: number | undefined
   recordComplete: boolean
+  timeAligned?: boolean
+  boundaryValid?: boolean
+  contaminated?: boolean
   arithmeticError: boolean
   flags: string[]
 }
 
 export type CompleteRecordCache = Partial<Record<ReadingInterval, ReadingRecord>>
+export type IntervalPresentationState = 'waiting' | 'priming' | 'ready' | 'rejected'
+export type HarmonicPresentationState =
+  | 'waiting' | 'priming' | 'ready' | 'rejected' | 'invalid'
+export type HarmonicSpectrumCache = Partial<Record<HarmonicPeriod, HarmonicSpectrum>>
 
 export const READING_INTERVAL_LABELS: Record<ReadingInterval, string> = {
   basic: '10/12-cycle finalized',
   aggregate: '150/180-cycle aggregate',
   min10: '10-minute finalized',
   hour2: '2-hour finalized',
+}
+
+export const READING_HARMONIC_PERIODS: Record<ReadingInterval, HarmonicPeriod> = {
+  basic: 'basic',
+  aggregate: 'cycles_150_180',
+  min10: 'minutes_10',
+  hour2: 'hours_2',
+}
+
+export function harmonicPeriodForReadingInterval(interval: ReadingInterval) {
+  return READING_HARMONIC_PERIODS[interval]
 }
 
 export const POWER_SCOPES: PowerScope[] = ['a', 'b', 'c', 'total']
@@ -111,14 +131,19 @@ function buildRecord(
     attributes: MeterReadingAttribute[]
     channels: IntervalChannel[]
     record_complete: boolean
+    first_sample_index?: number
+    sample_count?: number
   },
   context: Omit<ReadingRecord,
-    'interval' | 'sequence' | 'configurationGeneration' | 'attributes' | 'channels' | 'recordComplete'>,
+    'interval' | 'sequence' | 'configurationGeneration' | 'firstSampleIndex' | 'sampleCount' |
+    'attributes' | 'channels' | 'recordComplete'>,
 ): ReadingRecord {
   return {
     interval,
     sequence: source.sequence,
     configurationGeneration: source.configuration_generation,
+    firstSampleIndex: source.first_sample_index,
+    sampleCount: source.sample_count,
     attributes: source.attributes,
     channels: source.channels,
     recordComplete: source.record_complete && sourcesMatch(source.sequence, source.attributes),
@@ -137,10 +162,13 @@ export function basicReadingRecord(readings: MeterReadings | undefined): Reading
     attributes: readings.attributes ?? [],
     channels: readings.channels,
     record_complete: readings.record_complete,
+    first_sample_index: readings.timing?.first_sample_index,
+    sample_count: readings.timing?.sample_count,
   }, {
     timeQuality: readings.timing?.time_quality,
     utcStartNanoseconds: readings.timing?.utc_start_nanoseconds,
     utcUncertaintyNanoseconds: readings.timing?.utc_uncertainty_nanoseconds,
+    contaminated: false,
     arithmeticError: (readings.attributes ?? []).some((attribute) =>
       attribute.quality === 'arithmetic_error'),
     flags,
@@ -161,9 +189,29 @@ export function aggregateReadingRecord(
     timeQuality: result.time_quality,
     utcStartNanoseconds: result.utc_start_nanoseconds,
     utcUncertaintyNanoseconds: result.utc_uncertainty_nanoseconds,
+    timeAligned: 'time_aligned' in result ? result.time_aligned : undefined,
+    boundaryValid: 'boundary_valid' in result ? result.boundary_valid : undefined,
+    contaminated: 'contaminated' in result ? result.contaminated : false,
     arithmeticError: result.arithmetic_error,
     flags,
   })
+}
+
+function generationMatches(generation: number, activeGeneration: number | undefined) {
+  return activeGeneration === undefined || generation === activeGeneration
+}
+
+/** Uint32 serial arithmetic; a backwards jump indicates a new producer epoch. */
+function sequenceRegressed(candidate: number, cached: number) {
+  const delta = (candidate - cached) >>> 0
+  return delta !== 0 && delta >= 0x80000000
+}
+
+export function isUsableReadingRecord(record: ReadingRecord | undefined) {
+  if (!record?.recordComplete) return false
+  if (record.interval !== 'min10' && record.interval !== 'hour2') return true
+  return record.timeAligned === true && record.boundaryValid === true &&
+    record.contaminated !== true
 }
 
 export function updateCompleteRecordCache(
@@ -175,11 +223,17 @@ export function updateCompleteRecordCache(
   const next: CompleteRecordCache = {}
   for (const cacheInterval of ['basic', 'aggregate', 'min10', 'hour2'] as ReadingInterval[]) {
     const cached = current[cacheInterval]
-    if (cached && (activeGeneration === undefined ||
-        cached.configurationGeneration === activeGeneration)) next[cacheInterval] = cached
+    if (cached && generationMatches(cached.configurationGeneration, activeGeneration))
+      next[cacheInterval] = cached
   }
-  if (candidate?.recordComplete && (activeGeneration === undefined ||
-      candidate.configurationGeneration === activeGeneration)) next[interval] = candidate
+  if (candidate && generationMatches(candidate.configurationGeneration, activeGeneration)) {
+    const cached = next[interval]
+    if (cached && sequenceRegressed(candidate.sequence, cached.sequence)) {
+      for (const cacheInterval of Object.keys(next) as ReadingInterval[])
+        delete next[cacheInterval]
+    }
+    if (isUsableReadingRecord(candidate)) next[interval] = candidate
+  }
   return next
 }
 
@@ -189,11 +243,120 @@ export function selectCommittedRecord(
   candidate: ReadingRecord | undefined,
   activeGeneration: number | undefined,
 ) {
-  if (candidate?.recordComplete && (activeGeneration === undefined ||
-      candidate.configurationGeneration === activeGeneration)) return candidate
+  const matchingCandidate = candidate &&
+    generationMatches(candidate.configurationGeneration, activeGeneration)
+      ? candidate : undefined
   const cached = cache[interval]
-  return cached && (activeGeneration === undefined ||
-    cached.configurationGeneration === activeGeneration) ? cached : undefined
+  if (matchingCandidate && cached &&
+      matchingCandidate.configurationGeneration === cached.configurationGeneration &&
+      sequenceRegressed(matchingCandidate.sequence, cached.sequence)) return isUsableReadingRecord(
+    matchingCandidate) ? matchingCandidate : undefined
+  if (isUsableReadingRecord(matchingCandidate)) return matchingCandidate
+  return cached && generationMatches(cached.configurationGeneration, activeGeneration)
+    ? cached : undefined
+}
+
+export function intervalPresentationState(
+  candidate: ReadingRecord | undefined,
+  committed: ReadingRecord | undefined,
+  activeGeneration: number | undefined,
+): IntervalPresentationState {
+  const matchingCandidate = candidate &&
+    generationMatches(candidate.configurationGeneration, activeGeneration)
+      ? candidate : undefined
+  if (isUsableReadingRecord(matchingCandidate)) return 'ready'
+  if (matchingCandidate?.recordComplete &&
+      (matchingCandidate.interval === 'min10' || matchingCandidate.interval === 'hour2'))
+    return committed ? 'rejected' : 'priming'
+  return committed ? 'ready' : 'waiting'
+}
+
+function harmonicIsLong(period: HarmonicPeriod) {
+  return period === 'minutes_10' || period === 'hours_2'
+}
+
+export function isUsableHarmonicSpectrum(spectrum: HarmonicSpectrum | undefined) {
+  if (!spectrum?.available || !spectrum.interval_valid) return false
+  return !harmonicIsLong(spectrum.period) ||
+    (spectrum.time_aligned && !spectrum.contaminated)
+}
+
+/**
+ * Return a harmonic family only when its physical interval is exactly the
+ * committed scalar record. This prevents a newer family from being rendered
+ * beside cached power values during independent endpoint polling.
+ */
+export function matchingHarmonicSpectrum(
+  record: ReadingRecord | undefined,
+  spectrum: HarmonicSpectrum | undefined,
+) {
+  if (!record || !spectrum?.available || record.firstSampleIndex === undefined ||
+      record.sampleCount === undefined) return undefined
+  return spectrum.period === harmonicPeriodForReadingInterval(record.interval) &&
+    spectrum.configuration_generation === record.configurationGeneration &&
+    spectrum.first_sample === record.firstSampleIndex &&
+    spectrum.sample_count === record.sampleCount
+    ? spectrum : undefined
+}
+
+export function updateHarmonicSpectrumCache(
+  current: HarmonicSpectrumCache,
+  period: HarmonicPeriod,
+  candidate: HarmonicSpectrum | undefined,
+  activeGeneration: number | undefined,
+) {
+  const next: HarmonicSpectrumCache = {}
+  for (const cachePeriod of ['basic', 'cycles_150_180', 'minutes_10', 'hours_2'] as HarmonicPeriod[]) {
+    const cached = current[cachePeriod]
+    if (cached && generationMatches(cached.configuration_generation, activeGeneration))
+      next[cachePeriod] = cached
+  }
+  if (candidate && generationMatches(candidate.configuration_generation, activeGeneration)) {
+    const cached = next[period]
+    if (cached && sequenceRegressed(candidate.sequence, cached.sequence)) {
+      for (const cachePeriod of Object.keys(next) as HarmonicPeriod[])
+        delete next[cachePeriod]
+    }
+    if (isUsableHarmonicSpectrum(candidate)) next[period] = candidate
+  }
+  return next
+}
+
+export function selectHarmonicSpectrum(
+  cache: HarmonicSpectrumCache,
+  period: HarmonicPeriod,
+  candidate: HarmonicSpectrum | undefined,
+  activeGeneration: number | undefined,
+) {
+  const matchingCandidate = candidate &&
+    generationMatches(candidate.configuration_generation, activeGeneration)
+      ? candidate : undefined
+  const cached = cache[period]
+  if (matchingCandidate && cached &&
+      matchingCandidate.configuration_generation === cached.configuration_generation &&
+      sequenceRegressed(matchingCandidate.sequence, cached.sequence))
+    return isUsableHarmonicSpectrum(matchingCandidate) ? matchingCandidate : undefined
+  if (isUsableHarmonicSpectrum(matchingCandidate)) return matchingCandidate
+  return cached && generationMatches(cached.configuration_generation, activeGeneration)
+    ? cached : undefined
+}
+
+export function harmonicPresentationState(
+  candidate: HarmonicSpectrum | undefined,
+  committed: HarmonicSpectrum | undefined,
+  activeGeneration: number | undefined,
+): HarmonicPresentationState {
+  const matchingCandidate = candidate &&
+    generationMatches(candidate.configuration_generation, activeGeneration)
+      ? candidate : undefined
+  if (isUsableHarmonicSpectrum(matchingCandidate)) return 'ready'
+  if (matchingCandidate?.available) {
+    if (harmonicIsLong(matchingCandidate.period) &&
+        (!matchingCandidate.time_aligned || matchingCandidate.contaminated))
+      return committed ? 'rejected' : 'priming'
+    if (!matchingCandidate.interval_valid) return 'invalid'
+  }
+  return committed ? 'ready' : 'waiting'
 }
 
 export function attribute(record: ReadingRecord | undefined, key: string) {

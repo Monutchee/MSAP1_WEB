@@ -7,7 +7,8 @@ import {
 const GENERATION_INTERVALS = [60, 300, 600, 900, 1800, 3600, 7200, 21600, 43200, 86400]
 const ROW_INTERVALS = [1, 3, 10, 30, 60, 300, 600, 900, 1800, 3600, 7200]
 const PERIOD_MINIMUM: Record<string, number> = {
-  basic: 1, cycles_150_180: 3, minutes_10: 600, hours_2: 7200, demand: 600,
+  basic: 1, seconds_10: 10, cycles_150_180: 3, minutes_10: 600,
+  hours_2: 7200, demand: 600,
 }
 
 function compatibleIntervals(seed: number[], minimum: number, current: number,

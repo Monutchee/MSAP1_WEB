@@ -274,6 +274,64 @@ export interface MeterAggregatePending {
 export type MeterAggregate = MeterAggregateResult | MeterAggregatePending
 
 /**
+ * One completed UTC-aligned IEC 61000-4-30 ten-second frequency result.
+ * Exact sample, UTC, and Q16 audit integers remain decimal strings so the
+ * browser never rounds them through JavaScript Number.
+ */
+export interface MeterFrequency10sResult {
+  available: true
+  sequence: number
+  configuration_generation: number
+  valid: boolean
+  quality: MeterReadingQuality
+  /** Omitted for every invalid completed interval; zero is never substituted. */
+  frequency_hz?: number
+  frequency_millihz?: number
+  time_quality: 'unsynchronized' | 'synchronized' | 'holdover'
+  /** Kernel clock discipline state, independent of the Class A error bound. */
+  clock_synchronized: boolean
+  /** True only when the synchronized UTC uncertainty is at most 1 ms. */
+  class_a_time_qualified: boolean
+  age_ms: number
+  first_sample_index: string
+  interval_end_sample_index: string
+  sample_count: number
+  sample_rate_hz: number
+  measured_sample_rate_millihz: number
+  cycle_count: number
+  utc_start_nanoseconds: string
+  utc_end_nanoseconds: string
+  utc_uncertainty_nanoseconds: string
+  source_sequence: number
+  boundary_generation: number
+  source_status: number
+  source_status_flags: string[]
+  status: number
+  status_flags: string[]
+  reasons: number
+  rejection_reasons: string[]
+  observer_drop_count: number
+  guard_flags: number
+  guard_flag_names: string[]
+  observed_crossings: number
+  included_crossings: number
+  rejected_cycles: number
+  duration_q16_samples: string
+  first_crossing_q16_samples: string
+  last_crossing_q16_samples: string
+  nominal_frequency_hz: number
+  reference_channel: number
+  filter_profile: number
+  calibration_profile: number
+}
+
+export interface MeterFrequency10sPending {
+  available: false
+}
+
+export type MeterFrequency10s = MeterFrequency10sResult | MeterFrequency10sPending
+
+/**
  * A finalized, clock-aligned ten-minute aggregate produced in programmable
  * logic. Frequency is intentionally absent: its standardized product uses an
  * independent 10-second interval rather than this aggregation tier.
@@ -485,7 +543,24 @@ export interface HarmonicChannel {
   channel: number
   name: string
   unit: 'A' | 'V'
+  thd: HarmonicDistortion
   orders: HarmonicOrder[]
+}
+
+export type HarmonicDistortionStatus =
+  | 'valid'
+  | 'interval_invalid'
+  | 'channel_unavailable'
+  | 'fundamental_unavailable'
+  | 'insufficient_order_range'
+  | 'harmonic_unavailable'
+
+/** APU-calculated product THD. Null is unavailable and is never numeric zero. */
+export interface HarmonicDistortion {
+  percent: number | null
+  first_order: 2
+  last_order: 50
+  status: HarmonicDistortionStatus
 }
 
 export type HarmonicPeriod =
@@ -912,6 +987,11 @@ export interface DataChannelTestResult {
 /** Presentation topology for the three voltage measurement inputs. */
 export type MeasurementTopology = 'wye' | 'delta'
 export type DemandMethod = 'fixed_block' | 'sliding'
+export type TimeSynchronization = 'ntp' | 'ptp'
+
+export interface TimeSynchronizationSettings {
+  synchronization: TimeSynchronization
+}
 
 export interface DemandConfiguration {
   method: DemandMethod
@@ -1006,6 +1086,7 @@ export interface ProductSettings {
       harmonics: AdcSimulatorHarmonic[]
     }
   }
+  time: TimeSynchronizationSettings
   waveform: {
     default_pretrigger_ms: number
     default_posttrigger_ms: number
@@ -1046,6 +1127,7 @@ export interface DatabaseSettings {
   harmonic_minutes_10: DatasetStorageSettings
   harmonic_hours_2: DatasetStorageSettings
   demand: DatasetStorageSettings
+  seconds_10: DatasetStorageSettings
 }
 
 export interface DatabaseConsumerCursor {
@@ -1089,7 +1171,7 @@ export interface DatabaseStatus {
 }
 
 export type HistorianDataset =
-  | 'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2' | 'demand'
+  | 'basic' | 'cycles_150_180' | 'minutes_10' | 'hours_2' | 'demand' | 'seconds_10'
   | 'harmonic_cycles_150_180' | 'harmonic_minutes_10'
   | 'harmonic_hours_2'
 
@@ -1285,6 +1367,27 @@ export interface DeveloperAbout {
   components: ComponentFingerprint[]
 }
 
+export type WaveformOrigin = 'manual' | 'power_quality' | 'mixed' | 'legacy'
+export type WaveformOriginFilter = 'all' | 'manual' | 'power_quality'
+
+export interface WaveformArchiveDiscovery {
+  state: 'not_started' | 'scanning' | 'complete' | 'cancelled' | 'failed'
+  scanned_files: number
+  total_files: number
+  rejected_files: number
+}
+
+export interface WaveformPage {
+  origin: WaveformOriginFilter
+  limit: number
+  total_sessions: number
+  completed_sessions: number
+  incomplete_sessions: number
+  active_sessions: number
+  returned_sessions: number
+  next_before_session_id: number | null
+}
+
 export interface WaveformSession {
   id: number
   state: 'capturing' | 'complete' | 'incomplete'
@@ -1295,7 +1398,7 @@ export interface WaveformSession {
   trigger_realtime_nanoseconds: number
   sample_rate_hz: number
   event_count: number
-  origin: 'manual' | 'power_quality' | 'mixed' | 'legacy'
+  origin: WaveformOrigin
   decimation: number
   filename: string
   continuation_of_session_id: number
@@ -1322,8 +1425,22 @@ export interface WaveformStatus {
   history_capacity_frames: number
   completed_sessions: number
   incomplete_sessions: number
+  archive_discovery?: WaveformArchiveDiscovery
+  page?: WaveformPage
   export_formats: string[]
   sessions: WaveformSession[]
+}
+
+export interface WaveformSessionLookup {
+  capture_uuid: string
+  archive_discovery: WaveformArchiveDiscovery
+  session: WaveformSession | null
+}
+
+export interface WaveformQuery {
+  origin?: WaveformOriginFilter
+  before_session_id?: number
+  limit?: number
 }
 
 export type PowerQualityEventLifecycle = 'start' | 'update' | 'end' | 'abort' | 'unknown'
@@ -1462,9 +1579,25 @@ export interface MainsSignalStatus {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly code?: string,
+    public readonly retryable?: boolean,
+  ) {
     super(message)
   }
+}
+
+interface ApiErrorPayload {
+  error?: string
+  code?: string
+  retryable?: boolean
+}
+
+function apiError(status: number, payload: ApiErrorPayload, fallback: string) {
+  return new ApiError(status, payload.error ?? fallback,
+    payload.code, payload.retryable)
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1476,9 +1609,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   })
-  const payload = await response.json().catch(() => ({}))
+  const payload: ApiErrorPayload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new ApiError(response.status, payload.error ?? `Request failed (${response.status})`)
+    throw apiError(response.status, payload, `Request failed (${response.status})`)
   }
   return payload as T
 }
@@ -1486,8 +1619,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 async function requestBinary(path: string): Promise<ArrayBuffer> {
   const response = await fetch(path, { credentials: 'same-origin' })
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({}))
-    throw new ApiError(response.status, payload.error ?? `Request failed (${response.status})`)
+    const payload: ApiErrorPayload = await response.json().catch(() => ({}))
+    throw apiError(response.status, payload, `Request failed (${response.status})`)
   }
   return response.arrayBuffer()
 }
@@ -1502,9 +1635,9 @@ async function uploadFile<T = MqttCredentialStatus>(path: string, file: File): P
     },
     body: file,
   })
-  const payload = await response.json().catch(() => ({}))
+  const payload: ApiErrorPayload = await response.json().catch(() => ({}))
   if (!response.ok)
-    throw new ApiError(response.status, payload.error ?? `Upload failed (${response.status})`)
+    throw apiError(response.status, payload, `Upload failed (${response.status})`)
   return payload as T
 }
 
@@ -1539,6 +1672,8 @@ export const api = {
   meterAttributes: (usage: MeterAttributeUsage) =>
     request<MeterAttributeCatalog>(`/api/v1/meter/attributes?usage=${usage}`),
   meterAggregate: () => request<MeterAggregate>('/api/v1/meter/aggregate'),
+  meterFrequency10s: () =>
+    request<MeterFrequency10s>('/api/v1/meter/frequency-10s'),
   meterTenMinute: () => request<MeterTenMinute>('/api/v1/meter/minutes-10'),
   meterTwoHour: () => request<MeterTwoHour>('/api/v1/meter/hours-2'),
   meterTenMinuteLive: () => request<MeterTenMinute>('/api/v1/meter/minutes-10/live'),
@@ -1623,7 +1758,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ confirmed: true }),
     }),
-  waveforms: () => request<WaveformStatus>('/api/v1/waveforms'),
+  waveforms: (query: WaveformQuery = {}) => {
+    const parameters = new URLSearchParams()
+    if (query.origin) parameters.set('origin', query.origin)
+    if (query.before_session_id !== undefined)
+      parameters.set('before_session_id', String(query.before_session_id))
+    if (query.limit !== undefined) parameters.set('limit', String(query.limit))
+    const suffix = parameters.size === 0 ? '' : `?${parameters.toString()}`
+    return request<WaveformStatus>(`/api/v1/waveforms${suffix}`)
+  },
+  waveformSession: (captureUuid: string) =>
+    request<WaveformSessionLookup>(`/api/v1/waveforms/session?capture_uuid=${
+      encodeURIComponent(captureUuid)}`),
   waveformFile: (filename: string) => requestBinary(waveformViewPath(filename)),
   triggerWaveform: (pretrigger_ms: number, posttrigger_ms: number,
     decimation: number) =>
@@ -1699,8 +1845,8 @@ export const api = {
       credentials: 'same-origin',
     })
     if (!response.ok) {
-      const payload = await response.json().catch(() => ({}))
-      throw new ApiError(response.status, payload.error ?? `Preview failed (${response.status})`)
+      const payload: ApiErrorPayload = await response.json().catch(() => ({}))
+      throw apiError(response.status, payload, `Preview failed (${response.status})`)
     }
     return response.text()
   },
@@ -1776,6 +1922,11 @@ export const api = {
 export const mqttCaDownloadPath = '/api/v1/mqtt/tls/ca'
 export const mqttClientCertificateDownloadPath =
   '/api/v1/mqtt/tls/client-certificate'
+
+export const openApiDocumentDownloadPath =
+  '/api/v1/documentation/msap1_api.yaml'
+export const modbusRegisterDocumentDownloadPath =
+  '/api/v1/documentation/msap1_modbus_registers.xlsx'
 
 export function dataLoggingArtifactDownloadPath(id: string) {
   return `/api/v1/data-logging/artifacts/download?id=${encodeURIComponent(id)}`

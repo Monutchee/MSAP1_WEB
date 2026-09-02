@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { MeterReadingAttribute } from '../api'
+import type {
+  HarmonicDistortionStatus, HarmonicSpectrum, MeterReadingAttribute,
+} from '../api'
 import { PowerView } from './PowerView'
 import type { PowerScope, ReadingRecord } from './readingModel'
 
@@ -43,15 +45,51 @@ function powerRecord(overrides: Record<string, [number, string]> = {}): ReadingR
     attributes: Object.entries(values).map(([key, [readingValue, unit]]) =>
       value(key, readingValue, unit)),
     channels: [], sequence: 2119, configurationGeneration: 4,
+    firstSampleIndex: 1_000_000, sampleCount: 25_600,
     timeQuality: 'synchronized', utcStartNanoseconds: undefined,
     utcUncertaintyNanoseconds: undefined, recordComplete: true,
     arithmeticError: false, flags: [],
   }
 }
 
-function PowerHarness({ record }: { record: ReadingRecord }) {
+function harmonicSpectrum(status: HarmonicDistortionStatus = 'valid'): HarmonicSpectrum {
+  const percentages = [0, .8, .9, 1, 3, 2, 1]
+  return {
+    running: true, available: true, records: 42, families: 1,
+    incomplete_families: 0, period: 'basic', sequence: 1,
+    configuration_generation: 4, sample_rate_hz: 128_000,
+    sample_count: 25_600, first_sample: 1_000_000,
+    measured_frequency_millihz: 60_000, qualified_max_order: 127,
+    nominal_frequency_hz: 60, cycle_count: 12, filter_profile_id: 3,
+    valid_mask: 0x7f, status: 0x3e, emit_drops: 0, result_drops: 0,
+    target_sample: 0, contributors: 0, overshoot_samples: 0,
+    first_source_sequence: 0, last_source_sequence: 0,
+    time_aligned: false, contaminated: false, interval_valid: true,
+    arithmetic_error: false, grid_locked: true, conditioner_valid: true,
+    fft_valid: true, full_range: true, first_after_discontinuity: false,
+    rate_limited: false,
+    channels: percentages.map((percent, channel) => ({
+      channel,
+      name: ['Ia', 'Ib', 'Ic', 'In', 'Vc', 'Vb', 'Va'][channel],
+      unit: channel < 4 ? 'A' as const : 'V' as const,
+      thd: {
+        percent: status === 'valid' ? percent : null,
+        first_order: 2,
+        last_order: 50,
+        status,
+      },
+      orders: [],
+    })),
+  }
+}
+
+function PowerHarness({ record, harmonics }: {
+  record: ReadingRecord
+  harmonics?: HarmonicSpectrum
+}) {
   const [scope, setScope] = useState<PowerScope>('total')
-  return <PowerView record={record} scope={scope} onScopeChange={setScope} />
+  return <PowerView record={record} scope={scope} onScopeChange={setScope}
+    harmonics={harmonics} />
 }
 
 afterEach(() => vi.useRealTimers())
@@ -72,7 +110,7 @@ describe('Power view', () => {
     expect(Number(point?.getAttribute('cy'))).toBeGreaterThan(215)
 
     expect(screen.getAllByText('0.00 var').length).toBeGreaterThan(0)
-    expect(screen.getByText(/THD and a complete/)).toBeInTheDocument()
+    expect(screen.getByText(/Waiting for the harmonic family/)).toBeInTheDocument()
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(3)
   })
 
@@ -89,6 +127,33 @@ describe('Power view', () => {
     const point = container.querySelector('.pq-operating-point circle')
     expect(Number(point?.getAttribute('cx'))).toBeGreaterThan(280)
     expect(Number(point?.getAttribute('cy'))).toBeGreaterThan(215)
+  })
+
+  it('shows A/B/C THD for Total and the selected phase without averaging', () => {
+    render(<PowerHarness record={powerRecord()} harmonics={harmonicSpectrum()} />)
+    expect(screen.getByText('Voltage THD (H₂–H₅₀)')).toBeInTheDocument()
+    expect(screen.getByText('Current THD (H₂–H₅₀)')).toBeInTheDocument()
+    expect(screen.getByLabelText('voltage THD by phase')).toHaveTextContent('A 1.000%')
+    expect(screen.getByLabelText('voltage THD by phase')).toHaveTextContent('B 2.000%')
+    expect(screen.getByLabelText('voltage THD by phase')).toHaveTextContent('C 3.000%')
+    expect(screen.getByLabelText('current THD by phase')).toHaveTextContent('A 0.000%')
+    expect(screen.getByText(/phases are not averaged/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Phase A' }))
+    expect(screen.queryByLabelText('voltage THD by phase')).not.toBeInTheDocument()
+    expect(screen.getByText('1.000%')).toBeInTheDocument()
+    expect(screen.getByText('0.000%')).toBeInTheDocument()
+  })
+
+  it('distinguishes insufficient H50 coverage and invalid intervals from zero', () => {
+    const { rerender } = render(<PowerView record={powerRecord()} scope="a"
+      onScopeChange={() => undefined} harmonics={harmonicSpectrum('insufficient_order_range')} />)
+    expect(screen.getByText(/does not qualify magnitudes through H₅₀/)).toBeInTheDocument()
+    expect(screen.queryByText('0.000%')).not.toBeInTheDocument()
+
+    rerender(<PowerView record={powerRecord()} scope="a"
+      onScopeChange={() => undefined} harmonics={harmonicSpectrum('interval_invalid')} />)
+    expect(screen.getByText(/failed measurement validation/)).toBeInTheDocument()
   })
 
   it('keeps advanced engineering data collapsed until requested', () => {

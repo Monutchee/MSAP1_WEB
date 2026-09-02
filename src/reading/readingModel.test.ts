@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { MeterReadingAttribute, MeterReadings } from '../api'
+import type { HarmonicSpectrum, MeterReadingAttribute, MeterReadings } from '../api'
 import {
   basicReadingRecord, buildStableChartScale, chartMagnitude, effectiveQuality,
   formatReading, formatUtc, normalizeForPrecision, operatingMode, pqResultant,
-  growStableChartScale, selectCommittedRecord, updateCompleteRecordCache, visibleQuality,
-  type ReadingRecord,
+  growStableChartScale, harmonicPeriodForReadingInterval, harmonicPresentationState,
+  intervalPresentationState, matchingHarmonicSpectrum, selectCommittedRecord,
+  selectHarmonicSpectrum, updateCompleteRecordCache,
+  updateHarmonicSpectrumCache, visibleQuality, type ReadingRecord,
 } from './readingModel'
 
 function reading(
@@ -53,9 +55,44 @@ function record(sequence: number, generation: number, complete: boolean): Readin
   return {
     interval: 'basic', attributes: [reading('power.active.total', 10, 'valid', sequence)],
     channels: [], sequence, configurationGeneration: generation,
+    firstSampleIndex: sequence * 3_200, sampleCount: 3_200,
     timeQuality: 'synchronized', utcStartNanoseconds: undefined,
     utcUncertaintyNanoseconds: undefined, recordComplete: complete,
     arithmeticError: false, flags: [],
+  }
+}
+
+function longRecord(
+  sequence: number,
+  generation: number,
+  interval: 'min10' | 'hour2',
+  contaminated = false,
+): ReadingRecord {
+  return {
+    ...record(sequence, generation, true), interval,
+    timeAligned: !contaminated, boundaryValid: true, contaminated,
+  }
+}
+
+function harmonic(
+  sequence: number,
+  generation: number,
+  overrides: Partial<HarmonicSpectrum> = {},
+): HarmonicSpectrum {
+  return {
+    running: true, available: true, records: 42, families: sequence,
+    incomplete_families: 0, period: 'minutes_10', sequence,
+    configuration_generation: generation, sample_rate_hz: 128_000,
+    sample_count: 76_800_000, first_sample: 0,
+    measured_frequency_millihz: 60_000, qualified_max_order: 127,
+    nominal_frequency_hz: 60, cycle_count: 12, filter_profile_id: 3,
+    valid_mask: 0x7f, status: 0, emit_drops: 0, result_drops: 0,
+    target_sample: 76_800_000, contributors: 3000, overshoot_samples: 0,
+    first_source_sequence: 1, last_source_sequence: 3000,
+    time_aligned: true, contaminated: false, interval_valid: true,
+    arithmetic_error: false, grid_locked: true, conditioner_valid: true,
+    fft_valid: true, full_range: true, first_after_discontinuity: false,
+    rate_limited: false, channels: [], ...overrides,
   }
 }
 
@@ -68,6 +105,8 @@ describe('reading record adapter', () => {
     expect(coherent?.recordComplete).toBe(true)
     expect(coherent?.utcStartNanoseconds).toBeDefined()
     expect(coherent?.timeQuality).toBe('synchronized')
+    expect(coherent?.firstSampleIndex).toBe(0)
+    expect(coherent?.sampleCount).toBe(3_200)
 
     const mixed = basicReadingRecord(basic([
       reading('power.active.total', 1084.97),
@@ -91,6 +130,95 @@ describe('reading record adapter', () => {
     cache = updateCompleteRecordCache(cache, 'aggregate', aggregateRecord, 7)
     expect(selectCommittedRecord(cache, 'basic', undefined, 7)?.sequence).toBe(41)
     expect(selectCommittedRecord(cache, 'aggregate', undefined, 7)?.sequence).toBe(8)
+  })
+
+  it('treats a closed startup window as priming and retains a clean record after rejection', () => {
+    const startup = longRecord(1, 7, 'min10', true)
+    let cache = updateCompleteRecordCache(
+      { hour2: longRecord(4, 7, 'hour2') }, 'min10', startup, 7)
+    let committed = selectCommittedRecord(cache, 'min10', startup, 7)
+    expect(committed).toBeUndefined()
+    expect(intervalPresentationState(startup, committed, 7)).toBe('priming')
+
+    const clean = longRecord(2, 7, 'min10')
+    cache = updateCompleteRecordCache(cache, 'min10', clean, 7)
+    committed = selectCommittedRecord(cache, 'min10', clean, 7)
+    expect(committed?.sequence).toBe(2)
+    expect(intervalPresentationState(clean, committed, 7)).toBe('ready')
+
+    const rejected = longRecord(3, 7, 'min10', true)
+    cache = updateCompleteRecordCache(cache, 'min10', rejected, 7)
+    committed = selectCommittedRecord(cache, 'min10', rejected, 7)
+    expect(committed?.sequence).toBe(2)
+    expect(intervalPresentationState(rejected, committed, 7)).toBe('rejected')
+    expect(intervalPresentationState(rejected, undefined, 7)).toBe('priming')
+
+    const restarted = longRecord(1, 7, 'min10', true)
+    cache = updateCompleteRecordCache(cache, 'min10', restarted, 7)
+    expect(selectCommittedRecord(cache, 'min10', restarted, 7)).toBeUndefined()
+    expect(cache).not.toHaveProperty('hour2')
+    expect(updateCompleteRecordCache({ hour2: longRecord(4, 7, 'hour2') },
+      'hour2', longRecord(1, 8, 'hour2', true), 8)).toEqual({})
+  })
+
+  it('caches only valid harmonic families and separates priming from invalid data', () => {
+    const startup = harmonic(1, 7, { contaminated: true, interval_valid: false })
+    let cache = updateHarmonicSpectrumCache(
+      { hours_2: harmonic(4, 7, { period: 'hours_2' }) },
+      'minutes_10', startup, 7,
+    )
+    let committed = selectHarmonicSpectrum(cache, 'minutes_10', startup, 7)
+    expect(committed).toBeUndefined()
+    expect(harmonicPresentationState(startup, committed, 7)).toBe('priming')
+
+    const clean = harmonic(2, 7)
+    cache = updateHarmonicSpectrumCache(cache, 'minutes_10', clean, 7)
+    committed = selectHarmonicSpectrum(cache, 'minutes_10', clean, 7)
+    expect(committed?.sequence).toBe(2)
+
+    const rejected = harmonic(3, 7, { contaminated: true, interval_valid: false })
+    cache = updateHarmonicSpectrumCache(cache, 'minutes_10', rejected, 7)
+    committed = selectHarmonicSpectrum(cache, 'minutes_10', rejected, 7)
+    expect(committed?.sequence).toBe(2)
+    expect(harmonicPresentationState(rejected, committed, 7)).toBe('rejected')
+    expect(harmonicPresentationState(rejected, undefined, 7)).toBe('priming')
+
+    const invalid = harmonic(4, 7, { interval_valid: false })
+    expect(harmonicPresentationState(invalid, committed, 7)).toBe('invalid')
+    const restarted = harmonic(1, 7, { contaminated: true, interval_valid: false })
+    cache = updateHarmonicSpectrumCache(cache, 'minutes_10', restarted, 7)
+    expect(selectHarmonicSpectrum(cache, 'minutes_10', restarted, 7)).toBeUndefined()
+    expect(cache).not.toHaveProperty('hours_2')
+  })
+
+  it('maps every Power interval and accepts only an exact harmonic interval identity', () => {
+    expect(harmonicPeriodForReadingInterval('basic')).toBe('basic')
+    expect(harmonicPeriodForReadingInterval('aggregate')).toBe('cycles_150_180')
+    expect(harmonicPeriodForReadingInterval('min10')).toBe('minutes_10')
+    expect(harmonicPeriodForReadingInterval('hour2')).toBe('hours_2')
+
+    const power = {
+      ...record(9, 7, true), interval: 'min10' as const,
+      firstSampleIndex: 123_456, sampleCount: 76_800_000,
+    }
+    const exact = harmonic(2, 7, {
+      period: 'minutes_10', first_sample: 123_456, sample_count: 76_800_000,
+    })
+    expect(matchingHarmonicSpectrum(power, exact)).toBe(exact)
+    expect(matchingHarmonicSpectrum(power, {
+      ...exact, configuration_generation: 8,
+    })).toBeUndefined()
+    expect(matchingHarmonicSpectrum(power, {
+      ...exact, first_sample: 123_457,
+    })).toBeUndefined()
+    expect(matchingHarmonicSpectrum(power, {
+      ...exact, sample_count: 76_799_999,
+    })).toBeUndefined()
+    expect(matchingHarmonicSpectrum(power, {
+      ...exact, period: 'hours_2',
+    })).toBeUndefined()
+    expect(matchingHarmonicSpectrum({ ...power, firstSampleIndex: undefined }, exact))
+      .toBeUndefined()
   })
 })
 

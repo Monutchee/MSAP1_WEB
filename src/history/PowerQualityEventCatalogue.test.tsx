@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { PowerQualityEvent } from '../api'
+import type { PowerQualityEvent, WaveformSessionLookup } from '../api'
 import {
   groupOverlappingEvents, overlappingEventCount, PowerQualityEventCatalogue,
 } from './PowerQualityEventCatalogue'
@@ -10,6 +10,9 @@ const secondEventId = 'abcdefab-cdef-5def-8def-abcdefabcdef'
 const thirdEventId = '99999999-9999-4999-8999-999999999999'
 const masterCapture = '11111111-1111-4111-8111-111111111111'
 const continuationCapture = '22222222-2222-4222-8222-222222222222'
+const pendingCapture = '33333333-3333-4333-8333-333333333333'
+const locatingCapture = '44444444-4444-4444-8444-444444444444'
+const unavailableCapture = '55555555-5555-4555-8555-555555555555'
 
 function event(event_id: string, first_sample: number, last_sample: number): PowerQualityEvent {
   return {
@@ -54,28 +57,23 @@ function event(event_id: string, first_sample: number, last_sample: number): Pow
 
 const events = [event(firstEventId, 100, 220), event(secondEventId, 180, 300)]
 
-function waveformResponse() {
-  const base = {
-    state: 'complete' as const, trigger_sequence: 150, first_sequence: 1,
-    last_sequence: 300, trigger_tai_nanoseconds: 0,
-    trigger_realtime_nanoseconds: 1_787_933_000_000_000_000,
-    sample_rate_hz: 128_000, event_count: 1, origin: 'power_quality' as const,
-    decimation: 8,
-  }
+function waveformLookup(capture_uuid: string, id: number,
+  state: 'capturing' | 'complete' | 'incomplete' = 'complete',
+  filename = `${id}.mncwf`): WaveformSessionLookup {
   return {
-    running: true, active_session: false, sample_rate_hz: 128_000,
-    transport_ring_blocks: 32, blocks: 1, frames: 320, bytes: 10240,
-    invalid_blocks: 0, sequence_gaps: 0, transport_overrun_blocks: 0,
-    materialization_failures: 0, pl_dropped_frames: 0, max_capture_frames: 1_000_000,
-    history_oldest_sequence: 1, history_latest_sequence: 320,
-    history_capacity_frames: 1_000_000, completed_sessions: 2,
-    incomplete_sessions: 0, export_formats: ['mncwf'],
-    sessions: [
-      { ...base, id: 7, filename: 'master.mncwf', continuation_of_session_id: 0,
-        master_session_id: 7, capture_uuid: masterCapture },
-      { ...base, id: 8, filename: 'continuation.mncwf', continuation_of_session_id: 7,
-        master_session_id: 7, capture_uuid: continuationCapture },
-    ],
+    capture_uuid,
+    archive_discovery: {
+      state: 'complete', scanned_files: 20, total_files: 20, rejected_files: 0,
+    },
+    session: {
+      state, trigger_sequence: 150, first_sequence: 1,
+      last_sequence: 300, trigger_tai_nanoseconds: 0,
+      trigger_realtime_nanoseconds: 1_787_933_000_000_000_000,
+      sample_rate_hz: 128_000, event_count: 1, origin: 'power_quality' as const,
+      decimation: 8,
+      id, filename, continuation_of_session_id: id === 8 ? 7 : 0,
+      master_session_id: id === 8 ? 7 : id, capture_uuid,
+    },
   }
 }
 
@@ -89,8 +87,14 @@ describe('Power-quality event catalogue', () => {
         return new Response(JSON.stringify({
           limit: 100, count: events.length, export_formats: ['mncwf'], events,
         }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      if (url === '/api/v1/waveforms')
-        return new Response(JSON.stringify(waveformResponse()), {
+      if (url === `/api/v1/waveforms/session?capture_uuid=${masterCapture}`)
+        return new Response(JSON.stringify(waveformLookup(
+          masterCapture, 7, 'complete', 'master.mncwf')), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      if (url === `/api/v1/waveforms/session?capture_uuid=${continuationCapture}`)
+        return new Response(JSON.stringify(waveformLookup(
+          continuationCapture, 8, 'complete', 'continuation.mncwf')), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         })
       if (url === '/protected/waveforms/view/master.mncwf')
@@ -111,7 +115,7 @@ describe('Power-quality event catalogue', () => {
     expect(screen.getByText('MSAP1 product alarm')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /Voltage Sag/ }))
-    const views = screen.getAllByRole('button', { name: 'View waveform' })
+    const views = await screen.findAllByRole('button', { name: 'View waveform' })
     expect(views).toHaveLength(2)
     fireEvent.click(views[0])
     expect(await screen.findByText(/Invalid header range in waveform file/))
@@ -120,6 +124,53 @@ describe('Power-quality event catalogue', () => {
     const downloads = screen.getAllByRole('link', { name: 'Download event MNCWF' })
     expect(downloads[0]).toHaveAttribute('href',
       `/api/v1/waveforms/export?session_id=7&event_id=${firstEventId}&format=mncwf`)
+  })
+
+  it('distinguishes materializing, locating, and unavailable linked captures', async () => {
+    const linkedEvent = {
+      ...event(firstEventId, 100, 220),
+      waveform_capture_uuids: [
+        masterCapture, pendingCapture, locatingCapture, unavailableCapture,
+      ],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.startsWith('/api/v1/meter/power-quality/events'))
+        return new Response(JSON.stringify({
+          limit: 100, count: 1, export_formats: ['mncwf'], events: [linkedEvent],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url === `/api/v1/waveforms/session?capture_uuid=${masterCapture}`)
+        return new Response(JSON.stringify(waveformLookup(
+          masterCapture, 7, 'complete', 'master.mncwf')))
+      if (url === `/api/v1/waveforms/session?capture_uuid=${pendingCapture}`)
+        return new Response(JSON.stringify(waveformLookup(
+          pendingCapture, 9, 'capturing', '')))
+      if (url === `/api/v1/waveforms/session?capture_uuid=${locatingCapture}`)
+        return new Response(JSON.stringify({
+          capture_uuid: locatingCapture,
+          archive_discovery: {
+            state: 'scanning', scanned_files: 4, total_files: 20, rejected_files: 0,
+          },
+          session: null,
+        }))
+      if (url === `/api/v1/waveforms/session?capture_uuid=${unavailableCapture}`)
+        return new Response(JSON.stringify({
+          capture_uuid: unavailableCapture,
+          archive_discovery: {
+            state: 'complete', scanned_files: 20, total_files: 20, rejected_files: 0,
+          },
+          session: null,
+        }))
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+
+    render(<PowerQualityEventCatalogue onUnauthorized={() => undefined} />)
+
+    expect(await screen.findByRole('button', { name: 'View waveform' }))
+      .toBeInTheDocument()
+    expect(screen.getByText('Materialization pending')).toBeInTheDocument()
+    expect(screen.getByText('Locating capture')).toBeInTheDocument()
+    expect(screen.getByText('Linked waveform unavailable')).toBeInTheDocument()
   })
 
   it('uses transitive inclusive windows for incident grouping', () => {
@@ -150,8 +201,14 @@ describe('Power-quality event catalogue', () => {
           export_formats: ['mncwf'], events: currentEvents }), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         })
-      if (url === '/api/v1/waveforms')
-        return new Response(JSON.stringify(waveformResponse()), {
+      if (url === `/api/v1/waveforms/session?capture_uuid=${masterCapture}`)
+        return new Response(JSON.stringify(waveformLookup(
+          masterCapture, 7, 'complete', 'master.mncwf')), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      if (url === `/api/v1/waveforms/session?capture_uuid=${continuationCapture}`)
+        return new Response(JSON.stringify(waveformLookup(
+          continuationCapture, 8, 'complete', 'continuation.mncwf')), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         })
       throw new Error(`Unexpected request: ${url}`)
