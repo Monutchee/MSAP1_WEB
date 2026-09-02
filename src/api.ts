@@ -288,6 +288,10 @@ export interface MeterFrequency10sResult {
   frequency_hz?: number
   frequency_millihz?: number
   time_quality: 'unsynchronized' | 'synchronized' | 'holdover'
+  /** Kernel clock discipline state, independent of the Class A error bound. */
+  clock_synchronized: boolean
+  /** True only when the synchronized UTC uncertainty is at most 1 ms. */
+  class_a_time_qualified: boolean
   age_ms: number
   first_sample_index: string
   interval_end_sample_index: string

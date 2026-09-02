@@ -2,8 +2,8 @@ import type { MeterFrequency10s, MeterFrequency10sResult } from '../api'
 
 const REJECTION_LABELS: Readonly<Record<string, string>> = {
   unsupported_profile: 'Unsupported acquisition profile',
-  time_unsynchronized: 'UTC clock was not synchronized',
-  time_uncertainty: 'UTC uncertainty exceeded 1 ms',
+  time_unsynchronized: 'UTC clock discipline was unavailable',
+  time_uncertainty: 'UTC uncertainty exceeded the Class A 1 ms limit',
   filter_warmup: 'Frequency filter was still warming up',
   reference_invalid: 'CH6 voltage reference was invalid',
   discontinuity: 'Capture discontinuity crossed the interval',
@@ -22,6 +22,13 @@ const REJECTION_LABELS: Readonly<Record<string, string>> = {
 
 function friendlyFlag(value: string) {
   return REJECTION_LABELS[value] ?? value.replaceAll('_', ' ')
+}
+
+function clockQualification(result: MeterFrequency10sResult) {
+  if (result.class_a_time_qualified) return 'Class A qualified'
+  if (result.clock_synchronized) return 'Synchronized · not Class A-qualified'
+  if (result.time_quality === 'holdover') return 'Holdover · not Class A-qualified'
+  return 'Unsynchronized'
 }
 
 function exactInteger(value: string | number) {
@@ -123,8 +130,9 @@ export function Frequency10sPanel({ frequency, history = [], error = '' }: {
             <span>to {exactInteger(result.interval_end_sample_index)}</span>
           </dd></div>
           <div><dt>Clock qualification</dt><dd>
-            <strong>{friendlyFlag(result.time_quality)}</strong>
-            <span>uncertainty {exactInteger(result.utc_uncertainty_nanoseconds)} ns</span>
+            <strong>{clockQualification(result)}</strong>
+            <span>uncertainty {exactInteger(result.utc_uncertainty_nanoseconds)} ns ·{' '}
+              Class A limit 1,000,000 ns</span>
           </dd></div>
           <div><dt>Frequency geometry</dt><dd>
             <strong>{exactInteger(result.cycle_count)} cycles</strong>
