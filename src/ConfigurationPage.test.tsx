@@ -49,6 +49,8 @@ describe('Meter configuration grouping', () => {
       onSubmit={(event) => event.preventDefault()}
       nominalFrequency={60}
       onNominalFrequencyChange={vi.fn()}
+      timeSynchronization="ntp"
+      onTimeSynchronizationChange={vi.fn()}
       measurementTopology="wye"
       onMeasurementTopologyChange={vi.fn()}
       systemNominalVoltage={120}
@@ -65,6 +67,7 @@ describe('Meter configuration grouping', () => {
 
     const grid = screen.getByRole('region', { name: 'Nominal grid configuration' })
     expect(within(grid).getByLabelText(/Nominal grid frequency/)).toBeInTheDocument()
+    expect(within(grid).getByLabelText(/Time synchronization/)).toHaveValue('ntp')
     expect(within(grid).getByLabelText(/Measurement connection/)).toBeInTheDocument()
     expect(within(grid).getByLabelText(/System nominal voltage/)).toBeInTheDocument()
     expect(within(grid).queryByLabelText(/Demand calculation/)).not.toBeInTheDocument()
@@ -87,6 +90,7 @@ describe('Meter configuration grouping', () => {
       configuration={frequency} configurationStatus=""
       onChange={vi.fn()} onSubmit={(event) => event.preventDefault()}
       nominalFrequency={60} onNominalFrequencyChange={vi.fn()}
+      timeSynchronization="ntp" onTimeSynchronizationChange={vi.fn()}
       measurementTopology="wye" onMeasurementTopologyChange={vi.fn()}
       systemNominalVoltage={120} onSystemNominalVoltageChange={vi.fn()}
       demandConfiguration={{ method: 'sliding', window_seconds: 60 }}
@@ -116,6 +120,7 @@ describe('Meter configuration grouping', () => {
       configuration={frequency} configurationStatus=""
       onChange={vi.fn()} onSubmit={(event) => event.preventDefault()}
       nominalFrequency={60} onNominalFrequencyChange={vi.fn()}
+      timeSynchronization="ntp" onTimeSynchronizationChange={vi.fn()}
       measurementTopology="wye" onMeasurementTopologyChange={vi.fn()}
       systemNominalVoltage={120} onSystemNominalVoltageChange={vi.fn()}
       demandConfiguration={{ method: 'sliding', window_seconds: 60 }}

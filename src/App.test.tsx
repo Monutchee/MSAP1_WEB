@@ -77,6 +77,8 @@ const frequency10s = {
   frequency_hz: 50.001,
   frequency_millihz: 50_001,
   time_quality: 'synchronized',
+  clock_synchronized: true,
+  class_a_time_qualified: true,
   age_ms: 125,
   first_sample_index: '9007199254740000',
   interval_end_sample_index: '9007199256020000',
@@ -163,7 +165,14 @@ describe('dashboard startup readiness', () => {
     expect(screen.getByText('System healthy')).toBeInTheDocument()
     expect(meterRequests).toBeGreaterThan(0)
     expect(screen.getByText('49.998')).toBeInTheDocument()
-    expect(screen.getByText('Latest completed interval').parentElement)
+    expect(frequencyRequests).toBe(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Data' }))
+    fireEvent.change(await screen.findByRole('combobox', {
+      name: 'Measurement interval',
+    }), { target: { value: 'seconds10' } })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByText('Latest finalized interval').closest('section'))
       .toHaveTextContent('50.001 Hz')
     expect(frequencyRequests).toBeGreaterThan(0)
 

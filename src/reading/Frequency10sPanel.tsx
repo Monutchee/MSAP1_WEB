@@ -66,6 +66,80 @@ function flagList(values: string[]) {
   return values.length > 0 ? values.join(', ') : 'none'
 }
 
+/**
+ * Compact operator presentation for Data -> 10 seconds. The detailed status,
+ * geometry, and raw masks stay in the Developer panel below.
+ */
+export function Frequency10sOperatorView({ frequency, history = [], error = '' }: {
+  frequency: MeterFrequency10s | undefined
+  history?: MeterFrequency10sResult[]
+  error?: string
+}) {
+  const result = frequency?.available ? frequency : undefined
+  const hasValue = result?.valid === true &&
+    typeof result.frequency_millihz === 'number'
+  const values = history
+    .filter((entry) => entry.valid && typeof entry.frequency_millihz === 'number')
+    .map((entry) => entry.frequency_millihz! / 1000)
+  const minimum = values.length > 0 ? Math.min(...values).toFixed(3) : '—'
+  const maximum = values.length > 0 ? Math.max(...values).toFixed(3) : '—'
+  const quality = !result ? 'waiting' : hasValue ? 'valid' : 'invalid'
+  const rejection = result && !hasValue
+    ? result.rejection_reasons.map(friendlyFlag).join(' · ') ||
+      `Result quality: ${friendlyFlag(result.quality)}`
+    : ''
+
+  return <section className="reading-section" aria-labelledby="frequency-10s-operator-title">
+    <div className="reading-section-heading compact">
+      <div>
+        <p className="eyebrow">IEC 61000-4-30 · Class A</p>
+        <h2 id="frequency-10s-operator-title">Grid frequency</h2>
+        <p>One finalized, UTC-aligned 10-second result from CH6 VLA.</p>
+      </div>
+    </div>
+    {error && <div className="error-banner" role="alert">
+      <strong>10-second frequency unavailable</strong><span>{error}</span>
+    </div>}
+    {!result
+      ? <div className="harmonic-empty">
+        <strong>Waiting for a complete 10-second interval</strong>
+        <span>The first value appears after one qualified UTC-aligned interval closes.</span>
+      </div>
+      : <div className="overview-groups">
+        <section className="overview-group" aria-label="10-second frequency result">
+          <header><p className="eyebrow">Latest finalized interval</p>
+            <h3>{hasValue ? 'Valid frequency result' : 'Interval rejected'}</h3></header>
+          <div className="overview-reading-grid three">
+            <article className={`overview-reading quality-${quality}`}>
+              <span>Frequency</span>
+              <strong>{hasValue
+                ? `${(result.frequency_millihz! / 1000).toFixed(3)} Hz`
+                : '—'}</strong>
+              <small>{hasValue ? 'valid' : friendlyFlag(result.quality)}</small>
+            </article>
+            <article className={`overview-reading quality-${result.class_a_time_qualified
+              ? 'valid' : 'invalid'}`}>
+              <span>UTC qualification</span>
+              <strong>{result.class_a_time_qualified
+                ? 'Class A' : result.clock_synchronized ? 'Synchronized' : 'Unsynchronized'}</strong>
+              <small>{exactInteger(result.utc_uncertainty_nanoseconds)} ns uncertainty</small>
+            </article>
+            <article className="overview-reading quality-valid">
+              <span>Recent valid range</span>
+              <strong>{minimum}–{maximum} Hz</strong>
+              <small>{values.length} completed {values.length === 1 ? 'result' : 'results'}</small>
+            </article>
+          </div>
+          <p className="channel-note">UTC interval {exactUtc(result.utc_start_nanoseconds)} to{' '}
+            {exactUtc(result.utc_end_nanoseconds)} · result #{result.sequence}</p>
+          {rejection && <div className="interval-state-banner rejected" role="alert">
+            <strong>No numeric frequency published</strong><span>{rejection}</span>
+          </div>}
+        </section>
+      </div>}
+  </section>
+}
+
 export function Frequency10sPanel({ frequency, history = [], error = '' }: {
   frequency: MeterFrequency10s | undefined
   history?: MeterFrequency10sResult[]

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   api, type HarmonicSpectrum, type MeterReadingAttribute, type MeterReadings,
-  type MeterTenMinuteResult,
+  type MeterFrequency10sResult, type MeterTenMinuteResult,
 } from '../api'
 import { ReadingPage } from './ReadingPage'
 
@@ -164,6 +164,41 @@ describe('Reading page coherent record behavior', () => {
     interval.focus()
     expect(interval).toHaveFocus()
     expect(screen.queryByRole('button', { name: 'Phasor Angle' })).not.toBeInTheDocument()
+  })
+
+  it('presents ten-second frequency as an operator Data interval', () => {
+    const frequency = {
+      available: true, sequence: 17, configuration_generation: 7,
+      valid: true, quality: 'valid', frequency_hz: 60.007,
+      frequency_millihz: 60_007, time_quality: 'synchronized',
+      clock_synchronized: true, class_a_time_qualified: true, age_ms: 250,
+      first_sample_index: '1000', interval_end_sample_index: '1281000',
+      sample_count: 1_280_000, sample_rate_hz: 128_000,
+      measured_sample_rate_millihz: 128_000_000, cycle_count: 600,
+      utc_start_nanoseconds: '1788000200000000000',
+      utc_end_nanoseconds: '1788000210000000000',
+      utc_uncertainty_nanoseconds: '292885', source_sequence: 17,
+      boundary_generation: 3, source_status: 0, source_status_flags: [],
+      status: 0, status_flags: [], reasons: 0, rejection_reasons: [],
+      observer_drop_count: 0, guard_flags: 0, guard_flag_names: [],
+      observed_crossings: 601, included_crossings: 600, rejected_cycles: 0,
+      duration_q16_samples: '83886080000', first_crossing_q16_samples: '1',
+      last_crossing_q16_samples: '2', nominal_frequency_hz: 60,
+      reference_channel: 6, filter_profile: 1, calibration_profile: 1,
+    } satisfies MeterFrequency10sResult
+    render(<ReadingPage readings={record(41, 7, true)} frequency10s={frequency}
+      frequency10sHistory={[frequency]} onUnauthorized={() => undefined}
+      systemNominalVoltage={120} measurementTopology="wye" />)
+
+    expect(screen.getByRole('heading', { name: 'Meter data' })).toBeInTheDocument()
+    const interval = screen.getByRole('combobox', { name: 'Measurement interval' })
+    expect(screen.getByRole('option', { name: '10 seconds' })).toBeInTheDocument()
+    fireEvent.change(interval, { target: { value: 'seconds10' } })
+
+    expect(screen.getByRole('heading', { name: 'Grid frequency' })).toBeInTheDocument()
+    expect(screen.getByText('60.007 Hz')).toBeInTheDocument()
+    expect(screen.getByText('Class A clock qualified')).toBeInTheDocument()
+    expect(screen.queryByText('Exact calculation and status audit')).not.toBeInTheDocument()
   })
 
   it('requests Basic harmonics for Power and hides THD immediately on identity change', async () => {

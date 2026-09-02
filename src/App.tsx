@@ -12,7 +12,7 @@ import {
   MeterTenMinute, MeterTenMinuteResult,
   MeterTwoHour, MeterTwoHourResult,
   MeasurementTopology, DemandConfiguration, CurrentWiringConfiguration,
-  CurrentPhase,
+  CurrentPhase, TimeSynchronization,
   MeterChannel, MeterReadings, Session, SocTemperature, SocTemperatures,
   SystemAbout, SystemHealth, WaveformStatus, ProductSettings, SettingsDocument,
   PowerQualityEvents, openApiDocumentDownloadPath,
@@ -1265,7 +1265,8 @@ function SimulatorHarmonics({ simulator, simulatorSelected, sampleRateHz, onChan
 
 function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   sourceStatus, simulatorStatus, simulatorApplyBusy, onSourceChange, onSimulatorChange,
-  onSimulatorSubmit, acquisitionAvailable = true }: {
+  onSimulatorSubmit, frequency10s, frequency10sHistory, frequency10sError,
+  acquisitionAvailable = true }: {
   onUnauthorized: () => void
   health: SystemHealth | undefined
   readings: MeterReadings | undefined
@@ -1277,10 +1278,13 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
   onSourceChange: (source: AdcSource['source']) => void
   onSimulatorChange: (configuration: AdcSimulatorConfiguration) => void
   onSimulatorSubmit: (activate: boolean) => void
+  frequency10s: MeterFrequency10s | undefined
+  frequency10sHistory: MeterFrequency10sResult[]
+  frequency10sError: string
   acquisitionAvailable?: boolean
 }) {
   const [activeTab, setActiveTab] =
-    useState<'overview' | 'tweak' | 'simulator' | 'recorder' | 'database' | 'waveform' | 'about' | 'logs'>('overview')
+    useState<'overview' | 'time' | 'tweak' | 'simulator' | 'recorder' | 'database' | 'waveform' | 'about' | 'logs'>('overview')
   const [simulatorCategory, setSimulatorCategory] =
     useState<SimulatorCategory>('measurement')
   const handleSimulatorTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -1315,6 +1319,9 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
       <button className={activeTab === 'overview' ? 'active' : ''} type="button"
         aria-current={activeTab === 'overview' ? 'page' : undefined}
         onClick={() => setActiveTab('overview')}>Overview</button>
+      <button className={activeTab === 'time' ? 'active' : ''} type="button"
+        aria-current={activeTab === 'time' ? 'page' : undefined}
+        onClick={() => setActiveTab('time')}>Time</button>
       <button className={activeTab === 'tweak' ? 'active' : ''} type="button"
         aria-current={activeTab === 'tweak' ? 'page' : undefined}
         onClick={() => setActiveTab('tweak')}>Tweak</button>
@@ -1339,6 +1346,9 @@ function DeveloperPage({ onUnauthorized, health, readings, adcSource, simulator,
     </nav>
     {activeTab === 'overview'
       ? <DeveloperOverview onUnauthorized={onUnauthorized} health={health} readings={readings} />
+      : activeTab === 'time'
+        ? <Frequency10sPanel frequency={frequency10s}
+            history={frequency10sHistory} error={frequency10sError} />
       : activeTab === 'tweak'
         ? <DeveloperTweak onUnauthorized={onUnauthorized} />
       : activeTab === 'simulator' ? <>
@@ -1925,6 +1935,7 @@ function WaveformConfiguration() {
 
 export function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
   nominalFrequency, onNominalFrequencyChange,
+  timeSynchronization, onTimeSynchronizationChange,
   measurementTopology, onMeasurementTopologyChange,
   systemNominalVoltage, onSystemNominalVoltageChange,
   demandConfiguration, onDemandConfigurationChange,
@@ -1936,6 +1947,8 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
   onSubmit: (event: FormEvent) => void
   nominalFrequency: number | undefined
   onNominalFrequencyChange: (nominalFrequency: number) => void
+  timeSynchronization: TimeSynchronization
+  onTimeSynchronizationChange: (synchronization: TimeSynchronization) => void
   measurementTopology: MeasurementTopology | undefined
   onMeasurementTopologyChange: (topology: MeasurementTopology) => void
   systemNominalVoltage: number | undefined
@@ -2026,6 +2039,13 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
               <option value={60}>60 Hz</option>
             </select>
               <small>Basic measurement block: {(nominalFrequency ?? 60) === 50 ? 10 : 12} cycles</small></label>
+            <label>Time synchronization<select value={timeSynchronization}
+              onChange={(event) => onTimeSynchronizationChange(
+                event.target.value as TimeSynchronization)}>
+              <option value="ntp">NTP (default)</option>
+              <option value="ptp">PTP (IEEE 1588)</option>
+            </select>
+              <small>PTP uses hardware timestamps on the primary end0 interface</small></label>
             <label>Measurement connection<select value={measurementTopology ?? 'wye'}
               onChange={(event) => onMeasurementTopologyChange(
                 event.target.value as MeasurementTopology)}>
@@ -2247,6 +2267,8 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
   const [frequencyConfiguration, setFrequencyConfiguration] =
     useState<FrequencyConfiguration>()
   const [nominalFrequency, setNominalFrequency] = useState<number>()
+  const [timeSynchronization, setTimeSynchronization] =
+    useState<TimeSynchronization>('ntp')
   const [measurementTopology, setMeasurementTopology] = useState<MeasurementTopology>()
   const [systemNominalVoltage, setSystemNominalVoltage] = useState<number>()
   const [demandConfiguration, setDemandConfiguration] =
@@ -2264,7 +2286,7 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
   const readiness = classifySystemReadiness(health,
     healthFailure instanceof ApiError ? healthFailure : healthFailure
       ? { code: undefined, retryable: false } : undefined)
-  const frequency10sVisible = activeView === 'dashboard' || activeView === 'reading'
+  const frequency10sVisible = activeView === 'reading' || activeView === 'developer'
 
   const handleError = useCallback((reason: unknown) => {
     if (reason instanceof ApiError && reason.status === 401) { onUnauthorized(); return }
@@ -2303,6 +2325,8 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
         if (active) {
           setFrequencyConfiguration(activeSettings.settings.metering.frequency)
           setNominalFrequency(activeSettings.settings.metering.nominal_frequency_hz)
+          setTimeSynchronization(
+            activeSettings.settings.time?.synchronization ?? 'ntp')
           setMeasurementTopology(
             activeSettings.settings.metering.measurement_topology ?? 'wye')
           setSystemNominalVoltage(
@@ -2375,6 +2399,7 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
     try {
       await saveSettings((settings) => {
         settings.metering.frequency = frequencyConfiguration
+        settings.time = { synchronization: timeSynchronization }
         // The nominal grid frequency lives beside, not inside, the
         // zero-crossing configuration but is edited by the same form.
         if (nominalFrequency !== undefined) {
@@ -2876,7 +2901,7 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
         onClick={() => setActiveView('dashboard')}>Dashboard</button>
       <button type="button" className={activeView === 'reading' ? 'active' : ''}
         aria-current={activeView === 'reading' ? 'page' : undefined}
-        onClick={() => setActiveView('reading')}>Reading</button>
+        onClick={() => setActiveView('reading')}>Data</button>
       <button type="button" className={activeView === 'history' ? 'active' : ''}
         aria-current={activeView === 'history' ? 'page' : undefined}
         onClick={() => setActiveView('history')}>History</button>
@@ -2910,6 +2935,9 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
           onSourceChange={changeAdcSource}
           onSimulatorChange={setSimulator}
           onSimulatorSubmit={saveSimulator}
+          frequency10s={frequency10s}
+          frequency10sHistory={frequency10sHistory}
+          frequency10sError={frequency10sError}
           acquisitionAvailable={readiness.acquisitionReachable} />
       : activeView === 'about'
         ? <AboutPage onUnauthorized={onUnauthorized} />
@@ -2939,6 +2967,8 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
             onSubmit={saveFrequencyConfiguration}
             nominalFrequency={nominalFrequency}
             onNominalFrequencyChange={setNominalFrequency}
+            timeSynchronization={timeSynchronization}
+            onTimeSynchronizationChange={setTimeSynchronization}
             measurementTopology={measurementTopology}
             onMeasurementTopologyChange={setMeasurementTopology}
             systemNominalVoltage={systemNominalVoltage}
@@ -2963,8 +2993,6 @@ export function Dashboard({ session, onLogout, onUnauthorized }: {
       </StatusPill>
     </section>
     {error && <div className="error-banner"><strong>Data unavailable</strong><span>{error}</span></div>}
-    <Frequency10sPanel frequency={frequency10s} history={frequency10sHistory}
-      error={frequency10sError} />
     <section className="section-heading dashboard-results-heading"><div><p className="eyebrow">Meter results</p><h2>RMS readings</h2></div>
       <div className="heading-status">
         {tier === 'basic' && timing && <StatusPill ok={timing.time_quality === 'synchronized'}>

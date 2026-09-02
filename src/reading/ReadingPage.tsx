@@ -11,7 +11,7 @@ import type { MeasurementTopology } from '../api'
 import { PowerView } from './PowerView'
 import { EnergyDemandView } from './EnergyDemandView'
 import { PowerQualityView } from './PowerQualityView'
-import { Frequency10sPanel } from './Frequency10sPanel'
+import { Frequency10sOperatorView } from './Frequency10sPanel'
 import { SequenceView, SEQUENCE_CONTEXT_KEYS } from './SequenceView'
 import { harmonicMismatchMessage, harmonicNominalMismatch } from './harmonicDiagnosis'
 import {
@@ -28,6 +28,7 @@ import './reading.css'
 
 type ReadingSubtab =
   | 'overview' | 'power' | 'energy' | 'phasor' | 'sequence' | 'harmonics' | 'power-quality'
+type OperatorReadingInterval = ReadingInterval | 'seconds10'
 type PhasorScope = 'voltage' | 'current' | 'all'
 type HarmonicGroup = 'voltage' | 'current'
 type HarmonicDisplay = 'magnitude' | 'percentage'
@@ -578,17 +579,19 @@ function HarmonicOverview({ columns, channelByIndex, ordersByChannel, qualifiedM
   </section>
 }
 
-function ReadingIntervalSelect({ id, value, onChange }: {
+function ReadingIntervalSelect({ id, value, onChange, includeFrequency = false }: {
   id: string
-  value: ReadingInterval
-  onChange: (interval: ReadingInterval) => void
+  value: OperatorReadingInterval
+  onChange: (interval: OperatorReadingInterval) => void
+  includeFrequency?: boolean
 }) {
   return <label className="reading-interval-select" htmlFor={id}>
     Measurement interval
     <select id={id} value={value}
-      onChange={(event) => onChange(event.target.value as ReadingInterval)}>
+      onChange={(event) => onChange(event.target.value as OperatorReadingInterval)}>
       <option value="basic">10/12 cycles</option>
       <option value="aggregate">150/180 cycles</option>
+      {includeFrequency && <option value="seconds10">10 seconds</option>}
       <option value="min10">10 minutes</option>
       <option value="hour2">2 hours</option>
     </select>
@@ -603,7 +606,7 @@ function RecordContextBar({
   state: IntervalPresentationState
   section: Exclude<ReadingSubtab, 'harmonics'>
   intervalError: string
-  onIntervalChange: (interval: ReadingInterval) => void
+  onIntervalChange: (interval: OperatorReadingInterval) => void
 }) {
   const contextKeys = section === 'overview' ? OVERVIEW_CONTEXT_KEYS
     : section === 'power' ? POWER_CONTEXT_KEYS
@@ -626,7 +629,7 @@ function RecordContextBar({
 
   return <section className="record-context" aria-label="Meter record context">
     <ReadingIntervalSelect id="shared-reading-interval" value={interval}
-      onChange={onIntervalChange} />
+      onChange={onIntervalChange} includeFrequency={section === 'overview'} />
     <div className="record-context-status">
       <span className={`record-mode-badge state-${state}`}>{modeLabel}</span>
       <span className={`record-quality quality-${quality ?? 'waiting'}`}>{qualityLabel}</span>
@@ -654,6 +657,39 @@ function RecordContextBar({
     </div>}
     {intervalError && <div className="error-banner"><strong>Interval unavailable</strong>
       <span>{intervalError}</span></div>}
+  </section>
+}
+
+function Frequency10sContextBar({ frequency, onIntervalChange }: {
+  frequency: MeterFrequency10s | undefined
+  onIntervalChange: (interval: OperatorReadingInterval) => void
+}) {
+  const result = frequency?.available ? frequency : undefined
+  const state = !result ? 'waiting' : result.valid ? 'ready' : 'rejected'
+  const modeLabel = state === 'ready' ? 'Finalized'
+    : state === 'rejected' ? 'Rejected' : 'Waiting'
+  const qualityLabel = !result ? 'Awaiting complete record'
+    : result.valid ? 'Visible value valid' : 'No numeric value published'
+  const synchronization = !result ? 'Timing unavailable'
+    : result.class_a_time_qualified ? 'Class A clock qualified'
+      : result.clock_synchronized ? 'Clock synchronized · over 1 ms'
+        : 'Clock unsynchronized'
+
+  return <section className="record-context" aria-label="10-second frequency context">
+    <ReadingIntervalSelect id="shared-reading-interval" value="seconds10"
+      onChange={onIntervalChange} includeFrequency />
+    <div className="record-context-status">
+      <span className={`record-mode-badge state-${state}`}>{modeLabel}</span>
+      <span className={`record-quality quality-${result?.valid ? 'valid'
+        : result ? 'invalid' : 'waiting'}`}>{qualityLabel}</span>
+      <span>{synchronization}</span>
+    </div>
+    <dl>
+      <div><dt>Result sequence</dt><dd>{result ? formatCount(result.sequence) : '—'}</dd></div>
+      <div><dt>Interval</dt><dd>UTC-aligned 10 seconds</dd></div>
+      <div><dt>UTC uncertainty</dt><dd>{result
+        ? `${result.utc_uncertainty_nanoseconds} ns` : '—'}</dd></div>
+    </dl>
   </section>
 }
 
@@ -1034,7 +1070,8 @@ export function ReadingPage({
   acquisitionAvailable?: boolean
 }) {
   const [activeSubtab, setActiveSubtab] = useState<ReadingSubtab>('overview')
-  const [readingInterval, setReadingInterval] = useState<ReadingInterval>('basic')
+  const [readingInterval, setReadingInterval] =
+    useState<OperatorReadingInterval>('basic')
   const [powerScope, setPowerScope] = useState<PowerScope>('total')
   const [phasorScope, setPhasorScope] = useState<PhasorScope>('all')
   const [completeRecords, setCompleteRecords] = useState<CompleteRecordCache>({})
@@ -1050,12 +1087,20 @@ export function ReadingPage({
   const [orderRange, setOrderRange] = useState<HarmonicOrderRange>(FULL_SUMMARY_RANGE)
   const [spectrum, setSpectrum] = useState<HarmonicSpectrum>()
   const [harmonicError, setHarmonicError] = useState('')
+  const recordInterval: ReadingInterval = readingInterval === 'seconds10'
+    ? 'basic' : readingInterval
   const requestedHarmonicPeriod = activeSubtab === 'power'
-    ? harmonicPeriodForReadingInterval(readingInterval)
+    ? harmonicPeriodForReadingInterval(recordInterval)
     : activeSubtab === 'harmonics' ? period : undefined
 
   useEffect(() => {
-    if (!acquisitionAvailable || activeSubtab === 'harmonics' || readingInterval === 'basic') {
+    if (activeSubtab !== 'overview' && readingInterval === 'seconds10')
+      setReadingInterval('basic')
+  }, [activeSubtab, readingInterval])
+
+  useEffect(() => {
+    if (!acquisitionAvailable || activeSubtab === 'harmonics' ||
+        readingInterval === 'basic' || readingInterval === 'seconds10') {
       setIntervalError('')
       return
     }
@@ -1066,10 +1111,10 @@ export function ReadingPage({
       if (!active || pending) return
       pending = true
       try {
-        if (readingInterval === 'aggregate') {
+        if (recordInterval === 'aggregate') {
           const next = await api.meterAggregate()
           if (active) setAggregate(next)
-        } else if (readingInterval === 'min10') {
+        } else if (recordInterval === 'min10') {
           const next = await api.meterTenMinute()
           if (active) setTenMinute(next)
         } else {
@@ -1085,20 +1130,21 @@ export function ReadingPage({
         }
         setIntervalError(reason instanceof Error
           ? reason.message
-          : `Unable to read ${READING_INTERVAL_LABELS[readingInterval]} data`)
+          : `Unable to read ${READING_INTERVAL_LABELS[recordInterval]} data`)
       } finally {
         pending = false
       }
     }
     void refresh()
-    const pollMilliseconds = readingInterval === 'aggregate' ? 1000
-      : readingInterval === 'min10' ? 5000 : 10000
+    const pollMilliseconds = recordInterval === 'aggregate' ? 1000
+      : recordInterval === 'min10' ? 5000 : 10000
     const timer = window.setInterval(refresh, pollMilliseconds)
     return () => {
       active = false
       window.clearInterval(timer)
     }
-  }, [acquisitionAvailable, activeSubtab, onUnauthorized, readingInterval])
+  }, [acquisitionAvailable, activeSubtab, onUnauthorized, readingInterval,
+    recordInterval])
 
   useEffect(() => {
     if (!acquisitionAvailable || !requestedHarmonicPeriod) return
@@ -1155,9 +1201,9 @@ export function ReadingPage({
     aggregateReadingRecord('min10', tenMinuteResult), [tenMinuteResult])
   const twoHourCandidate = useMemo(() =>
     aggregateReadingRecord('hour2', twoHourResult), [twoHourResult])
-  const intervalCandidate = readingInterval === 'basic' ? basicCandidate
-    : readingInterval === 'aggregate' ? aggregateCandidate
-      : readingInterval === 'min10' ? tenMinuteCandidate : twoHourCandidate
+  const intervalCandidate = recordInterval === 'basic' ? basicCandidate
+    : recordInterval === 'aggregate' ? aggregateCandidate
+      : recordInterval === 'min10' ? tenMinuteCandidate : twoHourCandidate
   const activeGeneration = readings?.configuration_generation ??
     intervalCandidate?.configurationGeneration
   const nominalMismatch = harmonicNominalMismatch(readings)
@@ -1166,12 +1212,12 @@ export function ReadingPage({
 
   useEffect(() => {
     setCompleteRecords((current) => acquisitionAvailable
-      ? updateCompleteRecordCache(current, readingInterval, intervalCandidate, activeGeneration)
+      ? updateCompleteRecordCache(current, recordInterval, intervalCandidate, activeGeneration)
       : {})
-  }, [acquisitionAvailable, activeGeneration, intervalCandidate, readingInterval])
+  }, [acquisitionAvailable, activeGeneration, intervalCandidate, recordInterval])
 
   const selectedRecord = selectCommittedRecord(
-    completeRecords, readingInterval, intervalCandidate, activeGeneration)
+    completeRecords, recordInterval, intervalCandidate, activeGeneration)
   const committedRecord = acquisitionAvailable ? selectedRecord : undefined
   const intervalState = acquisitionAvailable
     ? intervalPresentationState(intervalCandidate, committedRecord, activeGeneration)
@@ -1194,7 +1240,7 @@ export function ReadingPage({
     ? harmonicPresentationState(harmonicTabCandidate, cachedSpectrum, harmonicGeneration)
     : 'waiting'
   const displayedSpectrum = nominalMismatch ? undefined : cachedSpectrum
-  const powerPeriod = harmonicPeriodForReadingInterval(readingInterval)
+  const powerPeriod = harmonicPeriodForReadingInterval(recordInterval)
   const powerCandidate = spectrum?.period === powerPeriod ? spectrum : undefined
   const exactPowerSpectrum = matchingHarmonicSpectrum(committedRecord, powerCandidate) ??
     matchingHarmonicSpectrum(committedRecord, harmonicSpectra[powerPeriod])
@@ -1224,9 +1270,9 @@ export function ReadingPage({
 
   return <section className="reading-page">
     <header className="reading-heading">
-      <p className="eyebrow">Readings</p>
-      <h1>Meter readings</h1>
-      <p>Inspect processed measurement products from the programmable-logic metrology pipeline.</p>
+      <p className="eyebrow">Data</p>
+      <h1>Meter data</h1>
+      <p>Inspect finalized measurement products from the programmable-logic metrology pipeline.</p>
     </header>
 
     <nav className="reading-subtabs" aria-label="Reading sections">
@@ -1253,25 +1299,28 @@ export function ReadingPage({
         onClick={() => setActiveSubtab('power-quality')}>Power Quality</button>
     </nav>
 
-    {activeSubtab === 'overview' && <Frequency10sPanel frequency={frequency10s}
-      history={frequency10sHistory} error={frequency10sError} />}
-
     {activeSubtab !== 'harmonics' && activeSubtab !== 'energy' &&
-      activeSubtab !== 'power-quality' &&
-      <RecordContextBar interval={readingInterval}
-      record={committedRecord} state={intervalState} section={activeSubtab}
-      intervalError={intervalError}
-      onIntervalChange={setReadingInterval} />}
+      activeSubtab !== 'power-quality' && (activeSubtab === 'overview' &&
+        readingInterval === 'seconds10'
+        ? <Frequency10sContextBar frequency={frequency10s}
+            onIntervalChange={setReadingInterval} />
+        : <RecordContextBar interval={recordInterval}
+            record={committedRecord} state={intervalState} section={activeSubtab}
+            intervalError={intervalError}
+            onIntervalChange={setReadingInterval} />)}
 
     {activeSubtab === 'overview'
-      ? <ReadingOverview interval={readingInterval} record={committedRecord} />
+      ? readingInterval === 'seconds10'
+        ? <Frequency10sOperatorView frequency={frequency10s}
+            history={frequency10sHistory} error={frequency10sError} />
+        : <ReadingOverview interval={recordInterval} record={committedRecord} />
       : activeSubtab === 'power'
         ? committedRecord
           ? <PowerView record={committedRecord} scope={powerScope}
               onScopeChange={setPowerScope} harmonics={powerSpectrum}
               harmonicMessage={powerHarmonicMessage} />
           : <section className="reading-section"><div className="harmonic-empty">
-            <strong>Waiting for {READING_INTERVAL_LABELS[readingInterval]} power data</strong>
+            <strong>Waiting for {READING_INTERVAL_LABELS[recordInterval]} power data</strong>
             <span>Power cards, chart, and matrix commit together after all source sequences agree.</span>
           </div></section>
         : activeSubtab === 'energy'
@@ -1281,11 +1330,11 @@ export function ReadingPage({
           ? <PowerQualityView onUnauthorized={onUnauthorized}
               enabled={acquisitionAvailable} />
         : activeSubtab === 'phasor'
-          ? <PhasorUnbalanceView interval={readingInterval} record={committedRecord}
+          ? <PhasorUnbalanceView interval={recordInterval} record={committedRecord}
               nominalVoltage={Math.max(1, systemNominalVoltage)} scope={phasorScope}
               topology={measurementTopology} onScopeChange={setPhasorScope} />
           : activeSubtab === 'sequence'
-            ? <SequenceView interval={readingInterval} record={committedRecord}
+            ? <SequenceView interval={recordInterval} record={committedRecord}
                 topology={measurementTopology} />
             : <section className="reading-section" aria-labelledby="harmonic-spectrum-title">
       <div className="reading-section-heading harmonic-section-heading">

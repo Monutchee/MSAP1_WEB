@@ -987,6 +987,11 @@ export interface DataChannelTestResult {
 /** Presentation topology for the three voltage measurement inputs. */
 export type MeasurementTopology = 'wye' | 'delta'
 export type DemandMethod = 'fixed_block' | 'sliding'
+export type TimeSynchronization = 'ntp' | 'ptp'
+
+export interface TimeSynchronizationSettings {
+  synchronization: TimeSynchronization
+}
 
 export interface DemandConfiguration {
   method: DemandMethod
@@ -1081,6 +1086,7 @@ export interface ProductSettings {
       harmonics: AdcSimulatorHarmonic[]
     }
   }
+  time: TimeSynchronizationSettings
   waveform: {
     default_pretrigger_ms: number
     default_posttrigger_ms: number
