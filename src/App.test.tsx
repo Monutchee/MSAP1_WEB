@@ -168,7 +168,7 @@ describe('dashboard startup readiness', () => {
     expect(frequencyRequests).toBe(0)
 
     fireEvent.click(screen.getByRole('button', { name: 'Data' }))
-    fireEvent.change(await screen.findByRole('combobox', {
+    fireEvent.change(screen.getByRole('combobox', {
       name: 'Measurement interval',
     }), { target: { value: 'seconds10' } })
     await act(async () => { await Promise.resolve(); await Promise.resolve() })

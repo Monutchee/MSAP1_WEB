@@ -5,7 +5,8 @@ import {
 } from '../api'
 import { WaveformTriggerPanel } from './WaveformTriggerPanel'
 import { WaveformViewer } from './WaveformViewer'
-import { parseWaveform, ParsedWaveform } from './waveformFile'
+import { ParsedWaveform, WaveformPyramid } from './waveformFile'
+import { processWaveform } from './waveformWorkerClient'
 import './waveform.css'
 
 const waveformPageSize = 16
@@ -29,6 +30,10 @@ function waveformIssue(status: WaveformStatus | undefined) {
 
 function count(value: number) {
   return new Intl.NumberFormat('en-US').format(value)
+}
+
+function gibibytes(value: number) {
+  return `${(value / (1024 ** 3)).toFixed(2)} GiB`
 }
 
 function sessionTime(session: WaveformSession) {
@@ -81,6 +86,7 @@ export function WaveformExplorer({
   const [viewer, setViewer] = useState<{
     filename: string
     waveform: ParsedWaveform
+    pyramid: WaveformPyramid
   }>()
   const [error, setError] = useState('')
   const originRef = useRef(origin)
@@ -181,7 +187,8 @@ export function WaveformExplorer({
     setError('')
     try {
       const buffer = await api.waveformFile(session.filename)
-      setViewer({ filename: session.filename, waveform: parseWaveform(buffer) })
+      const processed = await processWaveform(buffer)
+      setViewer({ filename: session.filename, ...processed })
     } catch (reason) {
       handleFailure(reason, 'Unable to load waveform file')
     } finally {
@@ -289,6 +296,10 @@ export function WaveformExplorer({
           ? `Indexing archive ${count(archive.scanned_files)}/${count(archive.total_files)}`
           : archive.state === 'complete' ? 'Archive indexed' : `Archive ${archive.state}`}
       </span>}
+      {status && <span className={`status-pill ${status.retention_failures ? 'bad' : 'neutral'}`}>
+        <i />Archive {gibibytes(status.archive_stored_bytes)} / {gibibytes(status.archive_limit_bytes)}
+        {status.expired_sessions ? ` · ${count(status.expired_sessions)} expired` : ''}
+      </span>}
     </div>
     {error && <div className="error-banner"><strong>Waveform error</strong><span>{error}</span></div>}
     {canDelete && <WaveformTriggerPanel status={status} onStatus={(next) => {
@@ -357,6 +368,14 @@ export function WaveformExplorer({
                   ` of ${count(session.last_sequence - session.first_sequence + 1)}`}
               </dd></div>
               <div><dt>Events</dt><dd>{session.event_count}</dd></div>
+              <div><dt>Format</dt><dd>MNCWF v{session.format_version} · {
+                session.compression === 'none' ? 'uncompressed' :
+                session.compression.replaceAll('_', ' ')}</dd></div>
+              {session.stored_bytes > 0 && <div><dt>Stored</dt><dd>{
+                gibibytes(session.stored_bytes)}{
+                  session.logical_sample_bytes > 0
+                    ? ` (${Math.round(session.stored_bytes /
+                        session.logical_sample_bytes * 100)}% of samples)` : ''}</dd></div>}
               <div><dt>Segment</dt><dd>{session.continuation_of_session_id
                 ? `Continuation of ${session.continuation_of_session_id}` : 'Master'}</dd></div>
               <div><dt>Master</dt><dd>Session {session.master_session_id || session.id}</dd></div>
@@ -401,7 +420,7 @@ export function WaveformExplorer({
       </div>}
     </section>
     {viewer && <WaveformViewer key={viewer.filename}
-      filename={viewer.filename} waveform={viewer.waveform}
+      filename={viewer.filename} waveform={viewer.waveform} pyramid={viewer.pyramid}
       onClose={() => setViewer(undefined)} />}
   </section>
 }

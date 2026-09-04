@@ -117,12 +117,14 @@ and all 42 replacement records agree.
 flicker Pinst, finalized Pst/Plt, and mains-signalling carrier observations.
 The durable catalogue lives under **History → PQ Event catalogue**. Intersecting
 sample windows are grouped into one expandable incident row while the child
-events retain their canonical UUID detail. Linked capture UUIDs are joined to
-waveform sessions so master and continuation identity remains visible;
-completed segments open the shared waveform viewer in place or offer an
-event-specific MNCWF export. Administrators can select one or several events
-for confirmed deletion without deleting the shared MNCWF files. The browser
-does not read DMA, RPMsg, or raw storage.
+events retain their canonical UUID detail. Summary polling returns only each
+event's waveform count; opening an event fetches its links once and resolves
+them in ordered batches of at most 32 UUIDs, with 25 links shown initially and
+more loaded on demand. Polling is conditional, non-overlapping, and stops for
+completed events. Completed segments open the shared waveform viewer in place
+or offer an event-specific MNCWF export. Administrators can select one or
+several events for confirmed deletion without deleting shared MNCWF files. The
+browser does not read DMA, RPMsg, or raw storage.
 
 The 150/180-cycle aggregate grid frequency remains **informative only**. Per
 IEC 61000-4-30:2025 the standardized frequency product is defined over its own
@@ -154,22 +156,29 @@ authenticated backend API; the browser never reads the system journal
 directly.
 
 The top-level **Waveforms** page triggers manual captures and browses the full
-MNCWF-v4 archive. Each row identifies a Manual, PQ event, mixed, or legacy
+MNCWF v1-v5 archive. Version 5 keeps metadata directly readable and stores the
+sample section in independently validated raw or Zstd level-1 chunks. Each row
+identifies a Manual, PQ event, mixed, or legacy
 trigger origin; All, Manual-only, and PQ-event-only filters use stable paged
 archive queries, with mixed captures present in both filtered views. Linked
 evidence in **History → PQ Event catalogue** resolves its capture UUID through
 an exact full-archive lookup, so an older completed session remains viewable
-and downloadable even when it is not on the newest page. The viewer can render
-separate channel lanes, shared-scale voltage and current overlays, or one
-normalized all-channel overlay. The browser sends only trigger and catalogue
-requests; the acquisition daemon owns the dedicated waveform DMA, history,
-time correlation, and file materialization.
+and downloadable even when it is not on the newest page. A dedicated Web
+Worker validates and decompresses the file and builds transferable min/max
+pyramids, keeping parsing and rendering preparation off React's main thread.
+The viewer can render separate channel lanes, shared-scale voltage and current
+overlays, or one normalized all-channel overlay. The browser sends only trigger
+and catalogue requests; the acquisition daemon owns the dedicated waveform DMA,
+history, time correlation, compression, and file materialization.
 
 **Configuration → Power Quality** edits complete event, flicker, and
 mains-signalling policy through the central settings authority. It also stores
 neutral station, site, circuit, device, and calibration identity in the MNCWF
-capture settings for later COMTRADE and PQDIF conversion. The form reloads the
-active document immediately before saving so unrelated settings are preserved.
+capture settings for later COMTRADE and PQDIF conversion. The archive limit is
+configurable from 1 to 16 GiB and defaults to 8 GiB; expired links remain in
+the historian and are labelled as removed from the waveform archive. The form
+reloads the active document immediately before saving so unrelated settings are
+preserved.
 
 **Configuration → Data Logging** is the M19 job and outbound-channel workspace.
 Administrators first define reusable HTTP, HTTPS, FTP, or SFTP Data Channels,

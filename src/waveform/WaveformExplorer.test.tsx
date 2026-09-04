@@ -21,6 +21,10 @@ function session(id: number, origin: WaveformOrigin, filename = `${origin}-${id}
     continuation_of_session_id: 0,
     master_session_id: id,
     capture_uuid: `00000000-0000-4000-8000-${String(id).padStart(12, '0')}`,
+  format_version: 5,
+  compression: 'zstd_chunks',
+  stored_bytes: 1024,
+  logical_sample_bytes: 2048,
   }
 }
 
@@ -45,6 +49,10 @@ function waveformResponse(sessions: WaveformSession[], total = sessions.length,
     history_capacity_frames: 1_000_000,
     completed_sessions: total,
     incomplete_sessions: 0,
+  archive_limit_bytes: 8 * 1024 * 1024 * 1024,
+  archive_stored_bytes: total * 1024,
+  expired_sessions: 0,
+  retention_failures: 0,
     archive_discovery: {
       state: 'complete', scanned_files: total, total_files: total, rejected_files: 0,
     },

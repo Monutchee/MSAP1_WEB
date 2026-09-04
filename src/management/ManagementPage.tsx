@@ -31,6 +31,7 @@ export function ManagementPage({ onUnauthorized, acquisitionAvailable = true }: 
   const [pending, setPending] = useState<PendingAction>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [generatedUnavailable, setGeneratedUnavailable] = useState(false)
   const [dialogError, setDialogError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -53,8 +54,14 @@ export function ManagementPage({ onUnauthorized, acquisitionAvailable = true }: 
     else failures.push(handleFailure(nextDatabase.reason, 'Unable to read historian status'))
     if (nextWaveforms.status === 'fulfilled') setWaveforms(nextWaveforms.value)
     else failures.push(handleFailure(nextWaveforms.reason, 'Unable to read waveform status'))
-    if (nextGenerated.status === 'fulfilled') setGenerated(nextGenerated.value)
-    else failures.push(handleFailure(nextGenerated.reason, 'Unable to read generated-file status'))
+    if (nextGenerated.status === 'fulfilled') {
+      setGenerated(nextGenerated.value)
+      setGeneratedUnavailable(false)
+    } else {
+      setGenerated(undefined)
+      setGeneratedUnavailable(handleFailure(nextGenerated.reason,
+        'Unable to read generated-file status') !== 'unauthorized')
+    }
     setError(failures.filter((failure) => failure !== 'unauthorized').join(' · '))
   }, [acquisitionAvailable, handleFailure])
 
@@ -167,8 +174,12 @@ export function ManagementPage({ onUnauthorized, acquisitionAvailable = true }: 
     </section>
     <section className="management-card">
       <header><div><p className="eyebrow">Meter Data Sender</p><h2>Clear generated files</h2></div>
-        <span>{generated ? `${generated.archive_count} local · ${generated.completed_metadata_count} delivered · ${generated.outbox_count} queued` : '—'}</span></header>
+        <span>{generatedUnavailable ? 'Data Sender unavailable' : generated
+          ? `${generated.archive_count} local · ${generated.completed_metadata_count} delivered · ${generated.outbox_count} queued` : '—'}</span></header>
       <p>Remove JSON/CSV files and their delivery records without changing historian data, the raw spool, or logging jobs.</p>
+      {generatedUnavailable && <div className="management-warning" role="status">
+        Generated-file controls are temporarily unavailable while Data Sender is starting.
+      </div>}
       {(generated?.pending_delivery_count ?? 0) > 0 && <div className="management-warning">
         {generated?.pending_delivery_count.toLocaleString()} delivery records are incomplete. Clearing them requires a second explicit discard confirmation.
       </div>}

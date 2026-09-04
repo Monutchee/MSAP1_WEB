@@ -50,12 +50,36 @@ function event(event_id: string, first_sample: number, last_sample: number): Pow
     utc_uncertainty_nanoseconds: 250_000,
     settings_digest: '1234567890abcdef1234567890abcdef',
     waveform: { enabled: true, pretrigger_ms: 3000, posttrigger_ms: 3000, decimation: 8 },
+    waveform_capture_count: event_id === firstEventId ? 2 : 0,
     waveform_capture_uuids: event_id === firstEventId
       ? [masterCapture, continuationCapture] : [],
   }
 }
 
 const events = [event(firstEventId, 100, 220), event(secondEventId, 180, 300)]
+
+function json(value: unknown) {
+  return new Response(JSON.stringify(value), {
+    status: 200, headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function eventResponse(url: string, source: PowerQualityEvent[]) {
+  const request = new URL(url, 'http://msap1.test')
+  const eventId = request.searchParams.get('event_id')
+  const selected = eventId
+    ? source.filter((candidate) => candidate.event_id === eventId)
+    : source.map((candidate) => ({
+      ...candidate,
+      waveform_capture_uuids: [],
+    }))
+  return json({
+    limit: eventId ? 1 : 100,
+    count: selected.length,
+    export_formats: ['mncwf'],
+    events: selected,
+  })
+}
 
 function waveformLookup(capture_uuid: string, id: number,
   state: 'capturing' | 'complete' | 'incomplete' = 'complete',
@@ -73,6 +97,8 @@ function waveformLookup(capture_uuid: string, id: number,
       decimation: 8,
       id, filename, continuation_of_session_id: id === 8 ? 7 : 0,
       master_session_id: id === 8 ? 7 : id, capture_uuid,
+      format_version: 5, compression: 'zstd_chunks', stored_bytes: 1024,
+      logical_sample_bytes: 2048,
     },
   }
 }
@@ -81,22 +107,21 @@ afterEach(() => vi.unstubAllGlobals())
 
 describe('Power-quality event catalogue', () => {
   it('groups one overlap incident and keeps event evidence in the shared viewer', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString()
       if (url.startsWith('/api/v1/meter/power-quality/events'))
-        return new Response(JSON.stringify({
-          limit: 100, count: events.length, export_formats: ['mncwf'], events,
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      if (url === `/api/v1/waveforms/session?capture_uuid=${masterCapture}`)
-        return new Response(JSON.stringify(waveformLookup(
-          masterCapture, 7, 'complete', 'master.mncwf')), {
-          status: 200, headers: { 'Content-Type': 'application/json' },
+        return eventResponse(url, events)
+      if (url === '/api/v1/waveforms/sessions/lookup' && init?.method === 'POST') {
+        const request = JSON.parse(String(init.body)) as { capture_uuids: string[] }
+        return json({
+          archive_discovery: {
+            state: 'complete', scanned_files: 20, total_files: 20, rejected_files: 0,
+          },
+          sessions: request.capture_uuids.map((uuid) => uuid === masterCapture
+            ? waveformLookup(uuid, 7, 'complete', 'master.mncwf').session
+            : waveformLookup(uuid, 8, 'complete', 'continuation.mncwf').session),
         })
-      if (url === `/api/v1/waveforms/session?capture_uuid=${continuationCapture}`)
-        return new Response(JSON.stringify(waveformLookup(
-          continuationCapture, 8, 'complete', 'continuation.mncwf')), {
-          status: 200, headers: { 'Content-Type': 'application/json' },
-        })
+      }
       if (url === '/protected/waveforms/view/master.mncwf')
         return new Response(new Uint8Array([0, 1, 2, 3]), { status: 200 })
       throw new Error(`Unexpected request: ${url}`)
@@ -124,6 +149,71 @@ describe('Power-quality event catalogue', () => {
     const downloads = screen.getAllByRole('link', { name: 'Download event MNCWF' })
     expect(downloads[0]).toHaveAttribute('href',
       `/api/v1/waveforms/export?session_id=7&event_id=${firstEventId}&format=mncwf`)
+    const batchCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input) === '/api/v1/waveforms/sessions/lookup')
+    expect(batchCalls.length).toBeGreaterThan(0)
+    expect(batchCalls.length).toBeLessThanOrEqual(2)
+    batchCalls.forEach((call) => expect(
+      JSON.parse(String(call[1]?.body)).capture_uuids,
+    ).toEqual([masterCapture, continuationCapture]))
+    expect(fetchMock.mock.calls.some(([input]) =>
+      String(input).startsWith('/api/v1/waveforms/session?'))).toBe(false)
+  })
+
+  it('bounds a 1,316-link event to one detail and on-demand batches', async () => {
+    const captureUuids = Array.from({ length: 1316 }, (_, index) =>
+      `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`)
+    const linkedEvent = {
+      ...event(firstEventId, 100, 220),
+      waveform_capture_count: captureUuids.length,
+      waveform_capture_uuids: captureUuids,
+    }
+    const batches: string[][] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL,
+      init?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith('/api/v1/meter/power-quality/events'))
+        return eventResponse(url, [linkedEvent])
+      if (url === '/api/v1/waveforms/sessions/lookup' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { capture_uuids: string[] }
+        batches.push(body.capture_uuids)
+        return json({
+          archive_discovery: {
+            state: 'complete', scanned_files: 1316, total_files: 1316,
+            rejected_files: 0,
+          },
+          sessions: body.capture_uuids.map(() => null),
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<PowerQualityEventCatalogue onUnauthorized={() => undefined} />)
+    const more = await screen.findByRole('button', {
+      name: 'Load 25 more (1291 remaining)',
+    })
+    await waitFor(() => expect(batches).toHaveLength(1))
+    expect(batches[0]).toHaveLength(25)
+    expect(await screen.findAllByText('Waveform expired from archive'))
+      .toHaveLength(25)
+    const eventCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).startsWith('/api/v1/meter/power-quality/events'))
+    expect(eventCalls.filter(([input]) => {
+      const query = new URL(String(input), 'http://msap1.test').searchParams
+      return !query.has('event_id') && query.get('include_waveform_links') === 'false'
+    })).toHaveLength(1)
+    expect(eventCalls.filter(([input]) => {
+      const query = new URL(String(input), 'http://msap1.test').searchParams
+      return query.get('event_id') === firstEventId &&
+        query.get('include_waveform_links') === 'true'
+    })).toHaveLength(1)
+    fireEvent.click(more)
+    await waitFor(() => expect(batches).toHaveLength(2))
+    expect(batches[1]).toEqual(captureUuids.slice(25, 50))
+    expect(Math.max(...batches.map((batch) => batch.length))).toBeLessThanOrEqual(32)
+    expect(fetchMock.mock.calls.some(([input]) =>
+      String(input).startsWith('/api/v1/waveforms/session?'))).toBe(false)
   })
 
   it('distinguishes materializing, locating, and unavailable linked captures', async () => {
@@ -132,35 +222,29 @@ describe('Power-quality event catalogue', () => {
       waveform_capture_uuids: [
         masterCapture, pendingCapture, locatingCapture, unavailableCapture,
       ],
+      waveform_capture_count: 4,
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString()
       if (url.startsWith('/api/v1/meter/power-quality/events'))
-        return new Response(JSON.stringify({
-          limit: 100, count: 1, export_formats: ['mncwf'], events: [linkedEvent],
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      if (url === `/api/v1/waveforms/session?capture_uuid=${masterCapture}`)
-        return new Response(JSON.stringify(waveformLookup(
-          masterCapture, 7, 'complete', 'master.mncwf')))
-      if (url === `/api/v1/waveforms/session?capture_uuid=${pendingCapture}`)
-        return new Response(JSON.stringify(waveformLookup(
-          pendingCapture, 9, 'capturing', '')))
-      if (url === `/api/v1/waveforms/session?capture_uuid=${locatingCapture}`)
-        return new Response(JSON.stringify({
-          capture_uuid: locatingCapture,
+        return eventResponse(url, [linkedEvent])
+      if (url === '/api/v1/waveforms/sessions/lookup' && init?.method === 'POST') {
+        const request = JSON.parse(String(init.body)) as { capture_uuids: string[] }
+        return json({
           archive_discovery: {
             state: 'scanning', scanned_files: 4, total_files: 20, rejected_files: 0,
           },
-          session: null,
-        }))
-      if (url === `/api/v1/waveforms/session?capture_uuid=${unavailableCapture}`)
-        return new Response(JSON.stringify({
-          capture_uuid: unavailableCapture,
-          archive_discovery: {
-            state: 'complete', scanned_files: 20, total_files: 20, rejected_files: 0,
-          },
-          session: null,
-        }))
+          sessions: request.capture_uuids.map((uuid) => {
+            if (uuid === masterCapture)
+              return waveformLookup(uuid, 7, 'complete', 'master.mncwf').session
+            if (uuid === pendingCapture)
+              return waveformLookup(uuid, 9, 'capturing', '').session
+            if (uuid === unavailableCapture)
+              return waveformLookup(uuid, 10, 'incomplete', '').session
+            return null
+          }),
+        })
+      }
       throw new Error(`Unexpected request: ${url}`)
     }))
 
@@ -197,20 +281,18 @@ describe('Power-quality event catalogue', () => {
         })
       }
       if (url.startsWith('/api/v1/meter/power-quality/events'))
-        return new Response(JSON.stringify({ limit: 100, count: currentEvents.length,
-          export_formats: ['mncwf'], events: currentEvents }), {
-          status: 200, headers: { 'Content-Type': 'application/json' },
+        return eventResponse(url, currentEvents)
+      if (url === '/api/v1/waveforms/sessions/lookup' && init?.method === 'POST') {
+        const request = JSON.parse(String(init.body)) as { capture_uuids: string[] }
+        return json({
+          archive_discovery: {
+            state: 'complete', scanned_files: 20, total_files: 20, rejected_files: 0,
+          },
+          sessions: request.capture_uuids.map((uuid, index) =>
+            waveformLookup(uuid, 7 + index, 'complete',
+              index === 0 ? 'master.mncwf' : 'continuation.mncwf').session),
         })
-      if (url === `/api/v1/waveforms/session?capture_uuid=${masterCapture}`)
-        return new Response(JSON.stringify(waveformLookup(
-          masterCapture, 7, 'complete', 'master.mncwf')), {
-          status: 200, headers: { 'Content-Type': 'application/json' },
-        })
-      if (url === `/api/v1/waveforms/session?capture_uuid=${continuationCapture}`)
-        return new Response(JSON.stringify(waveformLookup(
-          continuationCapture, 8, 'complete', 'continuation.mncwf')), {
-          status: 200, headers: { 'Content-Type': 'application/json' },
-        })
+      }
       throw new Error(`Unexpected request: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)

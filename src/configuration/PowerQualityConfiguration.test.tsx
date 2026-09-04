@@ -12,7 +12,7 @@ const profile = (enabled = true) => ({
 })
 
 const product = {
-  schema_version: 4,
+  schema_version: 8,
   metering: {
     sample_rate_hz: 128_000,
     unrelated_meter_setting: 'preserve-me',
@@ -39,6 +39,7 @@ const product = {
   },
   waveform: {
     default_pretrigger_ms: 1000, default_posttrigger_ms: 2000, default_decimation: 2,
+    archive_limit_gib: 8,
     station_id: '', station_name: '', site_id: '', site_name: '',
     circuit_id: '', circuit_name: '', device_serial: '', calibration_id: '',
     calibration_status: 'unknown',
@@ -81,6 +82,9 @@ describe('Power-quality configuration', () => {
     expect(screen.getAllByLabelText(/Decimation/)[0]).toHaveValue('8')
     expect(screen.getAllByRole('option', { name: '÷ 8 — 16,000 samples/s' })).toHaveLength(9)
     fireEvent.change(screen.getByLabelText('Station ID'), { target: { value: 'STN-04' } })
+    fireEvent.change(screen.getByLabelText(/Waveform archive limit \(GiB\)/), {
+      target: { value: '12' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Apply and save' }))
 
     expect(await screen.findByText(/updated profile generation/)).toBeInTheDocument()
@@ -89,6 +93,7 @@ describe('Power-quality configuration', () => {
     expect(body.metering.mains_signalling.carrier_frequency_hz).toBe(1175.5)
     expect(body.waveform.station_id).toBe('STN-04')
     expect(body.waveform.default_decimation).toBe(2)
+    expect(body.waveform.archive_limit_gib).toBe(12)
     expect(body.database.sentinel).toBe('keep-database-settings')
     expect(body.metering.unrelated_meter_setting).toBe('preserve-me')
     expect(fetchMock).toHaveBeenCalledTimes(3)

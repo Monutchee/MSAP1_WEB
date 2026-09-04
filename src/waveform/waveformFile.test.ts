@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  convertedSample, parseWaveform, rawSample, waveformDurationSeconds,
+  convertedSample, parseWaveform, parseWaveformAsync, rawSample, waveformDurationSeconds,
   waveformFrameForSequence,
 } from './waveformFile'
 
@@ -76,8 +76,10 @@ function crc32c(bytes: Uint8Array) {
 
 interface V4SectionFixture {
   type: number
+  version: number
   itemBytes: number
   itemCount: number
+  logicalBytes: number
   payload: Uint8Array
 }
 
@@ -104,7 +106,65 @@ function v4Section(
   }
   payload.set(records, 48)
   if (blob.byteLength > 0) payload.set(blob, blobOffset)
-  return { type, itemBytes, itemCount, payload }
+  return {
+    type, version: 1, itemBytes, itemCount,
+    logicalBytes: payload.byteLength, payload,
+  }
+}
+
+function v5SampleSection(frameCount: number, mixed = false): V4SectionFixture {
+  const compressed = Uint8Array.from([
+    0x28, 0xb5, 0x2f, 0xfd, 0x64, 0x00, 0x03, 0x4d,
+    0x00, 0x00, 0x10, 0x00, 0x00, 0x01, 0x00, 0xfb,
+    0x2b, 0x80, 0x05, 0xcd, 0xac, 0x85, 0xf0,
+  ])
+  const compressedFrames = 256
+  const frameBytes = 4
+  if (frameCount !== compressedFrames + (mixed ? 1 : 0))
+    throw new Error('Invalid v5 test fixture frame count')
+  const compressedLogical = new Uint8Array(compressedFrames * frameBytes)
+  const raw = Uint8Array.from([0x78, 0x56, 0x34, 0x12])
+  const tableBytes = mixed ? 112 : 56
+  const payloadOffset = alignEight(48 + tableBytes)
+  const rawOffset = alignEight(payloadOffset + compressed.byteLength)
+  const payloadEnd = mixed ? rawOffset + raw.byteLength
+    : payloadOffset + compressed.byteLength
+  const payload = new Uint8Array(alignEight(payloadEnd))
+  const view = new DataView(payload.buffer)
+  view.setUint32(0, 7, true)
+  view.setUint16(4, 2, true)
+  view.setUint16(6, 48, true)
+  view.setUint32(12, frameBytes, true)
+  view.setBigUint64(16, BigInt(frameCount), true)
+  view.setBigUint64(24, 48n, true)
+  view.setBigUint64(32, BigInt(tableBytes), true)
+  view.setBigUint64(48, 0n, true)
+  view.setBigUint64(56, BigInt(compressedFrames), true)
+  view.setBigUint64(64, BigInt(payloadOffset), true)
+  view.setBigUint64(72, BigInt(compressed.byteLength), true)
+  view.setBigUint64(80, BigInt(compressedLogical.byteLength), true)
+  view.setUint16(88, 1, true)
+  view.setUint16(90, 1, true)
+  view.setUint32(92, crc32c(compressedLogical), true)
+  if (mixed) {
+    const rawEntry = 48 + 56
+    view.setBigUint64(rawEntry, BigInt(compressedFrames), true)
+    view.setBigUint64(rawEntry + 8, 1n, true)
+    view.setBigUint64(rawEntry + 16, BigInt(rawOffset), true)
+    view.setBigUint64(rawEntry + 24, BigInt(raw.byteLength), true)
+    view.setBigUint64(rawEntry + 32, BigInt(raw.byteLength), true)
+    view.setUint32(rawEntry + 44, crc32c(raw), true)
+    payload.set(raw, rawOffset)
+  }
+  payload.set(compressed, payloadOffset)
+  return {
+    type: 7,
+    version: 2,
+    itemBytes: frameBytes,
+    itemCount: frameCount,
+    logicalBytes: frameCount * frameBytes,
+    payload,
+  }
 }
 
 function setReference(view: DataView, offset: number, first: number, length: number) {
@@ -112,7 +172,8 @@ function setReference(view: DataView, offset: number, first: number, length: num
   view.setUint32(offset + 4, length, true)
 }
 
-function v4File(): ArrayBuffer {
+function v4File(formatVersion: 4 | 5 = 4, mixedV5 = false): ArrayBuffer {
+  const frameCount = formatVersion === 5 ? 256 + (mixedV5 ? 1 : 0) : 3
   const captureRecord = new Uint8Array(256)
   captureRecord.fill(1, 0, 96)
   const captureView = new DataView(captureRecord.buffer)
@@ -132,7 +193,7 @@ function v4File(): ArrayBuffer {
 
   const timeRecord = new Uint8Array(128)
   const timeView = new DataView(timeRecord.buffer)
-  timeView.setBigUint64(8, 3n, true)
+  timeView.setBigUint64(8, BigInt(frameCount), true)
   timeView.setBigUint64(16, 100n, true)
   timeView.setBigUint64(24, 4n, true)
   timeView.setBigUint64(32, 128_000n, true)
@@ -148,7 +209,7 @@ function v4File(): ArrayBuffer {
   timeView.setUint16(110, 1, true)
   timeView.setUint16(112, 3, true)
   timeView.setUint16(114, 1, true)
-  timeView.setBigUint64(120, 12n, true)
+  timeView.setBigUint64(120, BigInt(frameCount * 4), true)
 
   const channelRecord = new Uint8Array(208)
   channelRecord.fill(2, 0, 16)
@@ -190,7 +251,7 @@ function v4File(): ArrayBuffer {
   setReference(eventView, 232, 21, 18)
   setReference(eventView, 240, 39, 24)
 
-  const sampleRecords = new Uint8Array(12)
+  const sampleRecords = new Uint8Array(frameCount * 4)
   const sampleView = new DataView(sampleRecords.buffer)
   sampleView.setInt32(0, -100, true)
   sampleView.setInt32(4, 200, true)
@@ -203,7 +264,8 @@ function v4File(): ArrayBuffer {
     v4Section(4, 256, eventRecord, eventStrings),
     v4Section(5, 64, new Uint8Array()),
     v4Section(6, 64, new Uint8Array()),
-    v4Section(7, 4, sampleRecords),
+    formatVersion === 5 ? v5SampleSection(frameCount, mixedV5) :
+      v4Section(7, 4, sampleRecords),
   ]
   const directoryBytes = sections.length * 56
   let next = alignEight(64 + directoryBytes)
@@ -216,7 +278,7 @@ function v4File(): ArrayBuffer {
   const octets = new Uint8Array(buffer)
   const view = new DataView(buffer)
   magic.forEach((value, index) => view.setUint8(index, value))
-  view.setUint32(8, 4, true)
+  view.setUint32(8, formatVersion, true)
   view.setUint32(12, 64, true)
   view.setUint32(16, 56, true)
   view.setUint32(20, sections.length, true)
@@ -226,11 +288,11 @@ function v4File(): ArrayBuffer {
   sections.forEach((section, index) => {
     const directory = 64 + index * 56
     view.setUint32(directory, section.type, true)
-    view.setUint16(directory + 4, 1, true)
+    view.setUint16(directory + 4, section.version, true)
     view.setUint16(directory + 6, 1, true)
     view.setBigUint64(directory + 8, BigInt(offsets[index]), true)
     view.setBigUint64(directory + 16, BigInt(section.payload.byteLength), true)
-    view.setBigUint64(directory + 24, BigInt(section.payload.byteLength), true)
+    view.setBigUint64(directory + 24, BigInt(section.logicalBytes), true)
     view.setBigUint64(directory + 32, BigInt(section.itemCount), true)
     view.setUint32(directory + 40, section.itemBytes, true)
     view.setUint32(directory + 44, crc32c(section.payload), true)
@@ -239,6 +301,19 @@ function v4File(): ArrayBuffer {
   view.setUint32(52, crc32c(octets.subarray(64, 64 + directoryBytes)), true)
   view.setUint32(56, crc32c(octets.subarray(0, 64)), true)
   return buffer
+}
+
+function refreshV5Checksums(buffer: ArrayBuffer) {
+  const view = new DataView(buffer)
+  const octets = new Uint8Array(buffer)
+  const sampleDirectory = 64 + 6 * 56
+  const sampleOffset = Number(view.getBigUint64(sampleDirectory + 8, true))
+  const sampleBytes = Number(view.getBigUint64(sampleDirectory + 16, true))
+  view.setUint32(sampleDirectory + 44,
+    crc32c(octets.subarray(sampleOffset, sampleOffset + sampleBytes)), true)
+  view.setUint32(52, crc32c(octets.subarray(64, 64 + 7 * 56)), true)
+  view.setUint32(56, 0, true)
+  view.setUint32(56, crc32c(octets.subarray(0, 64)), true)
 }
 
 describe('MNCWF compatibility contract', () => {
@@ -306,5 +381,54 @@ describe('MNCWF compatibility contract', () => {
     new Uint8Array(buffer)[sampleOffset + 48] ^= 1
 
     expect(() => parseWaveform(buffer)).toThrow('section CRC32C mismatch')
+  })
+
+  it('opens compressed MNCWF v5 chunks through the asynchronous worker parser', async () => {
+    const waveform = await parseWaveformAsync(v4File(5))
+
+    expect(waveform.version).toBe(5)
+    expect(waveform.frameCount).toBe(256)
+    expect(waveform.data.byteLength).toBe(1024)
+    expect(rawSample(waveform, 0, 0)).toBe(0)
+    expect(rawSample(waveform, 255, 0)).toBe(0)
+    expect(() => parseWaveform(v4File(5))).toThrow('waveform worker')
+  })
+
+  it('decodes an APU-compatible mixed Zstd and raw v5 chunk vector', async () => {
+    const waveform = await parseWaveformAsync(v4File(5, true))
+
+    expect(waveform.frameCount).toBe(257)
+    expect(rawSample(waveform, 255, 0)).toBe(0)
+    expect(rawSample(waveform, 256, 0)).toBe(0x1234_5678)
+  })
+
+  it('rejects a v5 chunk whose logical CRC does not match decompressed samples', async () => {
+    const buffer = v4File(5)
+    const view = new DataView(buffer)
+    const sampleDirectory = 64 + 6 * 56
+    const sampleOffset = Number(view.getBigUint64(sampleDirectory + 8, true))
+    view.setUint32(sampleOffset + 48 + 44,
+      view.getUint32(sampleOffset + 48 + 44, true) ^ 1, true)
+    refreshV5Checksums(buffer)
+
+    await expect(parseWaveformAsync(buffer)).rejects.toThrow(
+      'logical CRC32C mismatch',
+    )
+  })
+
+  it('rejects a v5 Zstd frame that omits its declared checksum', async () => {
+    const buffer = v4File(5)
+    const view = new DataView(buffer)
+    const sampleDirectory = 64 + 6 * 56
+    const sampleOffset = Number(view.getBigUint64(sampleDirectory + 8, true))
+    const chunkEntry = sampleOffset + 48
+    const storedOffset = Number(view.getBigUint64(chunkEntry + 16, true))
+    const descriptor = sampleOffset + storedOffset + 4
+    new Uint8Array(buffer)[descriptor] &= ~0x04
+    refreshV5Checksums(buffer)
+
+    await expect(parseWaveformAsync(buffer)).rejects.toThrow(
+      'Unsupported Zstd frame options',
+    )
   })
 })

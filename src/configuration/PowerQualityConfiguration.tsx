@@ -20,6 +20,7 @@ interface PowerQualityDraft {
   flicker: FlickerSettings
   mains: MainsSignallingSettings
   waveform: WaveformIdentity
+  archiveLimitGib: number
 }
 
 const EVENT_PROFILES: Array<{ key: EventProfileKey; label: string; classification: string }> = [
@@ -66,6 +67,7 @@ function draft(settings: ProductSettings): PowerQualityDraft {
     flicker: structuredClone(settings.metering.flicker),
     mains: structuredClone(settings.metering.mains_signalling),
     waveform: identity(settings),
+    archiveLimitGib: settings.waveform.archive_limit_gib,
   }
 }
 
@@ -202,6 +204,7 @@ export function PowerQualityConfiguration({ onUnauthorized }: {
       product.metering.flicker = structuredClone(settings.flicker)
       product.metering.mains_signalling = structuredClone(settings.mains)
       Object.assign(product.waveform, structuredClone(settings.waveform))
+      product.waveform.archive_limit_gib = settings.archiveLimitGib
       const saved = await api.saveSettings(product)
       setSettings(draft(saved.settings))
       setMessage('Applied and saved. New records will carry the updated profile generation.')
@@ -331,6 +334,11 @@ export function PowerQualityConfiguration({ onUnauthorized }: {
         <fieldset className="power-quality-settings-group">
           <legend>MNCWF identity</legend>
           <p>Neutral capture-time metadata retained for later COMTRADE and PQDIF conversion.</p>
+          <label>Waveform archive limit (GiB)<input type="number" min="1" max="16"
+            step="1" value={settings.archiveLimitGib}
+            onChange={(event) => setSettings({ ...settings,
+              archiveLimitGib: Number(event.target.value),
+            })} /><small>Oldest completed captures expire after this physical storage limit.</small></label>
           <div className="power-quality-identity-grid">
             {IDENTITY_FIELDS.map(({ key, label }) => <label key={key}>{label}
               <input maxLength={128} value={settings.waveform[key]}

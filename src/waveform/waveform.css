@@ -42,6 +42,19 @@
   color: #ffb0b0;
 }
 
+.waveform-viewer-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: clamp(.65rem, 2vw, 1.5rem);
+  overscroll-behavior: contain;
+  background: rgba(2, 8, 11, .84);
+  backdrop-filter: blur(6px);
+}
+
 .waveform-library,
 .waveform-viewer {
   overflow: hidden;
@@ -198,8 +211,15 @@
 }
 
 .waveform-viewer {
-  margin-top: 1rem;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: min(1800px, 100%);
+  min-height: 0;
+  margin: 0;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .58);
 }
+
+.waveform-viewer:focus { outline: none; }
 
 .waveform-viewer-header h2 {
   max-width: 54rem;
@@ -268,7 +288,9 @@
 
 .waveform-plots {
   display: grid;
+  min-height: 0;
   padding: 1rem 1.5rem;
+  overflow: auto;
   overscroll-behavior: contain;
 }
 
@@ -332,24 +354,11 @@
   cursor: grabbing;
 }
 
-.waveform-plot-canvas svg {
+.waveform-envelope-canvas {
   display: block;
   width: 100%;
   height: 100%;
-}
-
-.waveform-zero-line {
-  stroke: var(--line);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.waveform-envelope {
-  fill: var(--waveform-color);
-  stroke: var(--waveform-color);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-  opacity: .72;
+  pointer-events: none;
 }
 
 .waveform-overlay-plot {
@@ -396,8 +405,6 @@
   font-size: .58rem;
 }
 .waveform-overlay-legend output { color: var(--waveform-color); }
-.waveform-series { fill: var(--waveform-color); stroke: var(--waveform-color); }
-.waveform-overlay-plot .waveform-series { opacity: .42; }
 .waveform-overlay-plot .waveform-cursor-marker {
   background: #e8f1f1;
   box-shadow: 0 0 5px rgba(255, 255, 255, .4);
@@ -470,6 +477,15 @@
     grid-template-columns: repeat(3, auto);
     justify-content: space-between;
   }
+}
+
+@media (max-width: 650px), (max-height: 600px) {
+  .waveform-viewer {
+    display: block;
+    overflow: auto;
+  }
+
+  .waveform-plots { overflow: visible; }
 }
 
 .waveform-capture-strip {
