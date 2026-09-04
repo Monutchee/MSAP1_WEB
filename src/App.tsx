@@ -19,6 +19,9 @@ import {
   modbusRegisterDocumentDownloadPath,
 } from './api'
 import { WaveformExplorer } from './waveform/WaveformExplorer'
+import {
+  clearWaveformExportSession, WaveformExportProvider,
+} from './waveform/WaveformExportController'
 import { DeveloperDatabasePage } from './developer/DeveloperDatabasePage'
 import { DeveloperDataRecorderPage } from './developer/DeveloperDataRecorderPage'
 import { HistoryPage } from './history/HistoryPage'
@@ -3118,8 +3121,15 @@ export default function App() {
   const [session, setSession] = useState<Session>()
   const [checking, setChecking] = useState(true)
   useEffect(() => { api.session().then(setSession).catch(() => setSession(undefined)).finally(() => setChecking(false)) }, [])
-  async function logout() { try { await api.logout() } finally { setSession(undefined) } }
+  function clearSession() {
+    clearWaveformExportSession()
+    setSession(undefined)
+  }
+  async function logout() { try { await api.logout() } finally { clearSession() } }
   if (checking) return <main className="loading"><span className="brand-mark">M</span><p>Connecting to MSAP1…</p></main>
   if (!session) return <Login onLogin={setSession} />
-  return <Dashboard session={session} onLogout={logout} onUnauthorized={() => setSession(undefined)} />
+  return <WaveformExportProvider key={session.username} owner={session.username}
+    onUnauthorized={clearSession}>
+    <Dashboard session={session} onLogout={logout} onUnauthorized={clearSession} />
+  </WaveformExportProvider>
 }

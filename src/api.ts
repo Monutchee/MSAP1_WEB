@@ -1411,6 +1411,50 @@ export interface WaveformSession {
   logical_sample_bytes: number
 }
 
+export type WaveformExportFormat =
+  | 'mncwf' | 'comtrade' | 'comtrade-zip' | 'pqdif'
+
+export interface WaveformExportCapability {
+  format: WaveformExportFormat
+  label: string
+  profile: string
+  extension: string
+  scopes: Array<'capture' | 'event'>
+  asynchronous: boolean
+}
+
+export interface WaveformExportRequest {
+  session_id: number
+  scope: 'capture' | 'event'
+  event_id?: string
+  format: Exclude<WaveformExportFormat, 'mncwf'>
+}
+
+export interface WaveformExportJob {
+  job_id: string
+  state: 'queued' | 'running' | 'ready' | 'failed' | 'cancelled'
+  session_id: string
+  source_filename: string
+  scope: 'capture' | 'event'
+  event_id?: string | null
+  format: Exclude<WaveformExportFormat, 'mncwf'>
+  profile: string
+  queue_position: number
+  processed_frames: number
+  total_frames: number
+  filename: string
+  bytes: number
+  sha256: string
+  created_at: string
+  started_at: string
+  completed_at: string
+  expires_at: string
+  download_url: string
+  error_code: string
+  error_message: string
+  missing_fields: string[]
+}
+
 export interface WaveformStatus {
   running: boolean
   active_session: boolean
@@ -1437,6 +1481,7 @@ export interface WaveformStatus {
   archive_discovery?: WaveformArchiveDiscovery
   page?: WaveformPage
   export_formats: string[]
+  export_capabilities?: WaveformExportCapability[]
   sessions: WaveformSession[]
 }
 
@@ -1513,6 +1558,7 @@ export interface PowerQualityEvents {
   limit: number
   count: number
   export_formats: string[]
+  export_capabilities?: WaveformExportCapability[]
   events: PowerQualityEvent[]
 }
 
@@ -1674,6 +1720,10 @@ export function waveformEventExportPath(sessionId: number, eventId: string) {
   return `/api/v1/waveforms/export?${parameters.toString()}`
 }
 
+export function waveformExportDownloadPath(jobId: string) {
+  return `/api/v1/waveform-exports/download?job_id=${encodeURIComponent(jobId)}`
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ status: string }>('/api/login', {
@@ -1810,6 +1860,16 @@ export const api = {
       method: 'DELETE',
       body: JSON.stringify({ session_id: 0, all: true, confirmed: true }),
     }),
+  submitWaveformExport: (selection: WaveformExportRequest) =>
+    request<WaveformExportJob>('/api/v1/waveform-exports', {
+      method: 'POST', body: JSON.stringify(selection),
+    }),
+  waveformExport: (jobId: string) =>
+    request<WaveformExportJob>(`/api/v1/waveform-exports?job_id=${
+      encodeURIComponent(jobId)}`),
+  cancelWaveformExport: (jobId: string) =>
+    request<WaveformExportJob>(`/api/v1/waveform-exports?job_id=${
+      encodeURIComponent(jobId)}`, { method: 'DELETE' }),
   developerLogs: (query: DeveloperLogQuery = {}) => {
     const parameters = new URLSearchParams()
     if (query.component) parameters.set('component', query.component)

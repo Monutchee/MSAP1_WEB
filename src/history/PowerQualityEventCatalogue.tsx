@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api, ApiError, PowerQualityEvent, WaveformSessionLookup,
-  waveformEventExportPath,
+  waveformEventExportPath, type WaveformExportCapability,
 } from '../api'
 import { ConfirmDialog, ConfirmDialogState } from '../components/ConfirmDialog'
 import { WaveformViewer } from '../waveform/WaveformViewer'
 import { ParsedWaveform, WaveformPyramid } from '../waveform/waveformFile'
 import { processWaveform } from '../waveform/waveformWorkerClient'
+import { useWaveformExport } from '../waveform/WaveformExportController'
 import '../reading/powerQuality.css'
 
 function formatNumber(value: number | undefined, digits = 3) {
@@ -218,12 +219,15 @@ interface CaptureLookupState {
   error?: string
 }
 
-function CaptureLink({ captureUuid, event, lookup, onViewWaveform }: {
+function CaptureLink({ captureUuid, event, lookup, onViewWaveform,
+  exportCapabilities }: {
   captureUuid: string
   event: PowerQualityEvent
   lookup: CaptureLookupState | undefined
   onViewWaveform: (filename: string) => void
+  exportCapabilities?: WaveformExportCapability[]
 }) {
+  const { openExport } = useWaveformExport()
   const session = lookup?.result?.session
   const materialized = session?.state === 'complete' && Boolean(session.filename)
   const materializationPending = session?.state === 'capturing'
@@ -253,6 +257,10 @@ function CaptureLink({ captureUuid, event, lookup, onViewWaveform }: {
         <a href={waveformEventExportPath(session.id, event.event_id)} download>
           Download event MNCWF
         </a>
+        <button type="button" onClick={() => openExport({
+          sessionId: session.id, filename: session.filename, scope: 'event',
+          eventId: event.event_id, capabilities: exportCapabilities,
+        })}>Export…</button>
       </div>
       : materializationPending
       ? <span className="power-quality-capture-pending">Materialization pending</span>
@@ -270,7 +278,7 @@ function CaptureLink({ captureUuid, event, lookup, onViewWaveform }: {
 }
 
 function EventDetail({ event, captureLookups, canDelete, onDelete, onViewWaveform,
-  visibleCaptureCount, detailLoading, onLoadMoreCaptures }: {
+  visibleCaptureCount, detailLoading, onLoadMoreCaptures, exportCapabilities }: {
   event: PowerQualityEvent | undefined
   captureLookups: ReadonlyMap<string, CaptureLookupState>
   canDelete: boolean
@@ -279,6 +287,7 @@ function EventDetail({ event, captureLookups, canDelete, onDelete, onViewWavefor
   visibleCaptureCount: number
   detailLoading: boolean
   onLoadMoreCaptures: () => void
+  exportCapabilities?: WaveformExportCapability[]
 }) {
   if (!event) return <div className="power-quality-empty">
     <strong>Select an event</strong><span>Its lifecycle snapshot and linked captures appear here.</span>
@@ -323,7 +332,8 @@ function EventDetail({ event, captureLookups, canDelete, onDelete, onViewWavefor
         <span>{event.waveform_capture_count} capture{event.waveform_capture_count === 1 ? '' : 's'} · MNCWF master</span></header>
       {event.waveform_capture_uuids.slice(0, visibleCaptureCount).map((captureUuid) => <CaptureLink
         key={captureUuid} captureUuid={captureUuid} event={event}
-        lookup={captureLookups.get(captureUuid)} onViewWaveform={onViewWaveform} />)}
+        lookup={captureLookups.get(captureUuid)} onViewWaveform={onViewWaveform}
+        exportCapabilities={exportCapabilities} />)}
       {event.waveform_capture_uuids.length > visibleCaptureCount &&
         <button type="button" onClick={onLoadMoreCaptures}>
           Load 25 more ({event.waveform_capture_uuids.length - visibleCaptureCount} remaining)
@@ -365,6 +375,8 @@ export function PowerQualityEventCatalogue({ onUnauthorized,
   const [loadingWaveform, setLoadingWaveform] = useState('')
   const [detailLoading, setDetailLoading] = useState(false)
   const [visibleCaptureCount, setVisibleCaptureCount] = useState(25)
+  const [exportCapabilities, setExportCapabilities] =
+    useState<WaveformExportCapability[]>()
   const [viewer, setViewer] = useState<{
     filename: string
     waveform: ParsedWaveform
@@ -386,6 +398,7 @@ export function PowerQualityEventCatalogue({ onUnauthorized,
         include_waveform_links: false,
       })
       const available = new Set(next.events.map((event) => event.event_id))
+      setExportCapabilities(next.export_capabilities)
       setEvents(next.events)
       setSelectedEventId((current) => current && available.has(current)
         ? current : next.events[0]?.event_id)
@@ -446,6 +459,7 @@ export function PowerQualityEventCatalogue({ onUnauthorized,
         })
         if (!active) return
         const detail = response.events[0]
+        setExportCapabilities(response.export_capabilities)
         if (!detail) throw new Error('The selected event no longer exists')
         setSelectedDetail(detail)
         setError('')
@@ -651,6 +665,7 @@ export function PowerQualityEventCatalogue({ onUnauthorized,
         <EventDetail event={selectedEvent} captureLookups={captureLookups}
           canDelete={canDelete} onDelete={requestDeletion}
           visibleCaptureCount={visibleCaptureCount} detailLoading={detailLoading}
+          exportCapabilities={exportCapabilities}
           onLoadMoreCaptures={() => setVisibleCaptureCount((count) => count + 25)}
           onViewWaveform={(filename) => {
             if (loadingWaveform === '') void openWaveform(filename)
