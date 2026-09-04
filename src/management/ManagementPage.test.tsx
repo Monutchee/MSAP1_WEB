@@ -195,4 +195,48 @@ describe('Management page', () => {
     expect(screen.getByRole('button', { name: 'Clear all waveform data' }))
       .toBeDisabled()
   })
+
+  it('does not attribute Data Sender startup to a successful PQ catalogue clear', async () => {
+    let eventCount = 1
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/v1/developer/database')
+        return new Response(JSON.stringify({
+          historian: { block_count: 0, power_quality_event_count: eventCount },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url === '/api/v1/waveforms')
+        return new Response(JSON.stringify(waveformStatus(0)), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      if (url === '/api/v1/data-logging/status')
+        return new Response(JSON.stringify({ error: 'No such file or directory' }), {
+          status: 503, headers: { 'Content-Type': 'application/json' },
+        })
+      if (url === '/api/v1/meter/power-quality/events' && init?.method === 'DELETE') {
+        eventCount = 0
+        return new Response(JSON.stringify({ deleted: 1 }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+
+    render(<ManagementPage onUnauthorized={() => undefined} />)
+
+    const clear = await screen.findByRole('button', { name: 'Clear all PQ events' })
+    await waitFor(() => expect(clear).toBeEnabled())
+    expect(screen.queryByText('Management status unavailable')).not.toBeInTheDocument()
+    expect(screen.getByText(/Generated-file controls are temporarily unavailable/))
+      .toBeInTheDocument()
+
+    fireEvent.click(clear)
+    fireEvent.click(within(screen.getByRole('alertdialog'))
+      .getByRole('button', { name: 'Clear all PQ events' }))
+
+    expect(await screen.findByText(
+      '1 power-quality event cleared. MNCWF files were preserved.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(screen.getByText('0 events')).toBeInTheDocument()
+    expect(screen.queryByText('Management status unavailable')).not.toBeInTheDocument()
+  })
 })
