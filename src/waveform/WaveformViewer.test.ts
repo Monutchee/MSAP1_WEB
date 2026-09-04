@@ -116,6 +116,9 @@ describe('waveform viewport rendering', () => {
     }))
     const dialog = baseElement.querySelector('[role="dialog"]') as HTMLElement
     const backdrop = baseElement.querySelector('.waveform-viewer-backdrop') as HTMLDivElement
+    const header = baseElement.querySelector('.waveform-viewer-header') as HTMLElement
+    const plots = baseElement.querySelector('.waveform-plots') as HTMLDivElement
+    const label = baseElement.querySelector('.waveform-plot-label') as HTMLDivElement
     const plot = baseElement.querySelector('.waveform-plot-canvas') as HTMLDivElement
     vi.spyOn(plot, 'getBoundingClientRect').mockReturnValue({
       x: 0, y: 0, left: 0, top: 0, right: 1200, bottom: 88,
@@ -133,7 +136,24 @@ describe('waveform viewport rendering', () => {
     expect(baseElement.querySelector('.waveform-envelope-canvas')).not.toBeNull()
     expect(baseElement.querySelector('polygon')).toBeNull()
     expect(context.lineTo).toHaveBeenCalled()
-    fireEvent.wheel(plot, { deltaY: -100, clientX: 600 })
+    const scrollWheel = new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaY: -100,
+    })
+    fireEvent(label, scrollWheel)
+    expect(scrollWheel.defaultPrevented).toBe(false)
+    expect(requestFrame).not.toHaveBeenCalled()
+    const routedScrollWheel = new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaY: 100,
+    })
+    fireEvent(header, routedScrollWheel)
+    expect(routedScrollWheel.defaultPrevented).toBe(true)
+    expect(plots.scrollTop).toBe(100)
+    expect(requestFrame).not.toHaveBeenCalled()
+    const zoomWheel = new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaY: -100, clientX: 600,
+    })
+    fireEvent(plot, zoomWheel)
+    expect(zoomWheel.defaultPrevented).toBe(true)
     fireEvent.wheel(plot, { deltaY: -100, clientX: 600 })
 
     expect(requestFrame).toHaveBeenCalledTimes(1)

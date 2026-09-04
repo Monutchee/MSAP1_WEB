@@ -229,16 +229,30 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
   }, [])
 
   useEffect(() => {
+    const dialog = dialogRef.current
     const plots = plotsRef.current
-    if (!plots) return
+    if (!dialog || !plots) return
     /*
      * React delegates wheel events through a passive listener in some browser
      * configurations. A native non-passive listener is required to guarantee
-     * that a zoom gesture over the plots cannot scroll the containing page.
+     * that a zoom gesture over a trace cannot scroll the channel list. Wheel
+     * events within the channel list retain native scrolling. Events over the
+     * fixed header, controls, or footer are routed to that channel list too.
      */
-    const captureWheel = (event: WheelEvent) => event.preventDefault()
-    plots.addEventListener('wheel', captureWheel, { passive: false })
-    return () => plots.removeEventListener('wheel', captureWheel)
+    const routeWheel = (event: WheelEvent) => {
+      if (!(event.target instanceof Element)) return
+      if (event.target.closest('.waveform-plot-canvas')) {
+        event.preventDefault()
+        return
+      }
+      if (event.target.closest('.waveform-plots') || event.deltaY === 0) return
+      const unit = event.deltaMode === 1 ? 16 :
+        event.deltaMode === 2 ? Math.max(1, plots.clientHeight) : 1
+      plots.scrollTop += event.deltaY * unit
+      event.preventDefault()
+    }
+    dialog.addEventListener('wheel', routeWheel, { passive: false })
+    return () => dialog.removeEventListener('wheel', routeWheel)
   }, [])
 
   const converted = displayMode === 'converted'
@@ -543,7 +557,7 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
           disabled={visibleFrames >= waveform.frameCount}>Fit</button>
         <button type="button" onClick={centerOnTrigger}
           disabled={!triggerInCapture}>At trigger</button>
-        <span>Wheel to zoom · drag to pan</span>
+        <span>Wheel over trace to zoom · elsewhere to scroll · drag to pan</span>
       </fieldset>
     </div>
     <div className="waveform-plots" ref={plotsRef}>
@@ -585,7 +599,7 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
           </div>}
           <div className="waveform-plot-canvas"
             data-dragging={dragging ? 'true' : 'false'}
-            title="Wheel to zoom; drag horizontally to pan"
+            title="Wheel over trace to zoom; drag horizontally to pan"
             onWheel={handleWheel}
             onPointerDown={beginPan}
             onPointerMove={continuePan}
