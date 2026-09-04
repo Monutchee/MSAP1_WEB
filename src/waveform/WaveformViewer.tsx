@@ -1,17 +1,24 @@
 import {
-  useCallback, useEffect, useMemo, useRef, useState,
+  memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
-  convertedSample, ParsedWaveform, WaveformPyramid,
-  pyramidEnvelope, pyramidRange, rawSample, waveformDurationSeconds,
-  waveformFrameForSequence, waveformFrameTimeSeconds,
+  convertedSample, ParsedWaveform, WaveformEnvelopeData, WaveformPyramid,
+  WaveformRange, pyramidEnvelopeData, pyramidRange, rawSample,
+  waveformDurationSeconds, waveformEnvelopeScale, waveformFrameForSequence,
+  waveformFrameTimeSeconds,
 } from './waveformFile'
 
 const PLOT_WIDTH = 1200
 const PLOT_HEIGHT = 88
 const MIN_VISIBLE_FRAMES = 16
+const CHANNEL_COLORS = [
+  '#5fa8ff', '#ff8d4d', '#54d4af', '#ffbd5c',
+  '#e06da9', '#64d467', '#9c8cff',
+] as const
 
 interface FrameWindow {
   first: number
@@ -33,6 +40,71 @@ interface PlotGroup {
   label: string
   indices: number[]
 }
+
+interface PlotEnvelope {
+  index: number
+  channel: ParsedWaveform['channels'][number]
+  envelope: WaveformEnvelopeData
+  scale: WaveformRange
+}
+
+const WaveformCanvas = memo(function WaveformCanvas({
+  traces, sharedScale, overlay,
+}: {
+  traces: readonly PlotEnvelope[]
+  sharedScale: boolean
+  overlay: boolean
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useLayoutEffect(() => {
+    const context = canvasRef.current?.getContext('2d')
+    if (!context) return
+    context.clearRect(0, 0, PLOT_WIDTH, PLOT_HEIGHT)
+
+    const firstScale = traces[0]?.scale
+    if (sharedScale && firstScale && firstScale.minimum <= 0 &&
+        firstScale.maximum >= 0) {
+      const y = PLOT_HEIGHT - (0 - firstScale.minimum) /
+        (firstScale.maximum - firstScale.minimum) * PLOT_HEIGHT
+      context.beginPath()
+      context.moveTo(0, y)
+      context.lineTo(PLOT_WIDTH, y)
+      context.globalAlpha = 1
+      context.strokeStyle = '#24363d'
+      context.lineWidth = 1
+      context.stroke()
+    }
+
+    context.globalAlpha = overlay ? .42 : .72
+    context.lineWidth = 1
+    for (const { index, envelope, scale } of traces) {
+      const buckets = envelope.minima.length
+      if (buckets === 0) continue
+      const span = scale.maximum - scale.minimum
+      const x = (bucket: number) => buckets === 1
+        ? 0 : bucket / (buckets - 1) * PLOT_WIDTH
+      const y = (value: number) => PLOT_HEIGHT -
+        (value - scale.minimum) / span * PLOT_HEIGHT
+      context.beginPath()
+      context.moveTo(x(0), y(envelope.maxima[0]))
+      for (let bucket = 1; bucket < buckets; ++bucket)
+        context.lineTo(x(bucket), y(envelope.maxima[bucket]))
+      for (let bucket = buckets - 1; bucket >= 0; --bucket)
+        context.lineTo(x(bucket), y(envelope.minima[bucket]))
+      context.closePath()
+      const color = CHANNEL_COLORS[index % CHANNEL_COLORS.length]
+      context.fillStyle = color
+      context.strokeStyle = color
+      context.fill()
+      context.stroke()
+    }
+    context.globalAlpha = 1
+  }, [overlay, sharedScale, traces])
+
+  return <canvas className="waveform-envelope-canvas" ref={canvasRef}
+    width={PLOT_WIDTH} height={PLOT_HEIGHT} aria-hidden="true" />
+})
 
 export function waveformPlotGroups(
   channels: readonly { kind: 'current' | 'voltage' | 'debug' }[],
@@ -91,8 +163,12 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
   const [plotLayout, setPlotLayout] = useState<WaveformPlotLayout>('separate')
   const [cursorFrame, setCursorFrame] = useState<number>()
   const [dragging, setDragging] = useState(false)
+  const titleId = useId()
+  const descriptionId = useId()
+  const dialogRef = useRef<HTMLElement>(null)
   const plotsRef = useRef<HTMLDivElement>(null)
   const panGesture = useRef<PanGesture>()
+  const viewportRef = useRef(viewport)
   /*
    * Pointer events can arrive far faster than the display refreshes (gaming
    * mice report at 500-1000 Hz). Panning and cursor moves stage their state
@@ -105,8 +181,10 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
   const flushView = useCallback(() => {
     flushHandle.current = undefined
     if (pendingViewport.current !== undefined) {
-      setViewport(pendingViewport.current)
+      const next = pendingViewport.current
       pendingViewport.current = undefined
+      viewportRef.current = next
+      setViewport(next)
     }
     if (pendingCursor.current !== undefined) {
       setCursorFrame(pendingCursor.current)
@@ -122,7 +200,10 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
   }, [])
 
   useEffect(() => {
-    setViewport({ first: 0, last: waveform.frameCount })
+    const wholeCapture = { first: 0, last: waveform.frameCount }
+    pendingViewport.current = undefined
+    viewportRef.current = wholeCapture
+    setViewport(wholeCapture)
     setEnabled(new Set(waveform.channels.map((_, index) => index)))
     setVerticalScale('auto')
     setPlotLayout('separate')
@@ -130,6 +211,22 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
     panGesture.current = undefined
     setDragging(false)
   }, [waveform])
+
+  useEffect(() => {
+    viewportRef.current = viewport
+  }, [viewport])
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement : undefined
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    dialogRef.current?.focus({ preventScroll: true })
+    return () => {
+      document.body.style.overflow = previousOverflow
+      previouslyFocused?.focus({ preventScroll: true })
+    }
+  }, [])
 
   useEffect(() => {
     const plots = plotsRef.current
@@ -148,13 +245,12 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
   const wholeCaptureRanges = useMemo(() => waveform.channels.map((_, index) =>
     pyramidRange(waveform, pyramid, index, converted),
   ), [waveform, pyramid, converted])
-  const visibleEnvelopes = useMemo(() => waveform.channels.map((channel, index) => ({
-    channel,
-    envelope: pyramidEnvelope(
-      waveform, pyramid, index, converted, PLOT_WIDTH, PLOT_HEIGHT,
+  const visibleEnvelopes = useMemo(() => waveform.channels.map((_, index) =>
+    enabled.has(index) ? pyramidEnvelopeData(
+      waveform, pyramid, index, converted, PLOT_WIDTH,
       viewport.first, viewport.last,
-    ),
-  })), [waveform, pyramid, converted, viewport])
+    ) : undefined,
+  ), [waveform, pyramid, converted, enabled, viewport])
   const plotGroups = useMemo(() => waveformPlotGroups(
     waveform.channels, enabled, plotLayout,
   ), [waveform.channels, enabled, plotLayout])
@@ -166,24 +262,25 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
     const sharedRange = plotLayout === 'electrical' ? {
       minimum: Math.min(...group.indices.map((index) => verticalScale === 'fixed'
         ? wholeCaptureRanges[index].minimum
-        : visibleEnvelopes[index].envelope.minimum)),
+        : visibleEnvelopes[index]!.minimum)),
       maximum: Math.max(...group.indices.map((index) => verticalScale === 'fixed'
         ? wholeCaptureRanges[index].maximum
-        : visibleEnvelopes[index].envelope.maximum)),
+        : visibleEnvelopes[index]!.maximum)),
     } : undefined
     return {
       ...group,
       sharedScale: plotLayout !== 'overlay' || group.indices.length === 1,
-      envelopes: group.indices.map((index) => ({
-        index,
-        channel: waveform.channels[index],
-        envelope: pyramidEnvelope(
-          waveform, pyramid, index, converted, PLOT_WIDTH, PLOT_HEIGHT,
-          viewport.first, viewport.last,
-          sharedRange ?? (verticalScale === 'fixed'
-            ? wholeCaptureRanges[index] : undefined),
-        ),
-      })),
+      envelopes: group.indices.map((index): PlotEnvelope => {
+        const envelope = visibleEnvelopes[index]!
+        return {
+          index,
+          channel: waveform.channels[index],
+          envelope,
+          scale: waveformEnvelopeScale(envelope,
+            sharedRange ?? (verticalScale === 'fixed'
+              ? wholeCaptureRanges[index] : undefined)),
+        }
+      }),
     }
   }), [converted, pyramid, plotGroups, plotLayout, verticalScale, viewport,
     visibleEnvelopes, waveform, wholeCaptureRanges])
@@ -216,20 +313,29 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
   }
 
   function zoomAt(factor: number, anchorRatio = .5) {
-    setViewport((current) => {
-      const frames = current.last - current.first
-      const anchor = current.first + clamp(anchorRatio, 0, 1) * frames
-      const nextFrames = clamp(
-        Math.round(frames * factor),
-        Math.min(MIN_VISIBLE_FRAMES, waveform.frameCount),
-        waveform.frameCount,
-      )
-      return normalizedWindow(anchor - anchorRatio * nextFrames, nextFrames)
-    })
+    const current = pendingViewport.current ?? viewportRef.current
+    const frames = current.last - current.first
+    const boundedAnchor = clamp(anchorRatio, 0, 1)
+    const anchor = current.first + boundedAnchor * frames
+    const nextFrames = clamp(
+      Math.round(frames * factor),
+      Math.min(MIN_VISIBLE_FRAMES, waveform.frameCount),
+      waveform.frameCount,
+    )
+    pendingViewport.current = normalizedWindow(
+      anchor - boundedAnchor * nextFrames, nextFrames,
+    )
+    scheduleFlush()
+  }
+
+  function commitViewport(next: FrameWindow) {
+    pendingViewport.current = undefined
+    viewportRef.current = next
+    setViewport(next)
   }
 
   function fitCapture() {
-    setViewport({ first: 0, last: waveform.frameCount })
+    commitViewport({ first: 0, last: waveform.frameCount })
   }
 
   function centerOnTrigger() {
@@ -239,7 +345,7 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
           Math.round(waveform.effectiveSampleRateHz / 4))
       : Math.max(MIN_VISIBLE_FRAMES, Math.round(waveform.frameCount / 10))
     const frames = Math.min(waveform.frameCount, detailFrames)
-    setViewport(normalizedWindow(triggerIndex - frames / 2, frames))
+    commitViewport(normalizedWindow(triggerIndex - frames / 2, frames))
   }
 
   function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
@@ -261,7 +367,7 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
       ? clamp((event.clientX - bounds.left) / bounds.width, 0, 1)
       : 0
     /* Against the staged viewport when a pan is in flight this frame. */
-    const window = pendingViewport.current ?? viewport
+    const window = pendingViewport.current ?? viewportRef.current
     const frames = window.last - window.first
     pendingCursor.current = clamp(
       window.first + Math.round(ratio * Math.max(0, frames - 1)),
@@ -279,7 +385,7 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
       pointerId: event.pointerId,
       startClientX: event.clientX,
       width: Math.max(1, bounds.width),
-      viewport,
+      viewport: pendingViewport.current ?? viewportRef.current,
     }
     event.currentTarget.setPointerCapture(event.pointerId)
     setDragging(true)
@@ -311,6 +417,37 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
     if (!panGesture.current) setCursorFrame(undefined)
   }
 
+  function handleDialogKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), ' +
+      'textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+    ) ?? [])
+    if (controls.length === 0) {
+      event.preventDefault()
+      return
+    }
+    const first = controls[0]
+    const last = controls[controls.length - 1]
+    if (document.activeElement === dialogRef.current) {
+      event.preventDefault()
+      const target = event.shiftKey ? last : first
+      target.focus()
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
   function relativeTime(frame: number) {
     if (triggerIndex === undefined) return 'unknown'
     const seconds = waveformFrameTimeSeconds(waveform, frame) -
@@ -327,12 +464,19 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
     })
   }
 
-  return <section className="waveform-viewer" aria-label={`Waveform ${filename}`}>
+  return createPortal(<div className="waveform-viewer-backdrop"
+    onClick={(event) => {
+      event.stopPropagation()
+      if (event.target === event.currentTarget) onClose()
+    }}>
+    <section ref={dialogRef} tabIndex={-1} className="waveform-viewer"
+      role="dialog" aria-modal="true" aria-labelledby={titleId}
+      aria-describedby={descriptionId} onKeyDown={handleDialogKeyDown}>
     <header className="waveform-viewer-header">
       <div>
         <p className="eyebrow">Waveform viewer</p>
-        <h2>{filename}</h2>
-        <span>{captureTime(waveform)} · {waveform.sampleRateHz.toLocaleString()} frame/s
+        <h2 id={titleId}>{filename}</h2>
+        <span id={descriptionId}>{captureTime(waveform)} · {waveform.sampleRateHz.toLocaleString()} frame/s
           {waveform.decimation > 1 &&
             ` ÷ ${waveform.decimation} (mean of each group)`} ·
           {' '}{durationSeconds.toFixed(3)} s · MNCWF v{waveform.version}</span>
@@ -448,23 +592,9 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
             onPointerUp={endPan}
             onPointerCancel={endPan}
             onPointerLeave={leavePlot}>
-            <svg viewBox={`0 0 ${PLOT_WIDTH} ${PLOT_HEIGHT}`}
-              preserveAspectRatio="none" aria-hidden="true">
-              {plot.sharedScale && firstEnvelope.scaleMinimum <= 0 &&
-                firstEnvelope.scaleMaximum >= 0 &&
-                <line x1="0"
-                  y1={PLOT_HEIGHT -
-                    (0 - firstEnvelope.scaleMinimum) /
-                    (firstEnvelope.scaleMaximum - firstEnvelope.scaleMinimum) * PLOT_HEIGHT}
-                  x2={PLOT_WIDTH}
-                  y2={PLOT_HEIGHT -
-                    (0 - firstEnvelope.scaleMinimum) /
-                    (firstEnvelope.scaleMaximum - firstEnvelope.scaleMinimum) * PLOT_HEIGHT}
-                  className="waveform-zero-line" />}
-              {plot.envelopes.map(({ index, channel, envelope }) =>
-                <polygon key={channel.sourceChannel} points={envelope.points}
-                  className={`waveform-envelope waveform-series channel-color-${index % 7}`} />)}
-            </svg>
+            <WaveformCanvas traces={plot.envelopes}
+              sharedScale={plot.sharedScale}
+              overlay={plotLayout !== 'separate'} />
             {triggerInViewport &&
               <i className="waveform-trigger-marker" style={{ left: `${triggerPercent}%` }} />}
             {cursorFrame !== undefined && cursorPercent !== undefined &&
@@ -486,5 +616,6 @@ export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
         <span>Cursor frame {cursorFrame.toLocaleString()} · {relativeTime(cursorFrame)}</span>}
       <span>{waveform.frameCount.toLocaleString()} total frames</span>
     </footer>
-  </section>
+    </section>
+  </div>, document.body)
 }

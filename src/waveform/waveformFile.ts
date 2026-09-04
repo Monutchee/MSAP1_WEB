@@ -884,6 +884,14 @@ export interface WaveformEnvelope {
   points: string
 }
 
+/** Numeric min/max buckets used by the interactive canvas renderer. */
+export interface WaveformEnvelopeData {
+  minimum: number
+  maximum: number
+  minima: Float64Array
+  maxima: Float64Array
+}
+
 export interface WaveformRange {
   minimum: number
   maximum: number
@@ -932,6 +940,16 @@ function expandedRange(range: WaveformRange): WaveformRange {
     minimum: range.minimum - padding,
     maximum: range.maximum + padding,
   }
+}
+
+export function waveformEnvelopeScale(
+  envelope: Pick<WaveformEnvelopeData, 'minimum' | 'maximum'>,
+  verticalRange?: WaveformRange,
+): WaveformRange {
+  return expandedRange(verticalRange ?? {
+    minimum: envelope.minimum,
+    maximum: envelope.maximum,
+  })
 }
 
 /**
@@ -1076,17 +1094,15 @@ export function pyramidRange(
   return transformedRange(minimum, maximum, transform.scale, transform.offset)
 }
 
-export function pyramidEnvelope(
+export function pyramidEnvelopeData(
   waveform: ParsedWaveform,
   pyramid: WaveformPyramid,
   channelIndex: number,
   converted: boolean,
   width = 1200,
-  height = 88,
   firstFrame = 0,
   lastFrame = waveform.frameCount,
-  verticalRange?: WaveformRange,
-): WaveformEnvelope {
+): WaveformEnvelopeData {
   const channelCount = waveform.channels.length
   const windowFirst = Math.max(0, Math.min(
     waveform.frameCount - 1, Math.floor(firstFrame),
@@ -1112,8 +1128,8 @@ export function pyramidEnvelope(
     level = candidate
   }
 
-  const minima = new Array<number>(bucketCount)
-  const maxima = new Array<number>(bucketCount)
+  const minima = new Float64Array(bucketCount)
+  const maxima = new Float64Array(bucketCount)
   let captureMinimum = Number.POSITIVE_INFINITY
   let captureMaximum = Number.NEGATIVE_INFINITY
   for (let bucket = 0; bucket < bucketCount; ++bucket) {
@@ -1151,21 +1167,38 @@ export function pyramidEnvelope(
       captureMaximum = convertedRange.maximum
   }
 
-  const scale = expandedRange(verticalRange ?? {
-    minimum: captureMinimum,
-    maximum: captureMaximum,
-  })
+  return { minimum: captureMinimum, maximum: captureMaximum, minima, maxima }
+}
+
+export function pyramidEnvelope(
+  waveform: ParsedWaveform,
+  pyramid: WaveformPyramid,
+  channelIndex: number,
+  converted: boolean,
+  width = 1200,
+  height = 88,
+  firstFrame = 0,
+  lastFrame = waveform.frameCount,
+  verticalRange?: WaveformRange,
+): WaveformEnvelope {
+  const envelope = pyramidEnvelopeData(
+    waveform, pyramid, channelIndex, converted, width, firstFrame, lastFrame,
+  )
+  const scale = waveformEnvelopeScale(envelope, verticalRange)
   const span = scale.maximum - scale.minimum
   const point = (bucket: number, value: number) => {
-    const x = bucketCount === 1 ? 0 : bucket / (bucketCount - 1) * width
+    const x = envelope.minima.length === 1
+      ? 0 : bucket / (envelope.minima.length - 1) * width
     const y = height - (value - scale.minimum) / span * height
     return `${x.toFixed(2)},${y.toFixed(2)}`
   }
-  const upper = maxima.map((value, bucket) => point(bucket, value))
-  const lower = minima.map((value, bucket) => point(bucket, value)).reverse()
+  const upper = Array.from(envelope.maxima,
+    (value, bucket) => point(bucket, value))
+  const lower = Array.from(envelope.minima,
+    (value, bucket) => point(bucket, value)).reverse()
   return {
-    minimum: captureMinimum,
-    maximum: captureMaximum,
+    minimum: envelope.minimum,
+    maximum: envelope.maximum,
     scaleMinimum: scale.minimum,
     scaleMaximum: scale.maximum,
     points: [...upper, ...lower].join(' '),
