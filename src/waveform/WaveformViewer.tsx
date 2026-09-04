@@ -4,7 +4,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import {
-  buildWaveformPyramid, convertedSample, ParsedWaveform,
+  convertedSample, ParsedWaveform, WaveformPyramid,
   pyramidEnvelope, pyramidRange, rawSample, waveformDurationSeconds,
   waveformFrameForSequence, waveformFrameTimeSeconds,
 } from './waveformFile'
@@ -71,17 +71,12 @@ function captureTime(waveform: ParsedWaveform) {
     .toLocaleString()
 }
 
-export function WaveformViewer({ filename, waveform, onClose }: {
+export function WaveformViewer({ filename, waveform, pyramid, onClose }: {
   filename: string
   waveform: ParsedWaveform
+  pyramid: WaveformPyramid
   onClose: () => void
 }) {
-  /*
-   * One full pass over the samples at open builds the min/max pyramid;
-   * every pan/zoom afterwards reads the pyramid instead of the samples, so
-   * gesture cost scales with plot width, not with visible frame count.
-   */
-  const pyramid = useMemo(() => buildWaveformPyramid(waveform), [waveform])
   const conversionAvailable = waveform.channels.some((channel) => channel.conversionValid)
   const [displayMode, setDisplayMode] = useState<'raw' | 'converted'>(
     conversionAvailable ? 'converted' : 'raw',

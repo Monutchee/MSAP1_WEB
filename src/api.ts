@@ -1092,6 +1092,7 @@ export interface ProductSettings {
     default_posttrigger_ms: number
     // Capture-file decimation divisor (1, 2, 4, 8, 16, or 32).
     default_decimation: number
+    archive_limit_gib: number
     station_id: string
     station_name: string
     site_id: string
@@ -1404,6 +1405,10 @@ export interface WaveformSession {
   continuation_of_session_id: number
   master_session_id: number
   capture_uuid: string
+  format_version: number
+  compression: 'none' | 'zstd_chunks' | 'mixed_raw_zstd_chunks' | 'raw_chunks'
+  stored_bytes: number
+  logical_sample_bytes: number
 }
 
 export interface WaveformStatus {
@@ -1425,6 +1430,10 @@ export interface WaveformStatus {
   history_capacity_frames: number
   completed_sessions: number
   incomplete_sessions: number
+  archive_limit_bytes: number
+  archive_stored_bytes: number
+  expired_sessions: number
+  retention_failures: number
   archive_discovery?: WaveformArchiveDiscovery
   page?: WaveformPage
   export_formats: string[]
@@ -1435,6 +1444,11 @@ export interface WaveformSessionLookup {
   capture_uuid: string
   archive_discovery: WaveformArchiveDiscovery
   session: WaveformSession | null
+}
+
+export interface WaveformBatchLookup {
+  archive_discovery: WaveformArchiveDiscovery
+  sessions: Array<WaveformSession | null>
 }
 
 export interface WaveformQuery {
@@ -1491,6 +1505,7 @@ export interface PowerQualityEvent {
   utc_uncertainty_nanoseconds?: number
   settings_digest: string
   waveform: EventWaveformPolicy
+  waveform_capture_count: number
   waveform_capture_uuids: string[]
 }
 
@@ -1510,6 +1525,7 @@ export interface PowerQualityEventQuery {
   start_utc_ns?: number
   end_utc_ns?: number
   limit?: number
+  include_waveform_links?: boolean
 }
 
 export interface FlickerPhase {
@@ -1717,6 +1733,8 @@ export const api = {
     if (query.end_utc_ns !== undefined)
       parameters.set('end_utc_ns', String(query.end_utc_ns))
     if (query.limit !== undefined) parameters.set('limit', String(query.limit))
+    if (query.include_waveform_links !== undefined)
+      parameters.set('include_waveform_links', String(query.include_waveform_links))
     const suffix = parameters.size === 0 ? '' : `?${parameters.toString()}`
     return request<PowerQualityEvents>(`/api/v1/meter/power-quality/events${suffix}`)
   },
@@ -1770,6 +1788,11 @@ export const api = {
   waveformSession: (captureUuid: string) =>
     request<WaveformSessionLookup>(`/api/v1/waveforms/session?capture_uuid=${
       encodeURIComponent(captureUuid)}`),
+  waveformSessions: (capture_uuids: string[]) =>
+    request<WaveformBatchLookup>('/api/v1/waveforms/sessions/lookup', {
+      method: 'POST',
+      body: JSON.stringify({ capture_uuids }),
+    }),
   waveformFile: (filename: string) => requestBinary(waveformViewPath(filename)),
   triggerWaveform: (pretrigger_ms: number, posttrigger_ms: number,
     decimation: number) =>

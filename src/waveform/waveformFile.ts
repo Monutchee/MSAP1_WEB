@@ -62,6 +62,10 @@ const V4_DIRECTORY_ENTRY_BYTES = 56
 const V4_SECTION_HEADER_BYTES = 48
 const V4_REQUIRED_SECTION_COUNT = 7
 const V4_SECTION_REQUIRED = 1
+const V5_CHUNK_ENTRY_BYTES = 56
+const V5_MAX_CHUNK_LOGICAL_BYTES = 1024 * 1024
+const V5_MAX_CHUNKS = 4096
+const MNCWF_MAX_FILE_BYTES = 512 * 1024 * 1024
 
 interface V4Section {
   type: number
@@ -69,6 +73,7 @@ interface V4Section {
   flags: number
   offset: number
   storedBytes: number
+  logicalBytes: number
   itemCount: number
   itemBytes: number
   crc32c: number
@@ -78,6 +83,16 @@ interface V4SectionEnvelope {
   recordsOffset: number
   blobOffset: number
   blobBytes: number
+}
+
+interface V5Chunk {
+  firstFrame: number
+  frameCount: number
+  storedOffset: number
+  storedBytes: number
+  logicalBytes: number
+  codec: 0 | 1
+  logicalCrc32c: number
 }
 
 function requireRange(length: number, offset: number, bytes: number, label: string) {
@@ -115,6 +130,148 @@ function crc32c(octets: Uint8Array) {
   for (const octet of octets)
     crc = CRC32C_TABLE[(crc ^ octet) & 0xff] ^ (crc >>> 8)
   return (crc ^ 0xffff_ffff) >>> 0
+}
+
+function littleUnsigned(octets: Uint8Array, offset: number, length: number) {
+  requireRange(octets.byteLength, offset, length, 'Zstd frame header')
+  let value = 0n
+  for (let index = 0; index < length; ++index)
+    value |= BigInt(octets[offset + index]) << BigInt(index * 8)
+  return value
+}
+
+/** Reject frames that could ask the WASM decoder for an oversized window. */
+function validateZstdFrame(
+  frame: Uint8Array,
+  expectedLogicalBytes: number,
+) {
+  if (frame.byteLength < 6 || frame[0] !== 0x28 || frame[1] !== 0xb5 ||
+      frame[2] !== 0x2f || frame[3] !== 0xfd)
+    throw new Error('Invalid Zstd frame magic in MNCWF v5 chunk')
+  const descriptor = frame[4]
+  const contentSizeFlag = descriptor >>> 6
+  const singleSegment = (descriptor & 0x20) !== 0
+  const dictionaryFlag = descriptor & 0x03
+  if ((descriptor & 0x18) !== 0 || (descriptor & 0x04) === 0 ||
+      dictionaryFlag !== 0)
+    throw new Error('Unsupported Zstd frame options in MNCWF v5 chunk')
+  let cursor = 5
+  let windowBytes: number | undefined
+  if (!singleSegment) {
+    requireRange(frame.byteLength, cursor, 1, 'Zstd window descriptor')
+    const windowDescriptor = frame[cursor++]
+    const windowBase = 2 ** (10 + (windowDescriptor >>> 3))
+    windowBytes = windowBase + (windowBase >>> 3) * (windowDescriptor & 7)
+  }
+  const contentSizeBytes = contentSizeFlag === 0
+    ? (singleSegment ? 1 : 0) : 2 ** contentSizeFlag
+  if (contentSizeBytes === 0)
+    throw new Error('MNCWF v5 Zstd frame omits its content size')
+  let contentSize = littleUnsigned(frame, cursor, contentSizeBytes)
+  cursor += contentSizeBytes
+  if (contentSizeBytes === 2) contentSize += 256n
+  if (contentSize !== BigInt(expectedLogicalBytes))
+    throw new Error('MNCWF v5 Zstd frame content size is invalid')
+  windowBytes ??= safeNumber(contentSize, 'Zstd window size')
+  if (windowBytes > V5_MAX_CHUNK_LOGICAL_BYTES)
+    throw new Error('MNCWF v5 Zstd window exceeds the 1 MiB limit')
+
+  let lastBlock = false
+  while (!lastBlock) {
+    requireRange(frame.byteLength, cursor, 3, 'Zstd block header')
+    const blockHeader = frame[cursor] | (frame[cursor + 1] << 8) |
+      (frame[cursor + 2] << 16)
+    cursor += 3
+    lastBlock = (blockHeader & 1) !== 0
+    const blockType = (blockHeader >>> 1) & 3
+    const blockSize = blockHeader >>> 3
+    if (blockType === 3)
+      throw new Error('MNCWF v5 Zstd frame contains a reserved block type')
+    const payloadBytes = blockType === 1 ? 1 : blockSize
+    requireRange(frame.byteLength, cursor, payloadBytes, 'Zstd block payload')
+    cursor += payloadBytes
+  }
+  requireRange(frame.byteLength, cursor, 4, 'Zstd content checksum')
+  cursor += 4
+  if (cursor !== frame.byteLength)
+    throw new Error('MNCWF v5 chunk must contain exactly one Zstd frame')
+}
+
+function validateV5SampleSection(data: DataView, section: V4Section) {
+  if (section.version !== 2 || section.flags !== V4_SECTION_REQUIRED ||
+      section.itemBytes === 0 || section.itemBytes > V5_MAX_CHUNK_LOGICAL_BYTES ||
+      section.itemCount === 0 || section.logicalBytes > MNCWF_MAX_FILE_BYTES ||
+      section.storedBytes < V4_SECTION_HEADER_BYTES ||
+      data.getUint32(section.offset, true) !== 7 ||
+      data.getUint16(section.offset + 4, true) !== 2 ||
+      data.getUint16(section.offset + 6, true) !== V4_SECTION_HEADER_BYTES ||
+      data.getUint32(section.offset + 8, true) !== 0 ||
+      data.getUint32(section.offset + 12, true) !== section.itemBytes ||
+      safeNumber(data.getBigUint64(section.offset + 16, true),
+        'v5 sample count') !== section.itemCount ||
+      data.getBigUint64(section.offset + 24, true) !== 48n ||
+      data.getBigUint64(section.offset + 40, true) !== 0n)
+    throw new Error('Invalid MNCWF v5 sample-section envelope')
+  const tableBytes = safeNumber(data.getBigUint64(section.offset + 32, true),
+    'v5 chunk table bytes')
+  if (tableBytes === 0 || tableBytes % V5_CHUNK_ENTRY_BYTES !== 0)
+    throw new Error('Invalid MNCWF v5 chunk-table geometry')
+  requireRange(section.storedBytes, V4_SECTION_HEADER_BYTES, tableBytes,
+    'v5 chunk table')
+  const chunkCount = tableBytes / V5_CHUNK_ENTRY_BYTES
+  if (chunkCount > V5_MAX_CHUNKS)
+    throw new Error('MNCWF v5 chunk count exceeds the allocation bound')
+  const chunks: V5Chunk[] = []
+  let expectedFirstFrame = 0
+  let expectedStoredOffset = alignEight(V4_SECTION_HEADER_BYTES + tableBytes)
+  for (let index = 0; index < chunkCount; ++index) {
+    const entry = section.offset + V4_SECTION_HEADER_BYTES +
+      index * V5_CHUNK_ENTRY_BYTES
+    const firstFrame = safeNumber(data.getBigUint64(entry, true),
+      'v5 chunk first frame')
+    const frameCount = safeNumber(data.getBigUint64(entry + 8, true),
+      'v5 chunk frame count')
+    const storedOffset = safeNumber(data.getBigUint64(entry + 16, true),
+      'v5 chunk stored offset')
+    const storedBytes = safeNumber(data.getBigUint64(entry + 24, true),
+      'v5 chunk stored bytes')
+    const logicalBytes = safeNumber(data.getBigUint64(entry + 32, true),
+      'v5 chunk logical bytes')
+    const codec = data.getUint16(entry + 40, true)
+    const flags = data.getUint16(entry + 42, true)
+    const expectedLogical = frameCount * section.itemBytes
+    if (!Number.isSafeInteger(expectedLogical) || firstFrame !== expectedFirstFrame ||
+        frameCount === 0 || logicalBytes !== expectedLogical ||
+        logicalBytes > V5_MAX_CHUNK_LOGICAL_BYTES ||
+        storedOffset !== expectedStoredOffset || storedBytes === 0 ||
+        data.getBigUint64(entry + 48, true) !== 0n ||
+        (codec !== 0 && codec !== 1) ||
+        (codec === 0
+          ? flags !== 0 || storedBytes !== logicalBytes
+          : flags !== 1 || storedBytes >= logicalBytes))
+      throw new Error('Invalid MNCWF v5 sample chunk')
+    requireRange(section.storedBytes, storedOffset, storedBytes,
+      'v5 stored chunk')
+    const stored = bytes(data, section.offset + storedOffset, storedBytes)
+    if (codec === 1) validateZstdFrame(stored, logicalBytes)
+    const storedEnd = storedOffset + storedBytes
+    expectedStoredOffset = alignEight(storedEnd)
+    if (expectedStoredOffset > section.storedBytes)
+      throw new Error('MNCWF v5 chunk alignment exceeds the sample section')
+    for (const value of bytes(data, section.offset + storedEnd,
+      expectedStoredOffset - storedEnd))
+      if (value !== 0) throw new Error('Nonzero MNCWF v5 chunk padding')
+    chunks.push({
+      firstFrame, frameCount, storedOffset, storedBytes, logicalBytes,
+      codec: codec as 0 | 1,
+      logicalCrc32c: data.getUint32(entry + 44, true),
+    })
+    expectedFirstFrame += frameCount
+  }
+  if (expectedFirstFrame !== section.itemCount ||
+      expectedStoredOffset !== section.storedBytes)
+    throw new Error('Incomplete MNCWF v5 chunk coverage')
+  return chunks
 }
 
 function finiteRatio(numerator: bigint, denominator: bigint, label: string) {
@@ -225,11 +382,12 @@ function v4String(
   }
 }
 
-function parseWaveformV4(data: DataView): ParsedWaveform {
+function parseSectionDirectory(data: DataView, formatVersion: 4 | 5) {
   requireRange(data.byteLength, 0, V4_HEADER_BYTES, 'v4 header')
-  if (data.getUint32(12, true) !== V4_HEADER_BYTES ||
+  if (data.byteLength > MNCWF_MAX_FILE_BYTES ||
+      data.getUint32(12, true) !== V4_HEADER_BYTES ||
       data.getUint32(16, true) !== V4_DIRECTORY_ENTRY_BYTES)
-    throw new Error('Unsupported MNCWF v4 header geometry')
+    throw new Error('Unsupported MNCWF v4/v5 header geometry')
   const sectionCount = data.getUint32(20, true)
   const directoryOffset = safeNumber(
     data.getBigUint64(24, true), 'v4 directory offset')
@@ -241,16 +399,16 @@ function parseWaveformV4(data: DataView): ParsedWaveform {
       directoryBytes !== sectionCount * V4_DIRECTORY_ENTRY_BYTES ||
       fileBytes !== data.byteLength || data.getUint32(48, true) !== 0 ||
       data.getUint32(60, true) !== 0)
-    throw new Error('Invalid MNCWF v4 file geometry')
+    throw new Error('Invalid MNCWF v4/v5 file geometry')
   requireRange(data.byteLength, directoryOffset, directoryBytes, 'v4 directory')
 
   const header = bytes(data, 0, V4_HEADER_BYTES).slice()
   header.fill(0, 56, 60)
   if (crc32c(header) !== data.getUint32(56, true))
-    throw new Error('MNCWF v4 header CRC32C mismatch')
+    throw new Error('MNCWF v4/v5 header CRC32C mismatch')
   if (crc32c(bytes(data, directoryOffset, directoryBytes)) !==
       data.getUint32(52, true))
-    throw new Error('MNCWF v4 directory CRC32C mismatch')
+    throw new Error('MNCWF v4/v5 directory CRC32C mismatch')
 
   const sections: V4Section[] = []
   const known = new Map<number, V4Section>()
@@ -263,33 +421,43 @@ function parseWaveformV4(data: DataView): ParsedWaveform {
       offset: safeNumber(data.getBigUint64(offset + 8, true), 'v4 section offset'),
       storedBytes: safeNumber(
         data.getBigUint64(offset + 16, true), 'v4 section bytes'),
+      logicalBytes: safeNumber(
+        data.getBigUint64(offset + 24, true), 'v4 logical bytes'),
       itemCount: safeNumber(
         data.getBigUint64(offset + 32, true), 'v4 section item count'),
       itemBytes: data.getUint32(offset + 40, true),
       crc32c: data.getUint32(offset + 44, true),
     }
-    const logicalBytes = safeNumber(
-      data.getBigUint64(offset + 24, true), 'v4 logical bytes')
+    const sampleSection = section.type === 7
+    const logicalProduct = section.itemCount * section.itemBytes
+    const validSectionVersion = sampleSection
+      ? section.version === (formatVersion === 5 ? 2 : 1)
+      : section.type <= 6 ? section.version === 1 : true
+    const validLogicalBytes = formatVersion === 5 && sampleSection
+      ? Number.isSafeInteger(logicalProduct) &&
+        section.logicalBytes === logicalProduct &&
+        section.logicalBytes <= MNCWF_MAX_FILE_BYTES
+      : section.logicalBytes === section.storedBytes
     if (section.type === 0 || section.version === 0 ||
         (section.flags & ~V4_SECTION_REQUIRED) !== 0 ||
-        section.storedBytes === 0 || logicalBytes !== section.storedBytes ||
+        section.storedBytes === 0 || !validSectionVersion || !validLogicalBytes ||
         (section.offset & 7) !== 0 || data.getBigUint64(offset + 48, true) !== 0n)
-      throw new Error('Invalid MNCWF v4 directory entry')
+      throw new Error('Invalid MNCWF v4/v5 directory entry')
     const isKnown = section.type >= 1 && section.type <= 7
     if (!isKnown && (section.flags & V4_SECTION_REQUIRED) !== 0)
-      throw new Error('Unsupported required MNCWF v4 section')
+      throw new Error('Unsupported required MNCWF v4/v5 section')
     if (isKnown) {
       if (known.has(section.type) || section.flags !== V4_SECTION_REQUIRED)
-        throw new Error('Invalid duplicate or optional MNCWF v4 section')
+        throw new Error('Invalid duplicate or optional MNCWF v4/v5 section')
       known.set(section.type, section)
     }
     requireRange(data.byteLength, section.offset, section.storedBytes, 'v4 section')
     if (crc32c(bytes(data, section.offset, section.storedBytes)) !== section.crc32c)
-      throw new Error('MNCWF v4 section CRC32C mismatch')
+      throw new Error('MNCWF v4/v5 section CRC32C mismatch')
     sections.push(section)
   }
   if (known.size !== V4_REQUIRED_SECTION_COUNT)
-    throw new Error('MNCWF v4 mandatory section is missing')
+    throw new Error('MNCWF v4/v5 mandatory section is missing')
 
   const extents = sections.map((section) => ({
     first: section.offset, last: section.offset + section.storedBytes,
@@ -297,14 +465,22 @@ function parseWaveformV4(data: DataView): ParsedWaveform {
   let cursor = alignEight(directoryOffset + directoryBytes)
   for (const extent of extents) {
     if (extent.first !== cursor)
-      throw new Error('Invalid MNCWF v4 section coverage')
+      throw new Error('Invalid MNCWF v4/v5 section coverage')
     const aligned = alignEight(extent.last)
     for (const value of bytes(data, extent.last, aligned - extent.last))
-      if (value !== 0) throw new Error('Nonzero MNCWF v4 alignment padding')
+      if (value !== 0) throw new Error('Nonzero MNCWF v4/v5 alignment padding')
     cursor = aligned
   }
   if (cursor !== data.byteLength)
-    throw new Error('Unreferenced bytes follow MNCWF v4 sections')
+    throw new Error('Unreferenced bytes follow MNCWF v4/v5 sections')
+  return known
+}
+
+function parseWaveformV4(data: DataView, decompressedSamples?: ArrayBuffer): ParsedWaveform {
+  const formatVersion = data.getUint32(8, true)
+  if (formatVersion !== 4 && formatVersion !== 5)
+    throw new Error(`Unsupported MNCWF version ${formatVersion}`)
+  const known = parseSectionDirectory(data, formatVersion)
 
   const captureSection = known.get(1)!
   const capture = parseV4SectionEnvelope(
@@ -425,8 +601,20 @@ function parseWaveformV4(data: DataView): ParsedWaveform {
   const sampleSection = known.get(7)!
   if (sampleSection.itemBytes !== expectedFrameBytes)
     throw new Error('MNCWF v4 sample frame size disagrees with its channels')
-  const samples = parseV4SectionEnvelope(data, sampleSection,
-    expectedFrameBytes, 1, Math.floor(data.byteLength / expectedFrameBytes), false)
+  let sampleData = data
+  let frameDataOffset: number
+  if (formatVersion === 4) {
+    const samples = parseV4SectionEnvelope(data, sampleSection,
+      expectedFrameBytes, 1, Math.floor(data.byteLength / expectedFrameBytes), false)
+    frameDataOffset = samples.recordsOffset
+  } else {
+    validateV5SampleSection(data, sampleSection)
+    if (!decompressedSamples ||
+        decompressedSamples.byteLength !== sampleSection.logicalBytes)
+      throw new Error('MNCWF v5 samples must be decompressed in the waveform worker')
+    sampleData = new DataView(decompressedSamples)
+    frameDataOffset = 0
+  }
   if (expectedFirstFrame !== sampleSection.itemCount)
     throw new Error('MNCWF v4 timebase does not cover every stored frame')
 
@@ -436,7 +624,7 @@ function parseWaveformV4(data: DataView): ParsedWaveform {
   const lastSequence = lastTimebase.firstSequence + lastTimebase.sourceFrameCount - 1n
   const triggerSequence = primaryTrigger?.sequence ?? firstSequence
   return {
-    version: 4,
+    version: formatVersion,
     sessionId: 0n,
     firstSequence,
     lastSequence,
@@ -448,11 +636,11 @@ function parseWaveformV4(data: DataView): ParsedWaveform {
     effectiveSampleRateHz: firstTimebase.persistedRateHz,
     frameCount: sampleSection.itemCount,
     frameBytes: expectedFrameBytes,
-    frameDataOffset: samples.recordsOffset,
+    frameDataOffset,
     channels,
     events,
     timebaseSegments,
-    data,
+    data: sampleData,
   }
 }
 
@@ -467,6 +655,8 @@ export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
   const version = data.getUint32(8, true)
   const headerBytes = data.getUint32(12, true)
   if (version === 4) return parseWaveformV4(data)
+  if (version === 5)
+    throw new Error('MNCWF v5 must be opened by the waveform worker')
   if ((version === 1 && headerBytes !== 128) ||
       (version >= 2 && headerBytes !== 256))
     throw new Error(`Unsupported MNCWF header for version ${version}`)
@@ -583,6 +773,61 @@ export function parseWaveform(buffer: ArrayBuffer): ParsedWaveform {
     }],
     data,
   }
+}
+
+interface ZstdDecoderApi {
+  decode(array: Uint8Array, uncompressedSize?: number): Uint8Array
+}
+
+let zstdDecoder: Promise<ZstdDecoderApi> | undefined
+
+function decoder() {
+  zstdDecoder ??= import('zstddec').then(async ({ ZSTDDecoder }) => {
+    const instance = new ZSTDDecoder()
+    await instance.init()
+    return instance
+  })
+  return zstdDecoder
+}
+
+async function decompressWaveformV5(data: DataView) {
+  const known = parseSectionDirectory(data, 5)
+  const sampleSection = known.get(7)!
+  const chunks = validateV5SampleSection(data, sampleSection)
+  const logical = new Uint8Array(sampleSection.logicalBytes)
+  const zstd = chunks.some((chunk) => chunk.codec === 1)
+    ? await decoder() : undefined
+  for (const chunk of chunks) {
+    const stored = bytes(data, sampleSection.offset + chunk.storedOffset,
+      chunk.storedBytes)
+    const outputOffset = chunk.firstFrame * sampleSection.itemBytes
+    const destination = logical.subarray(outputOffset,
+      outputOffset + chunk.logicalBytes)
+    if (chunk.codec === 0) {
+      destination.set(stored)
+    } else {
+      const expanded = zstd!.decode(stored, chunk.logicalBytes)
+      if (expanded.byteLength !== chunk.logicalBytes)
+        throw new Error('MNCWF v5 Zstd chunk decompressed to the wrong size')
+      destination.set(expanded)
+    }
+    if (crc32c(destination) !== chunk.logicalCrc32c)
+      throw new Error('MNCWF v5 sample chunk logical CRC32C mismatch')
+  }
+  return logical.buffer
+}
+
+/** Parse every supported MNCWF version; v5 decompression remains asynchronous. */
+export async function parseWaveformAsync(buffer: ArrayBuffer) {
+  const data = new DataView(buffer)
+  requireRange(data.byteLength, 0, 16, 'header')
+  for (let index = 0; index < MAGIC.length; ++index) {
+    if (data.getUint8(index) !== MAGIC[index])
+      throw new Error('The selected file is not an MNCWF waveform')
+  }
+  if (data.getUint32(8, true) !== 5) return parseWaveform(buffer)
+  const samples = await decompressWaveformV5(data)
+  return parseWaveformV4(data, samples)
 }
 
 export function rawSample(waveform: ParsedWaveform, frame: number, channel: number) {
