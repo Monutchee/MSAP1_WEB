@@ -30,6 +30,7 @@ import { Frequency10sPanel } from './reading/Frequency10sPanel'
 import { ModbusConfiguration } from './configuration/ModbusConfiguration'
 import { MqttConfiguration } from './configuration/MqttConfiguration'
 import { PowerQualityConfiguration } from './configuration/PowerQualityConfiguration'
+import { WaveformConfiguration } from './configuration/WaveformConfiguration'
 import { DataLoggingPage } from './configuration/dataLogging/DataLoggingPage'
 import { ManagementPage } from './management/ManagementPage'
 import {
@@ -1922,20 +1923,6 @@ function DeveloperWaveformStatus({ onUnauthorized, enabled = true }: {
   </div>
 }
 
-function WaveformConfiguration() {
-  return <div className="waveform-configuration">
-    <section className="section-heading configuration-heading">
-      <div><p className="eyebrow">Waveform</p><h2>Capture configuration</h2></div>
-      <span>Continuous 8-channel DDR history</span>
-    </section>
-    <div className="waveform-config-placeholder">
-      <strong>No configurable waveform options yet</strong>
-      <span>Manual captures are triggered from the Waveforms page; transport
-        diagnostics live under Developer → Waveform.</span>
-    </div>
-  </div>
-}
-
 export function ConfigurationPage({ configuration, configurationStatus, onChange, onSubmit,
   nominalFrequency, onNominalFrequencyChange,
   timeSynchronization, onTimeSynchronizationChange,
@@ -2225,7 +2212,7 @@ export function ConfigurationPage({ configuration, configurationStatus, onChange
       </form>}</> : activeTab === 'power-quality'
       ? <PowerQualityConfiguration onUnauthorized={onUnauthorized} />
       : activeTab === 'waveform'
-        ? <WaveformConfiguration />
+        ? <WaveformConfiguration onUnauthorized={onUnauthorized} />
       : activeTab === 'data-logging'
         ? <DataLoggingPage onUnauthorized={onUnauthorized} />
         : activeTab === 'modbus'

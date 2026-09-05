@@ -81,19 +81,15 @@ describe('Power-quality configuration', () => {
     expect(await screen.findByText('Voltage sag')).toBeInTheDocument()
     expect(screen.getAllByLabelText(/Decimation/)[0]).toHaveValue('8')
     expect(screen.getAllByRole('option', { name: '÷ 8 — 16,000 samples/s' })).toHaveLength(9)
-    fireEvent.change(screen.getByLabelText('Station ID'), { target: { value: 'STN-04' } })
-    fireEvent.change(screen.getByLabelText(/Waveform archive limit \(GiB\)/), {
-      target: { value: '12' },
-    })
+    expect(screen.queryByLabelText('Station ID')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Waveform archive limit/)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Apply and save' }))
 
     expect(await screen.findByText(/updated profile generation/)).toBeInTheDocument()
     await waitFor(() => expect(saved).toBeDefined())
     const body = saved as typeof product
     expect(body.metering.mains_signalling.carrier_frequency_hz).toBe(1175.5)
-    expect(body.waveform.station_id).toBe('STN-04')
-    expect(body.waveform.default_decimation).toBe(2)
-    expect(body.waveform.archive_limit_gib).toBe(12)
+    expect(body.waveform).toEqual(product.waveform)
     expect(body.database.sentinel).toBe('keep-database-settings')
     expect(body.metering.unrelated_meter_setting).toBe('preserve-me')
     expect(fetchMock).toHaveBeenCalledTimes(3)

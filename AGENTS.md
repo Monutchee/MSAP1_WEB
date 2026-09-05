@@ -25,6 +25,12 @@
   `GET /api/v1/waveforms` and `POST /api/v1/waveforms/trigger`. It displays
   daemon-owned history/session state and must not access DMA devices or raw
   waveform storage directly.
+- Configuration → Waveform owns waveform archive retention and optional
+  MNCWF identity/calibration settings. Blank identity and Unknown calibration
+  are allowed; any known calibration status requires an ID. These fields
+  affect future captures only. Power Quality owns event detection/capture
+  policies, not global waveform identity or retention. Each form reads the
+  latest settings before saving and changes only its own fields.
 - Persistent product configuration is owned by `msap1-settings`. Typed
   Configuration forms update the complete document through
   `PUT /api/v1/settings/active`; a successful request hot-applies and
