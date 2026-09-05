@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  api, ApiError, waveformDownloadPath, WaveformOrigin,
+  api, ApiError, WaveformOrigin,
   WaveformOriginFilter, WaveformSession, WaveformStatus,
 } from '../api'
 import { WaveformTriggerPanel } from './WaveformTriggerPanel'
@@ -392,15 +392,10 @@ export function WaveformExplorer({
                 {loadingFile === session.filename ? 'Loading…' : 'View waveform'}
               </button>
               {session.state === 'complete' && session.filename
-                ? <>
-                  <a href={waveformDownloadPath(session.filename)} download>
-                    Download MNCWF
-                  </a>
-                  <button type="button" onClick={() => openExport({
+                ? <button type="button" onClick={() => openExport({
                     sessionId: session.id, filename: session.filename,
                     scope: 'capture', capabilities: status?.export_capabilities,
                   })}>Export…</button>
-                </>
                 : <span>File unavailable</span>}
               {canDelete && <button className="waveform-delete" type="button"
                 disabled={session.state === 'capturing' ||

@@ -32,6 +32,20 @@
   margin: 0; padding: .65rem .85rem; border-bottom: 1px solid var(--line);
   color: var(--danger); font-size: .78rem;
 }
+.waveform-export-tray-controls { display: flex; align-items: center; gap: .7rem; }
+.waveform-export-tray-close {
+  display: grid; place-items: center; width: 2rem; height: 2rem; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted);
+  font-size: 1.4rem; line-height: 1;
+}
+.waveform-export-tray-close:hover { color: var(--green); background: rgba(255, 255, 255, .05); }
+.waveform-export-tray-toggle {
+  position: fixed; z-index: 1100; right: 1rem; bottom: 1rem; padding: .65rem .9rem;
+  border: 1px solid var(--line); border-radius: 9px; color: var(--green);
+  background: var(--panel); box-shadow: 0 8px 24px rgba(0, 0, 0, .3);
+}
+.waveform-export-tray-close:focus-visible,
+.waveform-export-tray-toggle:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .waveform-export-tray article:last-child { border-bottom: 0; }
 .waveform-export-tray article > div:first-child { display: grid; min-width: 0; }
 .waveform-export-tray article strong { overflow: hidden; text-overflow: ellipsis; }

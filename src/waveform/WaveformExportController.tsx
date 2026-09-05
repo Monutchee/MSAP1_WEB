@@ -128,6 +128,7 @@ export function WaveformExportProvider({ owner, onUnauthorized, children }: {
   const [foregroundJob, setForegroundJob] = useState<string>()
   const [completionQueue, setCompletionQueue] = useState<WaveformExportJob[]>([])
   const [submitting, setSubmitting] = useState(false)
+  const [trayOpen, setTrayOpen] = useState(true)
   const [error, setError] = useState('')
   const jobsRef = useRef(jobs)
   jobsRef.current = jobs
@@ -238,6 +239,7 @@ export function WaveformExportProvider({ owner, onUnauthorized, children }: {
         format: selectedFormat,
       })
       updateJob(job)
+      setTrayOpen(true)
       setForegroundJob(job.job_id)
       setSelection(undefined)
     } catch (reason) {
@@ -272,9 +274,21 @@ export function WaveformExportProvider({ owner, onUnauthorized, children }: {
 
   return <ExportContext.Provider value={{ openExport }}>
     {children}
-    {visibleJobs.length > 0 && <aside className="waveform-export-tray"
+    {visibleJobs.length > 0 && !trayOpen && <button type="button"
+      className="waveform-export-tray-toggle" aria-expanded="false"
+      onClick={() => setTrayOpen(true)}>
+      Waveform exports ({visibleJobs.length})
+    </button>}
+    {visibleJobs.length > 0 && trayOpen && <aside className="waveform-export-tray"
       aria-label="Waveform exports">
-      <header><strong>Waveform exports</strong><span>{visibleJobs.length}</span></header>
+      <header><strong>Waveform exports</strong>
+        <div className="waveform-export-tray-controls">
+          <span>{visibleJobs.length}</span>
+          <button type="button" className="waveform-export-tray-close"
+            aria-label="Close waveform exports" title="Close waveform exports"
+            onClick={() => setTrayOpen(false)}>×</button>
+        </div>
+      </header>
       {error && <p className="waveform-export-tray-error" role="alert">{error}</p>}
       {visibleJobs.map((job) => <article key={job.job_id}>
         <div><strong>{job.filename || `${job.format} export`}</strong>

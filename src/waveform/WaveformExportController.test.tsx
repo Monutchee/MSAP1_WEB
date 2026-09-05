@@ -89,17 +89,18 @@ afterEach(() => {
 })
 
 describe('Waveform export controller', () => {
-  it('keeps MNCWF immediate and scopes an exact event download', () => {
+  it.each(['capture', 'event'] as const)('keeps MNCWF immediate for %s export', (scope) => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click')
       .mockImplementation(() => undefined)
-    renderController('event')
+    renderController(scope)
     fireEvent.click(screen.getByRole('button', { name: 'Open export' }))
     expect(screen.getByRole('radio', { name: /MNCWF/ })).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: 'Download' }))
     expect(click).toHaveBeenCalledOnce()
     const anchor = click.mock.instances[0] as HTMLAnchorElement
-    expect(anchor.getAttribute('href')).toBe(
-      `/api/v1/waveforms/export?session_id=42&event_id=${eventId}&format=mncwf`)
+    expect(anchor.getAttribute('href')).toBe(scope === 'event'
+      ? `/api/v1/waveforms/export?session_id=42&event_id=${eventId}&format=mncwf`
+      : '/protected/waveforms/download/waveform-42.mncwf')
   })
 
   it('submits the legacy ZIP, runs in the background, and downloads once', async () => {
@@ -123,6 +124,8 @@ describe('Waveform export controller', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start export' }))
     expect(await screen.findAllByText(/Queued · position 2/)).toHaveLength(2)
     fireEvent.click(screen.getByRole('button', { name: 'Run in background' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close waveform exports' }))
+    expect(screen.queryByRole('complementary', { name: 'Waveform exports' })).not.toBeInTheDocument()
     finishStatus?.(json(job('ready')))
 
     expect(await screen.findByRole('heading', { name: 'waveform-42.zip' }))
@@ -141,8 +144,34 @@ describe('Waveform export controller', () => {
     })
     expect(sessionStorage.getItem('msap1.waveform-export-jobs.v1'))
       .toContain('job-1')
+    expect(screen.queryByRole('complementary', { name: 'Waveform exports' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Waveform exports (1)' }))
     expect(screen.getAllByRole('button', { name: 'Download again' }))
       .toHaveLength(2)
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false)
+  })
+
+  it('closes and reopens the exports panel without discarding ready downloads', () => {
+    sessionStorage.setItem('msap1.waveform-export-jobs.v1', JSON.stringify({
+      owner: 'admin', jobs: [job('ready'), job('ready', 'job-2')],
+      autoDownloaded: ['job-1', 'job-2'],
+    }))
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined)
+    renderController()
+    fireEvent.click(screen.getByRole('button', { name: 'Close waveform exports' }))
+    expect(screen.queryByRole('complementary', { name: 'Waveform exports' })).not.toBeInTheDocument()
+    const reopen = screen.getByRole('button', { name: 'Waveform exports (2)' })
+    expect(reopen).toHaveAttribute('aria-expanded', 'false')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(click).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem('msap1.waveform-export-jobs.v1')!).jobs).toHaveLength(2)
+    fireEvent.click(reopen)
+    expect(screen.getByRole('complementary', { name: 'Waveform exports' })).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Download again' })[0])
+    expect(click).toHaveBeenCalledOnce()
   })
 
   it('restores an active job after reload and resumes polling', async () => {
