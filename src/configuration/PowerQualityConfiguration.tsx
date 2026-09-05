@@ -9,18 +9,12 @@ import './powerQuality.css'
 
 type EventProfileKey = Exclude<keyof PowerQualityEventSettings, 'reference_current_amperes'>
 type PowerQualityCategory = 'flicker' | 'mains' | 'events'
-type WaveformIdentity = Pick<ProductSettings['waveform'],
-  | 'station_id' | 'station_name' | 'site_id' | 'site_name'
-  | 'circuit_id' | 'circuit_name' | 'device_serial'
-  | 'calibration_id' | 'calibration_status'>
 
 interface PowerQualityDraft {
   sampleRateHz: number
   events: PowerQualityEventSettings
   flicker: FlickerSettings
   mains: MainsSignallingSettings
-  waveform: WaveformIdentity
-  archiveLimitGib: number
 }
 
 const EVENT_PROFILES: Array<{ key: EventProfileKey; label: string; classification: string }> = [
@@ -35,39 +29,12 @@ const EVENT_PROFILES: Array<{ key: EventProfileKey; label: string; classificatio
   { key: 'transient_voltage', label: 'Transient voltage', classification: 'Unavailable' },
 ]
 
-const IDENTITY_FIELDS: Array<{ key: Exclude<keyof WaveformIdentity, 'calibration_status'>; label: string }> = [
-  { key: 'station_id', label: 'Station ID' },
-  { key: 'station_name', label: 'Station name' },
-  { key: 'site_id', label: 'Site ID' },
-  { key: 'site_name', label: 'Site name' },
-  { key: 'circuit_id', label: 'Circuit ID' },
-  { key: 'circuit_name', label: 'Circuit name' },
-  { key: 'device_serial', label: 'Device serial' },
-  { key: 'calibration_id', label: 'Calibration ID' },
-]
-
-function identity(settings: ProductSettings): WaveformIdentity {
-  return {
-    station_id: settings.waveform.station_id,
-    station_name: settings.waveform.station_name,
-    site_id: settings.waveform.site_id,
-    site_name: settings.waveform.site_name,
-    circuit_id: settings.waveform.circuit_id,
-    circuit_name: settings.waveform.circuit_name,
-    device_serial: settings.waveform.device_serial,
-    calibration_id: settings.waveform.calibration_id,
-    calibration_status: settings.waveform.calibration_status,
-  }
-}
-
 function draft(settings: ProductSettings): PowerQualityDraft {
   return {
     sampleRateHz: settings.metering.sample_rate_hz,
     events: structuredClone(settings.metering.events),
     flicker: structuredClone(settings.metering.flicker),
     mains: structuredClone(settings.metering.mains_signalling),
-    waveform: identity(settings),
-    archiveLimitGib: settings.waveform.archive_limit_gib,
   }
 }
 
@@ -203,8 +170,6 @@ export function PowerQualityConfiguration({ onUnauthorized }: {
       product.metering.events = structuredClone(settings.events)
       product.metering.flicker = structuredClone(settings.flicker)
       product.metering.mains_signalling = structuredClone(settings.mains)
-      Object.assign(product.waveform, structuredClone(settings.waveform))
-      product.waveform.archive_limit_gib = settings.archiveLimitGib
       const saved = await api.saveSettings(product)
       setSettings(draft(saved.settings))
       setMessage('Applied and saved. New records will carry the updated profile generation.')
@@ -331,28 +296,6 @@ export function PowerQualityConfiguration({ onUnauthorized }: {
           </div>
         </fieldset>
 
-        <fieldset className="power-quality-settings-group">
-          <legend>MNCWF identity</legend>
-          <p>Neutral capture-time metadata retained for later COMTRADE and PQDIF conversion.</p>
-          <label>Waveform archive limit (GiB)<input type="number" min="1" max="16"
-            step="1" value={settings.archiveLimitGib}
-            onChange={(event) => setSettings({ ...settings,
-              archiveLimitGib: Number(event.target.value),
-            })} /><small>Oldest completed captures expire after this physical storage limit.</small></label>
-          <div className="power-quality-identity-grid">
-            {IDENTITY_FIELDS.map(({ key, label }) => <label key={key}>{label}
-              <input maxLength={128} value={settings.waveform[key]}
-                onChange={(event) => setSettings({ ...settings, waveform: {
-                  ...settings.waveform, [key]: event.target.value,
-                } })} /></label>)}
-            <label>Calibration status<select value={settings.waveform.calibration_status}
-              onChange={(event) => setSettings({ ...settings, waveform: {
-                ...settings.waveform,
-                calibration_status: event.target.value as WaveformIdentity['calibration_status'],
-              } })}><option value="unknown">Unknown</option><option value="valid">Valid</option>
-                <option value="expired">Expired</option><option value="invalid">Invalid</option></select></label>
-          </div>
-        </fieldset>
       </section>}
 
       <div className="power-quality-actions"><button type="submit" disabled={busy}>

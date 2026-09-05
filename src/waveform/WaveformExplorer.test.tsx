@@ -95,6 +95,8 @@ describe('Waveform explorer', () => {
       .toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Saved captures' })).toBeInTheDocument()
     expect(screen.getByText('waveform-23.mncwf')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Download MNCWF' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Export…' })).toBeEnabled()
   })
 
   it('defaults to All, labels every origin, and applies server origin filters', async () => {

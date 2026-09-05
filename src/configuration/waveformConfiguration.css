@@ -1,0 +1,21 @@
+.waveform-settings-form { display: grid; gap: 1rem; }
+.waveform-settings-form fieldset {
+  display: grid; gap: 1rem; min-width: 0; margin: 0; padding: 1.25rem 1.5rem;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel);
+}
+.waveform-settings-form legend { padding: 0 .45rem; color: var(--green); font: .84rem var(--mono); }
+.waveform-settings-form p,
+.waveform-settings-form small,
+.waveform-settings-actions span { margin: 0; color: var(--muted); font-size: .78rem; }
+.waveform-settings-form label {
+  display: grid; gap: .4rem; min-width: 0;
+  color: var(--muted); font-size: .7rem; letter-spacing: .05em; text-transform: uppercase;
+}
+.waveform-settings-form input,
+.waveform-settings-form select {
+  min-width: 0; padding: .65rem .7rem; border: 1px solid var(--line);
+  border-radius: 8px; color: #ecf5f5; background: #0a151a; font: inherit;
+}
+.waveform-settings-form small { letter-spacing: normal; text-transform: none; }
+.waveform-identity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 1rem; }
+.waveform-settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; }

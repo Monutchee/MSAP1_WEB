@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  api, ApiError, waveformDownloadPath, WaveformOrigin,
+  api, ApiError, WaveformOrigin,
   WaveformOriginFilter, WaveformSession, WaveformStatus,
 } from '../api'
 import { WaveformTriggerPanel } from './WaveformTriggerPanel'
 import { WaveformViewer } from './WaveformViewer'
 import { ParsedWaveform, WaveformPyramid } from './waveformFile'
 import { processWaveform } from './waveformWorkerClient'
+import { useWaveformExport } from './WaveformExportController'
 import './waveform.css'
 
 const waveformPageSize = 16
@@ -74,6 +75,7 @@ export function WaveformExplorer({
   canDelete: boolean
   acquisitionAvailable?: boolean
 }) {
+  const { openExport } = useWaveformExport()
   const [status, setStatus] = useState<WaveformStatus>()
   const [sessions, setSessions] = useState<WaveformSession[]>([])
   const [origin, setOrigin] = useState<WaveformOriginFilter>('all')
@@ -390,7 +392,10 @@ export function WaveformExplorer({
                 {loadingFile === session.filename ? 'Loading…' : 'View waveform'}
               </button>
               {session.state === 'complete' && session.filename
-                ? <a href={waveformDownloadPath(session.filename)} download>Download</a>
+                ? <button type="button" onClick={() => openExport({
+                    sessionId: session.id, filename: session.filename,
+                    scope: 'capture', capabilities: status?.export_capabilities,
+                  })}>Export…</button>
                 : <span>File unavailable</span>}
               {canDelete && <button className="waveform-delete" type="button"
                 disabled={session.state === 'capturing' ||
